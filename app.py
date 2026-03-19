@@ -1,11 +1,15 @@
 """
 app.py – RBS Finance Dashboard (Streamlit)
-Run: streamlit run app.py
+
+Local:  streamlit run app.py
+Colab:  see colab_setup.py (handles pip, pyngrok, Drive path, tunnel)
 """
 from __future__ import annotations
 
 import io
+import sys
 import zipfile
+from pathlib import Path
 from datetime import date
 
 import numpy as np
@@ -14,6 +18,15 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
+
+# ── Colab / local path resolution ────────────────────────────────
+# In Colab the library lives in Google Drive; locally it's next to app.py
+_COLAB_BASE = Path("/content/drive/MyDrive/RBS_app")
+_LOCAL_BASE = Path(__file__).parent
+
+BASE_DIR = _COLAB_BASE if _COLAB_BASE.exists() else _LOCAL_BASE
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
 
 from rbs_lib import (
     apply_shocks,
