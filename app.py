@@ -876,120 +876,242 @@ def page_credit():
 # PAGE: News & Sentiment
 # ════════════════════════════════════════════════════════════════════
 
+def _parse_llm_json(text: str) -> dict:
+    """Parse JSON from LLM response, handling markdown code block wrappers."""
+    import json as _json, re
+    text = text.strip()
+    # Strip ```json ... ``` or ``` ... ``` wrappers
+    text = re.sub(r"^```(?:json)?\s*", "", text)
+    text = re.sub(r"\s*```$", "", text)
+    return _json.loads(text.strip())
+
+
+def _llm_client(api_key: str, api_base: str, model: str):
+    """Return an OpenAI-compatible client; auto-set base_url for Claude models."""
+    import openai
+    if not api_base:
+        if model.startswith("claude"):
+            api_base = "https://api.anthropic.com/v1"
+        else:
+            api_base = None
+    return openai.OpenAI(api_key=api_key, base_url=api_base or None)
+
+
 def page_news_sentiment():
     st.title("📰 News & Sentiment Analysis")
     st.caption("Fetch financial news and score sentiment via LLM API")
 
-    tab1, tab2 = st.tabs(["Live News Feed", "Sentiment Analysis"])
+    tab1, tab2, tab3 = st.tabs(["Live News Feed", "Sentiment Analysis", "Financial Report"])
 
+    FEEDS = {
+        "Yahoo Finance":  "https://finance.yahoo.com/news/rssindex",
+        "MarketWatch":    "https://feeds.marketwatch.com/marketwatch/topstories/",
+        "Reuters Finance":"https://feeds.reuters.com/reuters/businessNews",
+        "Investing.com":  "https://www.investing.com/rss/news.rss",
+    }
+
+    # ── Tab 1: Fetch ──────────────────────────────────────────────────
     with tab1:
         section("RSS / News Fetch")
         col1, col2 = st.columns([3, 1])
         with col1:
-            query = st.text_input("Company / Ticker / Topic", "Apple AAPL")
+            selected_feed = st.selectbox("News Source", list(FEEDS.keys()))
         with col2:
-            max_articles = st.number_input("Max Articles", 5, 50, 10)
-
-        FEEDS = {
-            "Reuters Finance": "https://feeds.reuters.com/reuters/businessNews",
-            "Yahoo Finance": "https://finance.yahoo.com/news/rssindex",
-            "MarketWatch": "https://feeds.marketwatch.com/marketwatch/topstories/",
-            "Investing.com": "https://www.investing.com/rss/news.rss",
-        }
-        selected_feed = st.selectbox("News Source", list(FEEDS.keys()))
+            max_articles = st.number_input("Max Articles", 5, 50, 15)
 
         if st.button("Fetch News", type="primary"):
             try:
                 import feedparser
-
-                feed = feedparser.parse(FEEDS[selected_feed])
+                with st.spinner(f"Fetching from {selected_feed}…"):
+                    feed = feedparser.parse(FEEDS[selected_feed])
                 articles = []
                 for entry in feed.entries[: int(max_articles)]:
-                    articles.append(
-                        {
-                            "Title": entry.get("title", ""),
-                            "Published": entry.get("published", ""),
-                            "Summary": entry.get("summary", "")[:300] + "…",
-                            "Link": entry.get("link", ""),
-                        }
-                    )
+                    summary = entry.get("summary", "")
+                    # Strip HTML tags from summary
+                    import re
+                    summary = re.sub(r"<[^>]+>", "", summary)[:400]
+                    articles.append({
+                        "Title":     entry.get("title", ""),
+                        "Published": entry.get("published", ""),
+                        "Summary":   summary,
+                        "Link":      entry.get("link", ""),
+                    })
                 if articles:
                     st.success(f"Fetched {len(articles)} articles from {selected_feed}")
                     st.session_state["news_articles"] = articles
+                    st.session_state["news_source"] = selected_feed
                     for a in articles:
                         with st.expander(a["Title"]):
                             st.caption(a["Published"])
                             st.write(a["Summary"])
                             st.markdown(f"[Read more]({a['Link']})")
                 else:
-                    st.warning("No articles found.")
+                    st.warning("No articles found. Try a different news source.")
             except ImportError:
-                st.error("feedparser not installed. Run: pip install feedparser")
+                st.error("feedparser not installed.")
             except Exception as e:
                 st.error(f"Feed error: {e}")
 
+    # ── Tab 2: Sentiment ──────────────────────────────────────────────
     with tab2:
         section("LLM Sentiment Scoring")
-        st.info(
-            "Configure your LLM API key below to score the fetched articles. "
-            "Supports OpenAI-compatible endpoints."
-        )
 
-        api_key = st.text_input("API Key", type="password", placeholder="sk-…")
-        model_choice = st.selectbox(
-            "Model",
-            ["gpt-4o-mini", "gpt-4o", "gpt-3.5-turbo", "claude-3-5-haiku-20241022"],
-        )
-        api_base = st.text_input("API Base URL (leave blank for OpenAI default)", "")
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            api_key = st.text_input("API Key", type="password", placeholder="sk-… or Anthropic key",
+                                    key="sent_api_key")
+        with col2:
+            model_choice = st.selectbox("Model", [
+                "gpt-4o-mini", "gpt-4o", "gpt-3.5-turbo",
+                "claude-3-5-haiku-20241022", "claude-3-5-sonnet-20241022",
+            ])
+        api_base = st.text_input("API Base URL (leave blank for auto-detect)", "",
+                                 key="sent_api_base")
 
         articles = st.session_state.get("news_articles", [])
         if not articles:
             st.info("Fetch news from the 'Live News Feed' tab first.")
-        elif st.button("Score Sentiment", type="primary"):
-            if not api_key:
-                st.error("Please enter your API key.")
-            else:
-                results = []
-                progress = st.progress(0)
-                for i, a in enumerate(articles):
-                    try:
-                        import openai
+        else:
+            st.caption(f"{len(articles)} articles ready from {st.session_state.get('news_source','')}")
+            if st.button("Score Sentiment", type="primary"):
+                if not api_key:
+                    st.error("Please enter your API key.")
+                else:
+                    results, errors = [], []
+                    progress = st.progress(0)
+                    status   = st.empty()
+                    for i, a in enumerate(articles):
+                        status.caption(f"Scoring {i+1}/{len(articles)}: {a['Title'][:60]}…")
+                        try:
+                            client = _llm_client(api_key, api_base, model_choice)
+                            prompt = (
+                                "Rate the financial market sentiment of this news headline.\n"
+                                "Reply ONLY with valid JSON: {\"sentiment\": \"POSITIVE\"|\"NEGATIVE\"|\"NEUTRAL\", \"score\": <float -1.0 to 1.0>}\n\n"
+                                f"Title: {a['Title']}\nSummary: {a['Summary'][:300]}"
+                            )
+                            resp = client.chat.completions.create(
+                                model=model_choice,
+                                messages=[{"role": "user", "content": prompt}],
+                                temperature=0,
+                                max_tokens=60,
+                            )
+                            text = resp.choices[0].message.content.strip()
+                            parsed = _parse_llm_json(text)
+                            sentiment = str(parsed.get("sentiment", "NEUTRAL")).upper()
+                            if sentiment not in ("POSITIVE", "NEGATIVE", "NEUTRAL"):
+                                sentiment = "NEUTRAL"
+                            results.append({
+                                "Title":     a["Title"][:80],
+                                "Sentiment": sentiment,
+                                "Score":     float(parsed.get("score", 0.0)),
+                            })
+                        except Exception as e:
+                            results.append({"Title": a["Title"][:80], "Sentiment": "ERROR", "Score": 0.0})
+                            errors.append(f"{a['Title'][:50]}: {e}")
+                        progress.progress((i + 1) / len(articles))
 
-                        client = openai.OpenAI(
-                            api_key=api_key,
-                            base_url=api_base if api_base else None,
-                        )
-                        prompt = f"Rate the financial sentiment of this news headline and summary as POSITIVE, NEGATIVE, or NEUTRAL. Also give a score from -1.0 (very negative) to +1.0 (very positive). Reply in JSON: {{\"sentiment\": ..., \"score\": ...}}\n\nTitle: {a['Title']}\nSummary: {a['Summary']}"
-                        resp = client.chat.completions.create(
-                            model=model_choice,
-                            messages=[{"role": "user", "content": prompt}],
-                            temperature=0,
-                        )
-                        import json as _json
-                        text = resp.choices[0].message.content.strip()
-                        parsed = _json.loads(text)
-                        results.append({
-                            "Title": a["Title"][:80],
-                            "Sentiment": parsed.get("sentiment", "N/A"),
-                            "Score": parsed.get("score", 0.0),
-                        })
-                    except Exception as e:
-                        results.append({"Title": a["Title"][:80], "Sentiment": "ERROR", "Score": 0.0})
-                    progress.progress((i + 1) / len(articles))
+                    status.empty()
+                    st.session_state["sentiment_results"] = results
 
-                if results:
+                    if errors:
+                        with st.expander(f"⚠️ {len(errors)} errors (click to view)"):
+                            for err in errors:
+                                st.caption(err)
+
                     df_sent = pd.DataFrame(results)
-                    avg = df_sent["Score"].mean()
-                    st.metric("Average Sentiment Score", f"{avg:+.3f}", delta="Positive" if avg > 0.1 else "Negative" if avg < -0.1 else "Neutral")
+                    valid = df_sent[df_sent["Sentiment"] != "ERROR"]
+                    if not valid.empty:
+                        avg = valid["Score"].mean()
+                        label = "Positive" if avg > 0.1 else "Negative" if avg < -0.1 else "Neutral"
+                        st.metric("Average Sentiment Score", f"{avg:+.3f}", delta=label)
 
-                    fig = px.bar(
-                        df_sent, x="Score", y="Title", orientation="h",
-                        color="Score", color_continuous_scale="RdYlGn",
-                        template="plotly_dark", text_auto=".2f",
-                    )
-                    fig.update_layout(**PLOTLY_LAYOUT, title="Sentiment Scores", height=max(300, 50 * len(df_sent)))
-                    st.plotly_chart(fig, use_container_width=True)
+                        fig = px.bar(
+                            valid, x="Score", y="Title", orientation="h",
+                            color="Score", color_continuous_scale="RdYlGn",
+                            template="plotly_dark", text_auto=".2f",
+                        )
+                        fig.update_layout(**PLOTLY_LAYOUT, title="Sentiment Scores",
+                                          height=max(300, 45 * len(valid)))
+                        st.plotly_chart(fig, use_container_width=True)
+
                     st.dataframe(df_sent, use_container_width=True)
+
+    # ── Tab 3: Financial Report ───────────────────────────────────────
+    with tab3:
+        section("AI Financial Report Summary")
+        st.caption("Generate a structured financial market report from fetched news")
+
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            rep_api_key = st.text_input("API Key", type="password", placeholder="sk-… or Anthropic key",
+                                        key="rep_api_key")
+        with col2:
+            rep_model = st.selectbox("Model", [
+                "gpt-4o-mini", "gpt-4o",
+                "claude-3-5-haiku-20241022", "claude-3-5-sonnet-20241022",
+            ], key="rep_model")
+        rep_api_base = st.text_input("API Base URL (leave blank for auto-detect)", "",
+                                     key="rep_api_base")
+
+        articles = st.session_state.get("news_articles", [])
+        sentiment_results = st.session_state.get("sentiment_results", [])
+
+        if not articles:
+            st.info("Fetch news from the 'Live News Feed' tab first.")
+        else:
+            st.caption(f"{len(articles)} articles available. Sentiment data: {'✅' if sentiment_results else '⬜ (optional)'}")
+
+            if st.button("Generate Financial Report", type="primary"):
+                if not rep_api_key:
+                    st.error("Please enter your API key.")
+                else:
+                    with st.spinner("Generating report…"):
+                        try:
+                            # Build article digest
+                            digest_lines = []
+                            for i, a in enumerate(articles[:20]):
+                                sent_info = ""
+                                if sentiment_results and i < len(sentiment_results):
+                                    s = sentiment_results[i]
+                                    if s["Sentiment"] != "ERROR":
+                                        sent_info = f" [{s['Sentiment']}, score={s['Score']:+.2f}]"
+                                digest_lines.append(f"{i+1}. {a['Title']}{sent_info}\n   {a['Summary'][:200]}")
+                            digest = "\n\n".join(digest_lines)
+
+                            from datetime import date as _date
+                            today = _date.today().strftime("%B %d, %Y")
+                            prompt = (
+                                f"You are a senior financial analyst. Based on the following recent news articles (as of {today}), "
+                                "write a concise structured financial market report in Traditional Chinese. "
+                                "Include: (1) 市場概況 Market Overview, (2) 主要趨勢 Key Trends, "
+                                "(3) 風險提示 Risk Factors, (4) 投資展望 Outlook. "
+                                "Keep each section to 3-5 bullet points. Be specific and data-driven.\n\n"
+                                f"NEWS DIGEST:\n{digest}"
+                            )
+
+                            client = _llm_client(rep_api_key, rep_api_base, rep_model)
+                            resp = client.chat.completions.create(
+                                model=rep_model,
+                                messages=[{"role": "user", "content": prompt}],
+                                temperature=0.3,
+                                max_tokens=1200,
+                            )
+                            report_text = resp.choices[0].message.content.strip()
+                            st.session_state["financial_report"] = report_text
+
+                        except Exception as e:
+                            st.error(f"Report generation failed: {e}")
+
+            if st.session_state.get("financial_report"):
+                st.markdown("---")
+                st.markdown(f"### 📋 Financial Market Report — {date.today().strftime('%B %d, %Y')}")
+                st.markdown(st.session_state["financial_report"])
+                st.download_button(
+                    "⬇ Download Report",
+                    data=st.session_state["financial_report"],
+                    file_name=f"rbs_report_{date.today()}.txt",
+                    mime="text/plain",
+                )
 
 
 # ════════════════════════════════════════════════════════════════════
