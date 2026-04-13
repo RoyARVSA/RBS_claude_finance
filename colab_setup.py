@@ -25,7 +25,7 @@ STREAMLIT_PORT   = 8501
 DRIVE_BASE       = Path("/content/drive/MyDrive/RBS_app")
 GITHUB_BRANCH    = "claude/optimize-analysis-dashboard-NZUKB"
 GITHUB_REPO      = "RoyARVSA/RBS_claude_finance"
-SYNC_FILES       = ["app.py", "rbs_lib.py"]   # 每次啟動從 GitHub 拉取
+SYNC_FILES       = ["app.py", "rbs_lib.py", "stock_db.py"]   # 每次啟動從 GitHub 拉取
 # ════════════════════════════════════════════════════════════════
 
 

@@ -164,6 +164,7 @@ with st.sidebar:
             "🔗 Correlation & Beta",
             "💳 Credit Model",
             "📰 News & Sentiment",
+            "🏦 機構選股",
             "📦 Export Report",
         ],
         label_visibility="collapsed",
@@ -1115,6 +1116,471 @@ def page_news_sentiment():
 
 
 # ════════════════════════════════════════════════════════════════════
+# PAGE: Institutional Stock Selector
+# ════════════════════════════════════════════════════════════════════
+
+def page_stock_selector():
+    from stock_db import (
+        ADB, MKTS, STRATS, MACRO_FACTORS, MACRO_BOOST,
+        INSIGHTS, MWARN, MAVOID,
+    )
+
+    st.title("🏦 機構選股模型")
+    st.caption("六步驟系統化篩選流程，結合宏觀環境、策略偏好與產業輪動")
+
+    # ── Persistent step state ────────────────────────────────────────
+    if "ss_step" not in st.session_state:
+        st.session_state.ss_step = 0
+    if "ss_sel" not in st.session_state:
+        st.session_state.ss_sel = {}
+
+    sel = st.session_state.ss_sel
+
+    # ── Progress bar ─────────────────────────────────────────────────
+    STEPS = ["市場", "策略", "宏觀環境", "資產類型", "產業", "選股結果"]
+    progress = st.session_state.ss_step / (len(STEPS) - 1)
+    st.progress(progress)
+    cols_step = st.columns(len(STEPS))
+    for i, s in enumerate(STEPS):
+        with cols_step[i]:
+            if i < st.session_state.ss_step:
+                st.markdown(f"<div style='text-align:center;color:#4CAF50;font-size:0.8rem'>✔ {s}</div>", unsafe_allow_html=True)
+            elif i == st.session_state.ss_step:
+                st.markdown(f"<div style='text-align:center;color:#1E88E5;font-weight:700;font-size:0.85rem'>● {s}</div>", unsafe_allow_html=True)
+            else:
+                st.markdown(f"<div style='text-align:center;color:#555;font-size:0.8rem'>○ {s}</div>", unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    # ────────────────────────────────────────────────────────────────
+    # STEP 0 – Market
+    # ────────────────────────────────────────────────────────────────
+    if st.session_state.ss_step == 0:
+        section("Step 1 of 6 — 選擇市場")
+        st.markdown("請選擇您要分析的目標市場：")
+
+        mkt_cols = st.columns(len(MKTS))
+        for i, (label, code) in enumerate(MKTS.items()):
+            with mkt_cols[i]:
+                selected = sel.get("market") == code
+                btn_style = "primary" if selected else "secondary"
+                if st.button(label, key=f"mkt_{code}", type=btn_style, use_container_width=True):
+                    sel["market"] = code
+
+        if sel.get("market"):
+            mkt_label = next(k for k, v in MKTS.items() if v == sel["market"])
+            st.success(f"已選擇：{mkt_label}")
+            if MWARN.get(sel["market"]):
+                st.warning(f"⚠️ 風險提示：{MWARN[sel['market']]}")
+            if st.button("下一步 →", type="primary"):
+                st.session_state.ss_step = 1
+                st.rerun()
+        else:
+            st.info("請點選上方市場按鈕")
+
+    # ────────────────────────────────────────────────────────────────
+    # STEP 1 – Strategy
+    # ────────────────────────────────────────────────────────────────
+    elif st.session_state.ss_step == 1:
+        section("Step 2 of 6 — 選擇投資策略")
+
+        strat_cols = st.columns(3)
+        for i, (key, info) in enumerate(STRATS.items()):
+            with strat_cols[i % 3]:
+                selected = sel.get("strategy") == key
+                card_border = "#1E88E5" if selected else "#2D3142"
+                st.markdown(
+                    f"""<div style='border:2px solid {card_border};border-radius:10px;padding:14px;margin:4px 0;
+                    background:#1A1D27;cursor:pointer;'>
+                    <div style='font-size:1.1rem;font-weight:700'>{info['label']}</div>
+                    <div style='font-size:0.78rem;color:#9EA3B0;margin-top:4px'>{info['desc']}</div>
+                    </div>""",
+                    unsafe_allow_html=True,
+                )
+                if st.button("選擇" if not selected else "✔ 已選", key=f"strat_{key}",
+                             type="primary" if selected else "secondary", use_container_width=True):
+                    sel["strategy"] = key
+
+        if sel.get("strategy"):
+            strat_info = STRATS[sel["strategy"]]
+            st.success(f"已選擇策略：{strat_info['label']}")
+            st.info(f"⚠️ 注意：{MAVOID.get(sel['strategy'], '')}")
+
+        col_back, col_next = st.columns(2)
+        with col_back:
+            if st.button("← 上一步", use_container_width=True):
+                st.session_state.ss_step = 0
+                st.rerun()
+        with col_next:
+            if sel.get("strategy") and st.button("下一步 →", type="primary", use_container_width=True):
+                st.session_state.ss_step = 2
+                st.rerun()
+
+    # ────────────────────────────────────────────────────────────────
+    # STEP 2 – Macro Environment
+    # ────────────────────────────────────────────────────────────────
+    elif st.session_state.ss_step == 2:
+        section("Step 3 of 6 — 當前宏觀環境")
+        st.markdown("請選擇目前您認為最相關的宏觀因素（可多選）：")
+
+        macro_chosen = st.multiselect(
+            "宏觀因素",
+            MACRO_FACTORS,
+            default=sel.get("macro", []),
+            label_visibility="collapsed",
+        )
+
+        if macro_chosen:
+            st.markdown("##### 宏觀解讀")
+            for m in macro_chosen:
+                if m in INSIGHTS:
+                    st.markdown(f"**{m}**：{INSIGHTS[m]}")
+
+        col_back, col_next = st.columns(2)
+        with col_back:
+            if st.button("← 上一步", use_container_width=True):
+                sel["macro"] = macro_chosen
+                st.session_state.ss_step = 1
+                st.rerun()
+        with col_next:
+            if st.button("下一步 →", type="primary", use_container_width=True):
+                sel["macro"] = macro_chosen
+                st.session_state.ss_step = 3
+                st.rerun()
+
+    # ────────────────────────────────────────────────────────────────
+    # STEP 3 – Asset Type
+    # ────────────────────────────────────────────────────────────────
+    elif st.session_state.ss_step == 3:
+        section("Step 4 of 6 — 資產類型")
+        st.markdown("請選擇想納入的資產類型（可多選）：")
+
+        mkt_code = sel.get("market", "US")
+        all_types_in_mkt = sorted({v["asset_type"] for v in ADB.get(mkt_code, {}).values()})
+
+        asset_types = st.multiselect(
+            "資產類型",
+            all_types_in_mkt,
+            default=sel.get("asset_types", all_types_in_mkt),
+            label_visibility="collapsed",
+        )
+
+        col_back, col_next = st.columns(2)
+        with col_back:
+            if st.button("← 上一步", use_container_width=True):
+                sel["asset_types"] = asset_types
+                st.session_state.ss_step = 2
+                st.rerun()
+        with col_next:
+            if asset_types and st.button("下一步 →", type="primary", use_container_width=True):
+                sel["asset_types"] = asset_types
+                st.session_state.ss_step = 4
+                st.rerun()
+
+        if not asset_types:
+            st.warning("請至少選擇一種資產類型")
+
+    # ────────────────────────────────────────────────────────────────
+    # STEP 4 – Industry
+    # ────────────────────────────────────────────────────────────────
+    elif st.session_state.ss_step == 4:
+        section("Step 5 of 6 — 產業篩選")
+
+        mkt_code    = sel.get("market", "US")
+        strategy    = sel.get("strategy", "growth")
+        macro_list  = sel.get("macro", [])
+        asset_types = sel.get("asset_types", [])
+
+        industries_in_mkt = ADB.get(mkt_code, {})
+
+        # Score each industry for relevance
+        scored: list[tuple[str, int, str]] = []
+        for ind_name, ind_data in industries_in_mkt.items():
+            if ind_data["asset_type"] not in asset_types:
+                continue
+            score = 0
+            # Strategy match
+            if strategy in ind_data["strats"]:
+                score += 3
+            # Macro boost
+            for m in macro_list:
+                if ind_name in MACRO_BOOST.get(m, []):
+                    score += 2
+                if m in ind_data.get("macro", []):
+                    score += 1
+            scored.append((ind_name, score, ind_data.get("desc", "")))
+
+        # Sort by relevance score
+        scored.sort(key=lambda x: -x[1])
+
+        if not scored:
+            st.warning("目前篩選條件下沒有符合的產業，請返回調整設定。")
+        else:
+            st.markdown("依宏觀環境與策略適配度排序（⭐ 越高越匹配）：")
+            industry_options = []
+            for name, score, desc in scored:
+                stars = "⭐" * min(score, 5) if score > 0 else "☆"
+                industry_options.append(f"{stars} {name} — {desc}"[:90])
+
+            # Map display → name
+            display_map = {opt: scored[i][0] for i, opt in enumerate(industry_options)}
+
+            # Pre-select previously chosen industries
+            prev_ind = sel.get("industries", [])
+            default_display = [opt for opt, name in display_map.items() if name in prev_ind]
+
+            chosen_display = st.multiselect(
+                "選擇一個或多個產業",
+                industry_options,
+                default=default_display,
+                label_visibility="collapsed",
+            )
+            chosen_industries = [display_map[d] for d in chosen_display]
+
+        col_back, col_next = st.columns(2)
+        with col_back:
+            if st.button("← 上一步", use_container_width=True):
+                st.session_state.ss_step = 3
+                st.rerun()
+        with col_next:
+            if scored and chosen_industries and st.button("查看選股結果 →", type="primary", use_container_width=True):
+                sel["industries"] = chosen_industries
+                st.session_state.ss_step = 5
+                st.rerun()
+
+    # ────────────────────────────────────────────────────────────────
+    # STEP 5 – Results
+    # ────────────────────────────────────────────────────────────────
+    elif st.session_state.ss_step == 5:
+        section("Step 6 of 6 — 選股結果")
+
+        mkt_code    = sel.get("market", "US")
+        strategy    = sel.get("strategy", "growth")
+        macro_list  = sel.get("macro", [])
+        industries  = sel.get("industries", [])
+
+        mkt_label  = next((k for k, v in MKTS.items() if v == mkt_code), mkt_code)
+        strat_label = STRATS.get(strategy, {}).get("label", strategy)
+
+        # Summary chips
+        chip_style = "background:#1E88E5;padding:3px 10px;border-radius:12px;font-size:0.75rem;margin:2px;display:inline-block"
+        chips_html = "".join(
+            f"<span style='{chip_style}'>{t}</span>"
+            for t in [mkt_label, strat_label] + macro_list + industries
+        )
+        st.markdown(chips_html, unsafe_allow_html=True)
+        st.markdown("")
+
+        # Collect candidates
+        mkt_db = ADB.get(mkt_code, {})
+        candidates: list[str] = []
+        industry_map: dict[str, str] = {}  # ticker → industry
+        for ind in industries:
+            for tkr in mkt_db.get(ind, {}).get("tickers", []):
+                candidates.append(tkr)
+                industry_map[tkr] = ind
+        candidates = list(dict.fromkeys(candidates))  # deduplicate, preserve order
+
+        if not candidates:
+            st.warning("沒有找到候選股票，請返回調整篩選條件。")
+            if st.button("← 重新選擇"):
+                st.session_state.ss_step = 4
+                st.rerun()
+            return
+
+        st.caption(f"候選標的 {len(candidates)} 檔：{', '.join(candidates[:12])}{'…' if len(candidates) > 12 else ''}")
+
+        # ── Live price fetch ─────────────────────────────────────────
+        section("即時行情")
+        with st.spinner(f"抓取 {len(candidates)} 檔即時報價…"):
+            try:
+                import yfinance as yf
+                raw = yf.download(
+                    candidates, period="1y", auto_adjust=True, progress=False
+                )
+                if isinstance(raw.columns, pd.MultiIndex):
+                    px_close = raw["Close"].dropna(how="all")
+                else:
+                    px_close = raw[["Close"]].rename(columns={"Close": candidates[0]})
+                valid = [c for c in candidates if c in px_close.columns and not px_close[c].dropna().empty]
+            except Exception as e:
+                st.error(f"行情下載失敗：{e}")
+                valid = []
+                px_close = pd.DataFrame()
+
+        if valid:
+            # Build summary table
+            rows = []
+            for tkr in valid:
+                s = px_close[tkr].dropna()
+                if len(s) < 10:
+                    continue
+                last = float(s.iloc[-1])
+                chg1d = float((s.iloc[-1] / s.iloc[-2] - 1)) if len(s) >= 2 else np.nan
+                chg1m = float((s.iloc[-1] / s.iloc[-22] - 1)) if len(s) >= 22 else np.nan
+                chg3m = float((s.iloc[-1] / s.iloc[-63] - 1)) if len(s) >= 63 else np.nan
+                ann_vol = float(s.pct_change().dropna().std() * np.sqrt(252))
+                rows.append({
+                    "代碼": tkr,
+                    "產業": industry_map.get(tkr, ""),
+                    "現價": last,
+                    "1日%": chg1d,
+                    "1月%": chg1m,
+                    "3月%": chg3m,
+                    "年化波動": ann_vol,
+                })
+
+            tbl = pd.DataFrame(rows).set_index("代碼")
+            fmt = {
+                "現價": "{:.2f}",
+                "1日%": "{:.2%}",
+                "1月%": "{:.2%}",
+                "3月%": "{:.2%}",
+                "年化波動": "{:.2%}",
+            }
+
+            def color_ret(val):
+                if isinstance(val, float) and not np.isnan(val):
+                    return "color: #4CAF50" if val > 0 else "color: #F44336"
+                return ""
+
+            styled = (
+                tbl.style
+                .format(fmt, na_rep="—")
+                .applymap(color_ret, subset=["1日%", "1月%", "3月%"])
+            )
+            st.dataframe(styled, use_container_width=True)
+
+            # ── Performance chart ────────────────────────────────────
+            section("相對績效走勢 (近1年 = 100)")
+            show_tickers = st.multiselect(
+                "選擇標的對比",
+                valid,
+                default=valid[:min(6, len(valid))],
+                key="chart_tickers",
+            )
+            if show_tickers:
+                fig = go.Figure()
+                colors = px.colors.qualitative.Plotly
+                for i, tkr in enumerate(show_tickers):
+                    s = px_close[tkr].dropna()
+                    norm = s / s.iloc[0] * 100
+                    fig.add_trace(go.Scatter(
+                        x=norm.index, y=norm.values, name=tkr,
+                        mode="lines", line=dict(width=2, color=colors[i % len(colors)]),
+                    ))
+                fig.update_layout(
+                    **PLOTLY_LAYOUT,
+                    title="Indexed Price Performance (Base = 100)",
+                    height=420,
+                    hovermode="x unified",
+                    yaxis_title="Index (100 = start)",
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+            # ── Return distribution ──────────────────────────────────
+            if len(show_tickers) > 1:
+                section("報酬分佈對比")
+                rets_df = px_close[show_tickers].pct_change().dropna()
+                fig2 = go.Figure()
+                colors = px.colors.qualitative.Plotly
+                for i, tkr in enumerate(show_tickers):
+                    fig2.add_trace(go.Violin(
+                        y=rets_df[tkr].values, name=tkr,
+                        box_visible=True, meanline_visible=True,
+                        line_color=colors[i % len(colors)], opacity=0.7,
+                    ))
+                fig2.update_layout(
+                    **PLOTLY_LAYOUT, title="Daily Return Distribution",
+                    height=380, yaxis_title="Daily Return",
+                )
+                st.plotly_chart(fig2, use_container_width=True)
+
+        # ── AI Analysis ──────────────────────────────────────────────
+        section("AI 深度分析")
+        with st.expander("使用 LLM 生成機構選股報告", expanded=False):
+            col1, col2 = st.columns([2, 1])
+            with col1:
+                ai_key = st.text_input("API Key", type="password",
+                                       placeholder="sk-… 或 Anthropic key",
+                                       key="stk_api_key")
+            with col2:
+                ai_model = st.selectbox("模型", [
+                    "gpt-4o-mini", "gpt-4o",
+                    "claude-3-5-haiku-20241022", "claude-3-5-sonnet-20241022",
+                ], key="stk_model")
+            ai_base = st.text_input("API Base URL（空白自動偵測）", "", key="stk_base")
+
+            if st.button("生成選股報告", type="primary", key="stk_gen"):
+                if not ai_key:
+                    st.error("請填入 API Key")
+                else:
+                    # Build context
+                    ind_lines = []
+                    for ind in industries:
+                        ind_data = mkt_db.get(ind, {})
+                        tickers_str = ", ".join(ind_data.get("tickers", [])[:8])
+                        ind_lines.append(f"- {ind}：{ind_data.get('desc', '')}（代表標的：{tickers_str}）")
+
+                    macro_str = "、".join(macro_list) if macro_list else "無特定宏觀偏好"
+                    strat_str = STRATS.get(strategy, {}).get("label", strategy)
+
+                    prompt = (
+                        f"你是一位資深機構投資分析師。請根據以下投資框架，"
+                        f"以繁體中文撰寫一份專業選股報告：\n\n"
+                        f"**目標市場**：{mkt_label}\n"
+                        f"**投資策略**：{strat_str}\n"
+                        f"**宏觀環境**：{macro_str}\n"
+                        f"**篩選產業**：\n" + "\n".join(ind_lines) + "\n\n"
+                        "請提供：\n"
+                        "1. 📊 市場環境評估（2-3段）\n"
+                        "2. 🎯 重點標的推薦（每個產業各2-3檔，說明邏輯）\n"
+                        "3. ⚠️ 主要風險提示\n"
+                        "4. 📅 時間框架建議（短中長期配置比例）\n"
+                        "報告應具體、數據導向、符合機構投資標準。"
+                    )
+
+                    with st.spinner("AI 正在生成報告…"):
+                        try:
+                            client = _llm_client(ai_key, ai_base, ai_model)
+                            resp = client.chat.completions.create(
+                                model=ai_model,
+                                messages=[{"role": "user", "content": prompt}],
+                                temperature=0.3,
+                                max_tokens=1500,
+                            )
+                            ai_report = resp.choices[0].message.content.strip()
+                            st.session_state["stk_report"] = ai_report
+                        except Exception as e:
+                            st.error(f"報告生成失敗：{e}")
+
+            if st.session_state.get("stk_report"):
+                st.markdown("---")
+                st.markdown(st.session_state["stk_report"])
+                st.download_button(
+                    "⬇ 下載選股報告",
+                    data=st.session_state["stk_report"],
+                    file_name=f"stk_report_{date.today()}.txt",
+                    mime="text/plain",
+                )
+
+        # ── Navigation ───────────────────────────────────────────────
+        st.markdown("---")
+        col_back, col_reset = st.columns(2)
+        with col_back:
+            if st.button("← 修改產業選擇", use_container_width=True):
+                st.session_state.ss_step = 4
+                st.rerun()
+        with col_reset:
+            if st.button("🔄 重新開始", use_container_width=True):
+                st.session_state.ss_step = 0
+                st.session_state.ss_sel = {}
+                if "stk_report" in st.session_state:
+                    del st.session_state["stk_report"]
+                st.rerun()
+
+
+# ════════════════════════════════════════════════════════════════════
 # PAGE: Export Report
 # ════════════════════════════════════════════════════════════════════
 
@@ -1194,6 +1660,7 @@ PAGES = {
     "🔗 Correlation & Beta": page_corr_beta,
     "💳 Credit Model": page_credit,
     "📰 News & Sentiment": page_news_sentiment,
+    "🏦 機構選股": page_stock_selector,
     "📦 Export Report": page_export,
 }
 
