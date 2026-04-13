@@ -1120,10 +1120,26 @@ def page_news_sentiment():
 # ════════════════════════════════════════════════════════════════════
 
 def page_stock_selector():
-    from stock_db import (
-        ADB, MKTS, STRATS, MACRO_FACTORS, MACRO_BOOST,
-        INSIGHTS, MWARN, MAVOID,
-    )
+    try:
+        from stock_db import (
+            ADB, MKTS, STRATS, MACRO_FACTORS, MACRO_BOOST,
+            INSIGHTS, MWARN, MAVOID,
+        )
+    except ModuleNotFoundError:
+        st.title("🏦 機構選股模型")
+        st.error("❌ 找不到 `stock_db.py`，請在 Colab Cell 2 重新同步檔案：")
+        st.code(
+            "import urllib.request\n"
+            "REPO   = 'RoyARVSA/RBS_claude_finance'\n"
+            "BRANCH = 'claude/optimize-analysis-dashboard-NZUKB'\n"
+            "url = 'https://raw.githubusercontent.com/' + REPO + '/' + BRANCH + '/stock_db.py'\n"
+            "dst = DRIVE_BASE / 'stock_db.py'\n"
+            "urllib.request.urlretrieve(url, dst)\n"
+            "print('stock_db.py downloaded:', dst.stat().st_size, 'bytes')",
+            language="python",
+        )
+        st.info("下載後重新整理頁面即可。")
+        return
 
     st.title("🏦 機構選股模型")
     st.caption("六步驟系統化篩選流程，結合宏觀環境、策略偏好與產業輪動")
