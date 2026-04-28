@@ -160,6 +160,8 @@ with st.sidebar:
             "📈 持倉分析",
             "⚠️ 風險管理",
             "🔍 股票研究",
+            "🚨 即時警報",
+            "🛠️ 交易工具",
             "🏦 機構選股",
             "📰 新聞情報",
             "💳 信用模型",
@@ -168,7 +170,7 @@ with st.sidebar:
         label_visibility="collapsed",
     )
     st.markdown("---")
-    st.caption("RBS Finance Dashboard v3.0")
+    st.caption("RBS Finance Dashboard v4.0")
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -2408,6 +2410,529 @@ def page_stock_research():
 
 
 # ════════════════════════════════════════════════════════════════════
+# PAGE: Real-time Alerts & Monitoring
+# ════════════════════════════════════════════════════════════════════
+
+ALERTS_FILE = BASE_DIR / "alerts_config.json"
+
+
+def _load_alerts_config() -> dict:
+    import json as _json
+    if ALERTS_FILE.exists():
+        try:
+            return _json.loads(ALERTS_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {
+        "watchlist": ["AAPL", "MSFT", "NVDA", "2330.TW", "SPY"],
+        "alerts":    [],
+        "telegram":  {"enabled": False, "token": "", "chat_id": ""},
+        "email":     {"enabled": False, "smtp": "smtp.gmail.com", "port": 465,
+                      "user": "", "password": "", "to": ""},
+    }
+
+
+def _save_alerts_config(cfg: dict) -> None:
+    import json as _json
+    ALERTS_FILE.write_text(
+        _json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
+
+def _send_telegram(token: str, chat_id: str, message: str) -> tuple[bool, str]:
+    import requests
+    try:
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        r = requests.post(
+            url,
+            json={"chat_id": chat_id, "text": message, "parse_mode": "Markdown"},
+            timeout=10,
+        )
+        return (r.ok, r.text if not r.ok else "OK")
+    except Exception as e:
+        return (False, str(e))
+
+
+def _send_email(smtp_host: str, port: int, user: str, pwd: str,
+                to_addr: str, subject: str, body: str) -> tuple[bool, str]:
+    import smtplib
+    from email.mime.text import MIMEText
+    try:
+        msg = MIMEText(body, "plain", "utf-8")
+        msg["Subject"] = subject
+        msg["From"] = user
+        msg["To"] = to_addr
+        with smtplib.SMTP_SSL(smtp_host, int(port), timeout=15) as srv:
+            srv.login(user, pwd)
+            srv.send_message(msg)
+        return (True, "OK")
+    except Exception as e:
+        return (False, str(e))
+
+
+def page_alerts():
+    import yfinance as yf
+    st.title("🚨 即時警報 & 監控")
+    st.caption("監控清單 · 1 分鐘走勢 · 技術訊號掃描 · Telegram / Email 推播")
+
+    cfg = _load_alerts_config()
+
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "📋 監控清單", "📊 即時走勢", "⚡ 訊號掃描", "🔔 通知設定",
+    ])
+
+    # ── Tab 1: Watchlist editor ────────────────────────────────────
+    with tab1:
+        section("我的監控清單")
+        st.caption("在此維護要監控的股票/ETF/外匯代碼，會持久化到 alerts_config.json")
+        wl_text = st.text_area(
+            "代碼清單（每行一個）",
+            value="\n".join(cfg.get("watchlist", [])),
+            height=200,
+            placeholder="AAPL\nMSFT\nNVDA\n2330.TW\nBTC-USD\nEURUSD=X",
+        )
+        if st.button("💾 儲存清單", type="primary", key="wl_save"):
+            cfg["watchlist"] = [t.strip().upper() for t in wl_text.split("\n") if t.strip()]
+            _save_alerts_config(cfg)
+            st.success(f"已儲存 {len(cfg['watchlist'])} 檔標的到 {ALERTS_FILE.name}")
+
+        if cfg.get("watchlist"):
+            section("最新報價快照")
+            with st.spinner("抓取報價…"):
+                try:
+                    raw = yf.download(
+                        cfg["watchlist"], period="5d",
+                        auto_adjust=True, progress=False,
+                    )
+                    cl = (raw["Close"] if isinstance(raw.columns, pd.MultiIndex)
+                          else raw).ffill()
+                    rows = []
+                    for tk in cfg["watchlist"]:
+                        if tk in cl.columns:
+                            s = cl[tk].dropna()
+                            if len(s) >= 2:
+                                rows.append({
+                                    "代碼": tk,
+                                    "現價": float(s.iloc[-1]),
+                                    "1日%": float(s.iloc[-1] / s.iloc[-2] - 1),
+                                    "5日%": float(s.iloc[-1] / s.iloc[0] - 1),
+                                })
+                    if rows:
+                        snap_df = pd.DataFrame(rows).set_index("代碼")
+                        def _color(v):
+                            if isinstance(v, float) and not np.isnan(v):
+                                return "color:#4CAF50" if v > 0 else "color:#F44336"
+                            return ""
+                        st.dataframe(
+                            snap_df.style.format({"現價": "{:.2f}", "1日%": "{:.2%}", "5日%": "{:.2%}"})
+                                          .applymap(_color, subset=["1日%", "5日%"]),
+                            use_container_width=True,
+                        )
+                except Exception as e:
+                    st.error(f"報價抓取失敗：{e}")
+
+    # ── Tab 2: Intraday chart ──────────────────────────────────────
+    with tab2:
+        ic1, ic2, ic3 = st.columns([2, 1, 1])
+        with ic1:
+            intra_t = st.selectbox(
+                "選擇代碼", cfg.get("watchlist", ["AAPL"]) or ["AAPL"], key="intra_t"
+            )
+        with ic2:
+            intra_int = st.selectbox(
+                "間隔", ["1m", "2m", "5m", "15m", "30m", "60m"], index=2, key="intra_int"
+            )
+        with ic3:
+            intra_per = st.selectbox(
+                "範圍", ["1d", "2d", "5d", "1mo"], index=2, key="intra_per"
+            )
+
+        if st.button("🔄 刷新", key="intra_refresh"):
+            st.cache_data.clear()
+
+        if intra_t:
+            with st.spinner(f"載入 {intra_t} 即時數據…"):
+                try:
+                    intra = yf.download(
+                        intra_t, period=intra_per, interval=intra_int,
+                        auto_adjust=True, progress=False,
+                    )
+                    if isinstance(intra.columns, pd.MultiIndex):
+                        intra.columns = intra.columns.droplevel(1)
+                except Exception as e:
+                    st.error(f"載入失敗：{e}")
+                    intra = pd.DataFrame()
+
+            if not intra.empty:
+                last = float(intra["Close"].iloc[-1])
+                first = float(intra["Open"].iloc[0])
+                day_chg = last / first - 1
+                day_high = float(intra["High"].max())
+                day_low  = float(intra["Low"].min())
+                day_vol  = int(intra["Volume"].sum())
+                ic_a, ic_b, ic_c, ic_d, ic_e = st.columns(5)
+                with ic_a: metric_card("最新價",  f"{last:.2f}")
+                with ic_b: metric_card("區間漲跌", f"{day_chg:+.2%}", positive=day_chg >= 0)
+                with ic_c: metric_card("區間高",  f"{day_high:.2f}")
+                with ic_d: metric_card("區間低",  f"{day_low:.2f}")
+                with ic_e: metric_card("總量",    f"{day_vol:,}")
+
+                fig_i = make_subplots(rows=2, cols=1, row_heights=[0.75, 0.25],
+                                      shared_xaxes=True, vertical_spacing=0.02)
+                fig_i.add_trace(go.Candlestick(
+                    x=intra.index, open=intra["Open"], high=intra["High"],
+                    low=intra["Low"], close=intra["Close"], name="Price",
+                    increasing_line_color="#4CAF50", decreasing_line_color="#F44336",
+                ), row=1, col=1)
+                # VWAP
+                if "Volume" in intra.columns and intra["Volume"].sum() > 0:
+                    typ = (intra["High"] + intra["Low"] + intra["Close"]) / 3
+                    vwap = (typ * intra["Volume"]).cumsum() / intra["Volume"].cumsum()
+                    fig_i.add_trace(go.Scatter(
+                        x=vwap.index, y=vwap.values, name="VWAP",
+                        line=dict(color="#FFC107", width=2),
+                    ), row=1, col=1)
+                fig_i.add_trace(go.Bar(
+                    x=intra.index, y=intra["Volume"], name="Vol",
+                    marker_color="#1E88E5", opacity=0.4,
+                ), row=2, col=1)
+                fig_i.update_layout(
+                    **PLOTLY_LAYOUT, height=520, showlegend=True,
+                    xaxis_rangeslider_visible=False,
+                    title=f"{intra_t} · {intra_int} 間隔 · {intra_per} 範圍",
+                )
+                st.plotly_chart(fig_i, use_container_width=True)
+            else:
+                st.info("此代碼沒有可用的盤中資料（亞股盤後/週末會空）。")
+
+    # ── Tab 3: Signal scanner ──────────────────────────────────────
+    with tab3:
+        section("技術訊號掃描器")
+        st.caption("掃描監控清單，找出符合條件的標的")
+        sc1, sc2, sc3 = st.columns(3)
+        with sc1:
+            sig_rsi_lo = st.number_input("RSI 超賣門檻", 10, 50, 30, 5, key="sig_rl")
+        with sc2:
+            sig_rsi_hi = st.number_input("RSI 超買門檻", 50, 90, 70, 5, key="sig_rh")
+        with sc3:
+            sig_chg_th = st.number_input("單日漲跌警示 (±%)", 1, 20, 3, 1, key="sig_ch") / 100
+
+        if st.button("🔍 開始掃描", type="primary", key="sig_scan"):
+            wl = cfg.get("watchlist", [])
+            if not wl:
+                st.warning("請先在「監控清單」加入代碼")
+            else:
+                with st.spinner(f"掃描 {len(wl)} 檔標的…"):
+                    try:
+                        raw_sg = yf.download(
+                            wl, period="3mo", auto_adjust=True, progress=False,
+                        )
+                        cl_sg = (raw_sg["Close"] if isinstance(raw_sg.columns, pd.MultiIndex)
+                                 else raw_sg).ffill()
+                        signals = []
+                        for tk in wl:
+                            if tk not in cl_sg.columns:
+                                continue
+                            s = cl_sg[tk].dropna()
+                            if len(s) < 50:
+                                continue
+                            r = s.pct_change().dropna()
+                            gain = r.clip(lower=0).rolling(14).mean()
+                            loss = (-r).clip(lower=0).rolling(14).mean()
+                            rs   = gain / loss.replace(0, np.nan)
+                            rsi  = float((100 - 100 / (1 + rs)).dropna().iloc[-1]) if not rs.dropna().empty else np.nan
+                            ma20 = float(s.rolling(20).mean().iloc[-1])
+                            ma50 = float(s.rolling(50).mean().iloc[-1]) if len(s) >= 50 else np.nan
+                            day_c = float(s.iloc[-1] / s.iloc[-2] - 1)
+                            tags = []
+                            if not np.isnan(rsi):
+                                if rsi <= sig_rsi_lo: tags.append("🟢 RSI 超賣")
+                                if rsi >= sig_rsi_hi: tags.append("🔴 RSI 超買")
+                            if not np.isnan(ma50) and len(s) >= 51:
+                                ma50_prev = float(s.rolling(50).mean().iloc[-2])
+                                ma20_prev = float(s.rolling(20).mean().iloc[-2])
+                                if ma20_prev < ma50_prev and ma20 > ma50: tags.append("🟢 黃金交叉")
+                                if ma20_prev > ma50_prev and ma20 < ma50: tags.append("🔴 死亡交叉")
+                            if abs(day_c) >= sig_chg_th:
+                                tags.append(f"⚡ 大幅變動 {day_c:+.2%}")
+                            if tags:
+                                signals.append({
+                                    "代碼": tk, "現價": float(s.iloc[-1]),
+                                    "1日%": day_c, "RSI(14)": rsi,
+                                    "訊號": " · ".join(tags),
+                                })
+                        if signals:
+                            sg_df = pd.DataFrame(signals).set_index("代碼")
+                            st.success(f"找到 {len(signals)} 檔觸發訊號")
+                            st.dataframe(
+                                sg_df.style.format({"現價": "{:.2f}", "1日%": "{:.2%}", "RSI(14)": "{:.1f}"}),
+                                use_container_width=True,
+                            )
+                            st.session_state["last_signals"] = signals
+                        else:
+                            st.info("目前沒有觸發任何訊號。")
+                    except Exception as e:
+                        st.error(f"掃描失敗：{e}")
+
+        # Push notifications
+        if st.session_state.get("last_signals"):
+            st.markdown("---")
+            section("推送掃描結果")
+            push_cols = st.columns(2)
+            with push_cols[0]:
+                if st.button("📨 推送到 Telegram", key="push_tg",
+                             disabled=not cfg.get("telegram", {}).get("enabled")):
+                    sigs = st.session_state["last_signals"]
+                    msg_lines = ["🚨 *RBS 訊號掃描*", f"_時間：{pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}_", ""]
+                    for s in sigs:
+                        msg_lines.append(f"`{s['代碼']}` {s['現價']:.2f} ({s['1日%']:+.2%})")
+                        msg_lines.append(f"  → {s['訊號']}")
+                    msg = "\n".join(msg_lines)
+                    ok, info = _send_telegram(
+                        cfg["telegram"]["token"], cfg["telegram"]["chat_id"], msg
+                    )
+                    if ok: st.success("Telegram 已送出")
+                    else:  st.error(f"送出失敗：{info}")
+            with push_cols[1]:
+                if st.button("📧 寄送 Email", key="push_em",
+                             disabled=not cfg.get("email", {}).get("enabled")):
+                    sigs = st.session_state["last_signals"]
+                    body = f"RBS 訊號掃描結果\n時間：{pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}\n\n"
+                    for s in sigs:
+                        body += f"{s['代碼']:<10} {s['現價']:>10.2f}  {s['1日%']:>+7.2%}  {s['訊號']}\n"
+                    em = cfg["email"]
+                    ok, info = _send_email(
+                        em["smtp"], em["port"], em["user"], em["password"],
+                        em["to"], "RBS 訊號掃描", body,
+                    )
+                    if ok: st.success("Email 已送出")
+                    else:  st.error(f"送出失敗：{info}")
+
+    # ── Tab 4: Notification settings ───────────────────────────────
+    with tab4:
+        section("📨 Telegram Bot")
+        st.markdown(
+            """
+            **快速設定（3 步）：**
+            1. 在 Telegram 找 `@BotFather`，輸入 `/newbot` 取得 **Token**
+            2. 把你的 Bot 加為好友後傳一句話給它
+            3. 開瀏覽器訪問 `https://api.telegram.org/bot<TOKEN>/getUpdates`，找到你的 **chat_id**
+            """
+        )
+        tg_en = st.checkbox("啟用 Telegram", value=cfg["telegram"].get("enabled", False), key="tg_en")
+        tg_tk = st.text_input("Bot Token", value=cfg["telegram"].get("token", ""),
+                              type="password", key="tg_tk")
+        tg_id = st.text_input("Chat ID", value=cfg["telegram"].get("chat_id", ""), key="tg_id")
+        tg_c1, tg_c2 = st.columns(2)
+        with tg_c1:
+            if st.button("💾 儲存 Telegram 設定", key="tg_save"):
+                cfg["telegram"] = {"enabled": tg_en, "token": tg_tk, "chat_id": tg_id}
+                _save_alerts_config(cfg)
+                st.success("已儲存")
+        with tg_c2:
+            if st.button("🧪 發送測試訊息", key="tg_test"):
+                ok, info = _send_telegram(tg_tk, tg_id, "🧪 *RBS Dashboard 測試訊息*\n設定成功！")
+                st.success("已送出，請檢查 Telegram") if ok else st.error(f"失敗：{info}")
+
+        st.markdown("---")
+        section("📧 Email (SMTP)")
+        st.caption("Gmail：需要先在 Google 帳戶 → 安全性 → 兩步驟驗證 → 應用程式密碼")
+        em_en = st.checkbox("啟用 Email", value=cfg["email"].get("enabled", False), key="em_en")
+        em_c1, em_c2 = st.columns(2)
+        with em_c1:
+            em_host = st.text_input("SMTP Host", value=cfg["email"].get("smtp", "smtp.gmail.com"), key="em_host")
+            em_user = st.text_input("帳號 (寄件者)", value=cfg["email"].get("user", ""), key="em_user")
+            em_to   = st.text_input("收件者", value=cfg["email"].get("to", ""), key="em_to")
+        with em_c2:
+            em_port = st.number_input("Port", 1, 65535, int(cfg["email"].get("port", 465)), key="em_port")
+            em_pwd  = st.text_input("密碼/應用程式密碼", value=cfg["email"].get("password", ""),
+                                    type="password", key="em_pwd")
+        em_b1, em_b2 = st.columns(2)
+        with em_b1:
+            if st.button("💾 儲存 Email 設定", key="em_save"):
+                cfg["email"] = {"enabled": em_en, "smtp": em_host, "port": int(em_port),
+                                "user": em_user, "password": em_pwd, "to": em_to}
+                _save_alerts_config(cfg)
+                st.success("已儲存")
+        with em_b2:
+            if st.button("🧪 發送測試 Email", key="em_test"):
+                ok, info = _send_email(em_host, int(em_port), em_user, em_pwd,
+                                       em_to, "RBS 測試", "RBS Dashboard 測試成功！")
+                st.success("已送出") if ok else st.error(f"失敗：{info}")
+
+
+# ════════════════════════════════════════════════════════════════════
+# PAGE: Trading Tools (Position Sizing / Kelly / R:R / Compound)
+# ════════════════════════════════════════════════════════════════════
+
+def page_trading_tools():
+    st.title("🛠️ 交易工具")
+    st.caption("部位大小計算 · Kelly 公式 · 風險報酬比 · 複利計算")
+
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "📐 部位大小", "🎲 Kelly 公式", "🎯 風險報酬比", "💰 複利計算",
+    ])
+
+    # ── Tab 1: Position sizing ─────────────────────────────────────
+    with tab1:
+        section("部位大小計算（基於風險）")
+        st.caption("公式：部位金額 = (帳戶 × 風險%) ÷ (進場價 − 停損價) × 進場價")
+        ps1, ps2 = st.columns(2)
+        with ps1:
+            acct = st.number_input("帳戶總值 (USD)", 100.0, 1e9, 100_000.0, step=1_000.0, key="ps_acct")
+            risk_pct = st.slider("單筆風險 (%)", 0.1, 5.0, 1.0, 0.1, key="ps_rp") / 100
+        with ps2:
+            entry = st.number_input("進場價", 0.01, 1e6, 100.0, step=0.5, key="ps_e")
+            stop  = st.number_input("停損價", 0.01, 1e6,  95.0, step=0.5, key="ps_s")
+
+        risk_per_share = abs(entry - stop)
+        risk_amount = acct * risk_pct
+        if risk_per_share > 0:
+            shares = int(risk_amount / risk_per_share)
+            position_value = shares * entry
+            position_pct = position_value / acct
+        else:
+            shares = 0
+            position_value = 0
+            position_pct = 0
+
+        st.markdown("---")
+        ps_a, ps_b, ps_c, ps_d = st.columns(4)
+        with ps_a: metric_card("可承受損失",  f"${risk_amount:,.0f}")
+        with ps_b: metric_card("每股風險",    f"${risk_per_share:.2f}")
+        with ps_c: metric_card("建議股數",    f"{shares:,}")
+        with ps_d: metric_card("部位金額",    f"${position_value:,.0f}",
+                               positive=position_pct < 0.5)
+        st.info(f"此部位佔帳戶 **{position_pct:.1%}**" +
+                ("，槓桿較重" if position_pct > 0.5 else ""))
+
+    # ── Tab 2: Kelly criterion ─────────────────────────────────────
+    with tab2:
+        section("Kelly 公式 — 最佳下注比例")
+        st.caption("公式：f* = (bp - q) / b，b = 賠率，p = 勝率，q = 1-p")
+        ke1, ke2 = st.columns(2)
+        with ke1:
+            wr = st.slider("勝率 p (%)",  10.0, 90.0, 55.0, 0.5, key="k_wr") / 100
+        with ke2:
+            wlr = st.number_input("賠率 b（賺/賠 比）", 0.1, 20.0, 2.0, 0.1, key="k_b")
+
+        kelly = (wlr * wr - (1 - wr)) / wlr if wlr > 0 else 0
+        kelly = max(kelly, 0)
+
+        ke_a, ke_b, ke_c = st.columns(3)
+        with ke_a: metric_card("Full Kelly",    f"{kelly:.2%}")
+        with ke_b: metric_card("Half Kelly",    f"{kelly/2:.2%}",  positive=True)
+        with ke_c: metric_card("Quarter Kelly", f"{kelly/4:.2%}",  positive=True)
+
+        st.markdown(
+            "**建議**：實務上很少有人壓 Full Kelly（波動極大），"
+            "多數機構與專業交易者用 **Half/Quarter Kelly** 以降低 Drawdown。"
+        )
+
+        # Kelly curve
+        ws_arr = np.arange(0.01, 1.0, 0.01)
+        f_arr = np.array([(wlr * x - (1 - x)) / wlr for x in ws_arr])
+        f_arr = np.maximum(f_arr, 0)
+        fig_k = go.Figure()
+        fig_k.add_trace(go.Scatter(x=ws_arr * 100, y=f_arr * 100,
+                                   name="Optimal Kelly %",
+                                   line=dict(color="#1E88E5", width=2)))
+        fig_k.add_vline(x=wr * 100, line_dash="dash", line_color="#F44336",
+                        annotation_text=f"勝率 {wr:.1%}")
+        fig_k.update_layout(**PLOTLY_LAYOUT, height=320,
+                            title=f"Kelly 曲線（賠率 b = {wlr:.1f}）",
+                            xaxis_title="勝率 (%)", yaxis_title="最佳下注 %")
+        st.plotly_chart(fig_k, use_container_width=True)
+
+    # ── Tab 3: Risk:Reward ─────────────────────────────────────────
+    with tab3:
+        section("風險報酬比 R:R 分析")
+        rr1, rr2, rr3 = st.columns(3)
+        with rr1: rr_e = st.number_input("進場價",   0.01, 1e6, 100.0, step=0.5, key="rr_e")
+        with rr2: rr_s = st.number_input("停損價",   0.01, 1e6,  95.0, step=0.5, key="rr_s")
+        with rr3: rr_t = st.number_input("目標價",   0.01, 1e6, 115.0, step=0.5, key="rr_t")
+
+        risk = abs(rr_e - rr_s)
+        reward = abs(rr_t - rr_e)
+        ratio = reward / risk if risk > 0 else 0
+        be_wr = 1 / (1 + ratio) if ratio > 0 else 1.0
+
+        rr_a, rr_b, rr_c, rr_d = st.columns(4)
+        with rr_a: metric_card("風險 R",    f"${risk:.2f}")
+        with rr_b: metric_card("回報",      f"${reward:.2f}")
+        with rr_c: metric_card("R:R",       f"1 : {ratio:.2f}", positive=ratio >= 2)
+        with rr_d: metric_card("損益兩平勝率", f"{be_wr:.1%}")
+
+        if ratio >= 3:
+            st.success("✅ R:R ≥ 3，極佳的風險報酬結構")
+        elif ratio >= 2:
+            st.info("👍 R:R ≥ 2，符合多數策略最低門檻")
+        elif ratio >= 1:
+            st.warning("⚠️ R:R 偏低，需要高勝率才能獲利")
+        else:
+            st.error("❌ R:R < 1，數學期望值不利")
+
+        # Expected value sweep
+        wr_range = np.linspace(0.3, 0.8, 51)
+        ev = wr_range * reward - (1 - wr_range) * risk
+        fig_ev = go.Figure()
+        fig_ev.add_trace(go.Scatter(x=wr_range * 100, y=ev,
+                                    fill="tozeroy", line=dict(color="#1E88E5", width=2)))
+        fig_ev.add_hline(y=0, line_dash="dash", line_color="#F44336")
+        fig_ev.add_vline(x=be_wr * 100, line_dash="dot", line_color="#FF9800",
+                         annotation_text=f"BE: {be_wr:.1%}")
+        fig_ev.update_layout(**PLOTLY_LAYOUT, height=320,
+                             title="期望值 vs 勝率",
+                             xaxis_title="勝率 (%)", yaxis_title="每筆期望值 ($)")
+        st.plotly_chart(fig_ev, use_container_width=True)
+
+    # ── Tab 4: Compound interest ───────────────────────────────────
+    with tab4:
+        section("複利計算（含定期投入）")
+        cm1, cm2, cm3 = st.columns(3)
+        with cm1:
+            cm_pv = st.number_input("初始本金", 0.0, 1e9, 100_000.0, step=10_000.0, key="cm_pv")
+        with cm2:
+            cm_pmt = st.number_input("每月定期投入", 0.0, 1e7, 1_000.0, step=500.0, key="cm_pmt")
+        with cm3:
+            cm_yrs = st.number_input("投資年數", 1, 60, 20, key="cm_yrs")
+        cm_r = st.slider("年化報酬率 (%)", 1.0, 25.0, 8.0, 0.5, key="cm_r") / 100
+
+        months = int(cm_yrs * 12)
+        monthly_r = cm_r / 12
+        balances = []
+        bal = cm_pv
+        contrib = cm_pv
+        for m in range(months + 1):
+            balances.append({"月": m, "餘額": bal, "累計投入": contrib})
+            bal = bal * (1 + monthly_r) + cm_pmt
+            contrib += cm_pmt
+        bal_df = pd.DataFrame(balances)
+
+        final_bal = bal_df["餘額"].iloc[-1]
+        total_contrib = bal_df["累計投入"].iloc[-1]
+        gain = final_bal - total_contrib
+
+        fc_a, fc_b, fc_c, fc_d = st.columns(4)
+        with fc_a: metric_card("最終餘額",   f"${final_bal:,.0f}",   positive=True)
+        with fc_b: metric_card("累計投入",   f"${total_contrib:,.0f}")
+        with fc_c: metric_card("純複利收益", f"${gain:,.0f}",        positive=True)
+        with fc_d: metric_card("倍數",       f"{final_bal/cm_pv:.2f}x" if cm_pv > 0 else "—")
+
+        fig_c = go.Figure()
+        fig_c.add_trace(go.Scatter(x=bal_df["月"] / 12, y=bal_df["餘額"],
+                                   name="總資產", fill="tozeroy",
+                                   line=dict(color="#1E88E5", width=2)))
+        fig_c.add_trace(go.Scatter(x=bal_df["月"] / 12, y=bal_df["累計投入"],
+                                   name="累計投入",
+                                   line=dict(color="#FF9800", width=2, dash="dash")))
+        fig_c.update_layout(**PLOTLY_LAYOUT, height=420,
+                            title=f"資產成長軌跡（年化 {cm_r:.1%}）",
+                            xaxis_title="年", yaxis_title="USD")
+        st.plotly_chart(fig_c, use_container_width=True)
+
+
+# ════════════════════════════════════════════════════════════════════
 # Router
 # ════════════════════════════════════════════════════════════════════
 
@@ -2416,6 +2941,8 @@ PAGES = {
     "📈 持倉分析":  page_portfolio_performance,
     "⚠️ 風險管理":  page_risk_management,
     "🔍 股票研究":  page_stock_research,
+    "🚨 即時警報":  page_alerts,
+    "🛠️ 交易工具":  page_trading_tools,
     "🏦 機構選股":  page_stock_selector,
     "📰 新聞情報":  page_news_sentiment,
     "💳 信用模型":  page_credit,
