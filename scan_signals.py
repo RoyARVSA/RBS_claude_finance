@@ -232,8 +232,9 @@ def main() -> int:
     print("--------------------------------\n")
 
     if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
-        ok = _send_telegram(TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, message)
-        return 0 if ok else 1
+        _send_telegram(TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, message)
+    else:
+        print("Skipping Telegram: TELEGRAM_TOKEN or TELEGRAM_CHAT_ID not configured.")
 
     return 0
 
