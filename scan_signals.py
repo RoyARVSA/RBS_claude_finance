@@ -38,9 +38,9 @@ raw_watchlist = os.environ.get("WATCHLIST", "")
 WATCHLIST = [t.strip().upper() for t in raw_watchlist.split(",") if t.strip()] \
             if raw_watchlist else DEFAULT_WATCHLIST
 
-RSI_OVERSOLD   = float(os.environ.get("MIN_RSI_OVERSOLD",   35))
-RSI_OVERBOUGHT = float(os.environ.get("MAX_RSI_OVERBOUGHT", 70))
-PRICE_CHANGE_THRESHOLD = float(os.environ.get("PRICE_CHANGE_PCT", 3.0))
+RSI_OVERSOLD   = float(os.environ.get("MIN_RSI_OVERSOLD")   or 35)
+RSI_OVERBOUGHT = float(os.environ.get("MAX_RSI_OVERBOUGHT") or 70)
+PRICE_CHANGE_THRESHOLD = float(os.environ.get("PRICE_CHANGE_PCT") or 3.0)
 
 # ---------------------------------------------------------------------------
 # Signal computation helpers
