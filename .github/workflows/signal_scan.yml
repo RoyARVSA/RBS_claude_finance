@@ -1,0 +1,58 @@
+name: RBS Signal Scanner
+
+on:
+  # Run every hour at minute 0
+  schedule:
+    - cron: '0 * * * *'
+  # Allow manual trigger from GitHub Actions UI
+  workflow_dispatch:
+    inputs:
+      watchlist:
+        description: 'Comma-separated tickers to scan (overrides WATCHLIST secret)'
+        required: false
+        default: ''
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-scanner-${{ hashFiles('**/requirements-scan.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-scanner-
+
+      - name: Install dependencies
+        run: pip install yfinance pandas numpy requests
+
+      - name: Run signal scanner
+        env:
+          TELEGRAM_TOKEN:   ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          # Use manual input if provided, otherwise fall back to repository secret
+          WATCHLIST: ${{ github.event.inputs.watchlist || secrets.WATCHLIST }}
+          MIN_RSI_OVERSOLD:    ${{ secrets.MIN_RSI_OVERSOLD }}
+          MAX_RSI_OVERBOUGHT:  ${{ secrets.MAX_RSI_OVERBOUGHT }}
+          PRICE_CHANGE_PCT:    ${{ secrets.PRICE_CHANGE_PCT }}
+        run: python scan_signals.py
+
+      - name: Upload scan log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scan-log-${{ github.run_number }}
+          path: '*.log'
+          if-no-files-found: ignore
+          retention-days: 7
