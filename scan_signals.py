@@ -27,8 +27,23 @@ from datetime import datetime, timezone
 # ---------------------------------------------------------------------------
 
 DEFAULT_WATCHLIST = [
+    # US 大型科技
     "AAPL", "MSFT", "NVDA", "GOOGL", "AMZN",
-    "TSLA", "META", "JPM", "SPY", "QQQ",
+    "TSLA", "META", "AMD", "INTC", "ORCL",
+    # 金融
+    "JPM", "BAC", "GS", "MS", "V", "MA",
+    # 醫療
+    "JNJ", "PFE", "MRNA", "UNH", "ABBV",
+    # 能源
+    "XOM", "CVX", "OXY", "SLB",
+    # 消費
+    "WMT", "COST", "TGT", "NKE", "SBUX",
+    # ETF
+    "SPY", "QQQ", "IWM", "DIA", "XLK", "XLF", "XLE", "XLV", "ARKK",
+    # 高波動個股
+    "PLTR", "COIN", "MSTR", "RBLX", "RIVN", "LCID", "SOFI", "HOOD",
+    # 中概 / 台股 ADR
+    "BABA", "JD", "PDD", "BIDU", "TSM",
 ]
 
 TELEGRAM_TOKEN   = os.environ.get("TELEGRAM_TOKEN", "")
@@ -38,9 +53,9 @@ raw_watchlist = os.environ.get("WATCHLIST", "")
 WATCHLIST = [t.strip().upper() for t in raw_watchlist.split(",") if t.strip()] \
             if raw_watchlist else DEFAULT_WATCHLIST
 
-RSI_OVERSOLD   = float(os.environ.get("MIN_RSI_OVERSOLD")   or 35)
-RSI_OVERBOUGHT = float(os.environ.get("MAX_RSI_OVERBOUGHT") or 70)
-PRICE_CHANGE_THRESHOLD = float(os.environ.get("PRICE_CHANGE_PCT") or 3.0)
+RSI_OVERSOLD   = float(os.environ.get("MIN_RSI_OVERSOLD")   or 40)
+RSI_OVERBOUGHT = float(os.environ.get("MAX_RSI_OVERBOUGHT") or 65)
+PRICE_CHANGE_THRESHOLD = float(os.environ.get("PRICE_CHANGE_PCT") or 2.0)
 
 # ---------------------------------------------------------------------------
 # Signal computation helpers
