@@ -38,9 +38,9 @@ raw_watchlist = os.environ.get("WATCHLIST", "")
 WATCHLIST = [t.strip().upper() for t in raw_watchlist.split(",") if t.strip()] \
             if raw_watchlist else DEFAULT_WATCHLIST
 
-RSI_OVERSOLD   = float(os.environ.get("MIN_RSI_OVERSOLD",   35))
-RSI_OVERBOUGHT = float(os.environ.get("MAX_RSI_OVERBOUGHT", 70))
-PRICE_CHANGE_THRESHOLD = float(os.environ.get("PRICE_CHANGE_PCT", 3.0))
+RSI_OVERSOLD   = float(os.environ.get("MIN_RSI_OVERSOLD")   or 35)
+RSI_OVERBOUGHT = float(os.environ.get("MAX_RSI_OVERBOUGHT") or 70)
+PRICE_CHANGE_THRESHOLD = float(os.environ.get("PRICE_CHANGE_PCT") or 3.0)
 
 # ---------------------------------------------------------------------------
 # Signal computation helpers
@@ -232,8 +232,9 @@ def main() -> int:
     print("--------------------------------\n")
 
     if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
-        ok = _send_telegram(TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, message)
-        return 0 if ok else 1
+        _send_telegram(TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, message)
+    else:
+        print("Skipping Telegram: TELEGRAM_TOKEN or TELEGRAM_CHAT_ID not configured.")
 
     return 0
 
