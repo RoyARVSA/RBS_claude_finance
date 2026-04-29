@@ -114,17 +114,17 @@ def scan(tickers: list[str]) -> list[dict]:
         period="3mo",
         auto_adjust=True,
         progress=False,
-        group_by="ticker",
         threads=True,
     )
 
     results = []
     for ticker in tickers:
         try:
-            if len(tickers) == 1:
-                close = raw["Close"].dropna()
-            else:
+            # Handle both single and multi-ticker DataFrames
+            if isinstance(raw.columns, pd.MultiIndex):
                 close = raw["Close"][ticker].dropna()
+            else:
+                close = raw["Close"].dropna()
 
             if len(close) < 15:
                 print(f"  {ticker}: insufficient data, skipping")
