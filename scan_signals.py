@@ -107,24 +107,21 @@ def _vol_spike(close: pd.Series) -> bool:
 # ---------------------------------------------------------------------------
 
 def scan(tickers: list[str]) -> list[dict]:
-    """Download data for all tickers and return list of signal dicts."""
-    print(f"Downloading data for {len(tickers)} tickers …")
-    raw = yf.download(
-        tickers,
-        period="3mo",
-        auto_adjust=True,
-        progress=False,
-        threads=True,
-    )
-
+    """Download data per ticker and return list of signal dicts."""
     results = []
     for ticker in tickers:
         try:
-            # Handle both single and multi-ticker DataFrames
-            if isinstance(raw.columns, pd.MultiIndex):
-                close = raw["Close"][ticker].dropna()
-            else:
-                close = raw["Close"].dropna()
+            raw = yf.download(
+                ticker,
+                period="3mo",
+                auto_adjust=True,
+                progress=False,
+            )
+            if raw.empty:
+                print(f"  {ticker}: no data returned, skipping")
+                continue
+
+            close = raw["Close"].squeeze().dropna()
 
             if len(close) < 15:
                 print(f"  {ticker}: insufficient data, skipping")
