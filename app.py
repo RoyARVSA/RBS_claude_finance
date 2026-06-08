@@ -74,7 +74,7 @@ st.markdown(
     }
     .metric-label {
         font-size: 0.78rem;
-        color: #9EA3B0;
+        color: #A8B0C0;
         text-transform: uppercase;
         letter-spacing: 0.05em;
         margin-bottom: 4px;
@@ -373,7 +373,12 @@ def page_portfolio_performance():
             fx_pair = "TWD=X"
             dl = tickers + [benchmark, fx_pair]
             raw = yf.download(dl, start=pd.to_datetime(start), auto_adjust=True, progress=False)
-            data = raw["Close"] if isinstance(raw.columns, pd.MultiIndex) else raw[["Close"]]
+            if isinstance(raw.columns, pd.MultiIndex):
+                data = raw["Close"]
+            elif "Close" in raw.columns:
+                data = raw[["Close"]]
+            else:
+                data = raw
             data = data.dropna(how="all").ffill()
             if isinstance(data, pd.Series):
                 data = data.to_frame()
@@ -1237,7 +1242,7 @@ def page_stock_selector():
             elif i == st.session_state.ss_step:
                 st.markdown(f"<div style='text-align:center;color:#1E88E5;font-weight:700;font-size:0.85rem'>● {s}</div>", unsafe_allow_html=True)
             else:
-                st.markdown(f"<div style='text-align:center;color:#555;font-size:0.8rem'>○ {s}</div>", unsafe_allow_html=True)
+                st.markdown(f"<div style='text-align:center;color:#7B8599;font-size:0.8rem'>○ {s}</div>", unsafe_allow_html=True)
 
     st.markdown("---")
 
@@ -1277,12 +1282,13 @@ def page_stock_selector():
         for i, (key, info) in enumerate(STRATS.items()):
             with strat_cols[i % 3]:
                 selected = sel.get("strategy") == key
-                card_border = "#1E88E5" if selected else "#2D3142"
+                card_border = "#1E88E5" if selected else "#3D4255"
+                card_bg     = "#1E2847" if selected else "#1A1D27"
                 st.markdown(
                     f"""<div style='border:2px solid {card_border};border-radius:10px;padding:14px;margin:4px 0;
-                    background:#1A1D27;cursor:pointer;'>
-                    <div style='font-size:1.1rem;font-weight:700'>{info['label']}</div>
-                    <div style='font-size:0.78rem;color:#9EA3B0;margin-top:4px'>{info['desc']}</div>
+                    background:{card_bg};'>
+                    <div style='font-size:1.05rem;font-weight:700;color:#FAFAFA'>{info['label']}</div>
+                    <div style='font-size:0.82rem;color:#C8CAD4;margin-top:6px;line-height:1.4'>{info['desc']}</div>
                     </div>""",
                     unsafe_allow_html=True,
                 )
@@ -1879,7 +1885,7 @@ def page_market_overview():
         for entry in feed.entries[:5]:
             st.markdown(
                 f"**[{entry.get('title','')}]({entry.get('link','#')})**  \n"
-                f"<small style='color:#9EA3B0'>{entry.get('published','')}</small>",
+                f"<small style='color:#B8C0D0'>{entry.get('published','')}</small>",
                 unsafe_allow_html=True,
             )
             st.markdown("---")
@@ -2345,7 +2351,7 @@ def page_stock_research():
                         pub_str = _dt.fromtimestamp(pub_t).strftime("%Y-%m-%d %H:%M") if pub_t else ""
                         st.markdown(
                             f"**[{item.get('title','')}]({item.get('link','#')})**  \n"
-                            f"<small style='color:#9EA3B0'>{item.get('publisher','')} · {pub_str}</small>",
+                            f"<small style='color:#B8C0D0'>{item.get('publisher','')} · {pub_str}</small>",
                             unsafe_allow_html=True,
                         )
                         st.markdown("---")
@@ -2669,34 +2675,40 @@ def page_alerts():
             section("最新報價快照")
             with st.spinner("抓取報價…"):
                 try:
-                    raw = yf.download(
-                        cfg["watchlist"], period="5d",
-                        auto_adjust=True, progress=False,
-                    )
-                    cl = (raw["Close"] if isinstance(raw.columns, pd.MultiIndex)
-                          else raw).ffill()
                     rows = []
                     for tk in cfg["watchlist"]:
-                        if tk in cl.columns:
-                            s = cl[tk].dropna()
+                        try:
+                            _r = yf.download(tk, period="5d", auto_adjust=True, progress=False)
+                            if _r.empty:
+                                continue
+                            s = _r["Close"].squeeze().dropna()
                             if len(s) >= 2:
+                                chg1 = float(s.iloc[-1] / s.iloc[-2] - 1)
+                                chg5 = float(s.iloc[-1] / s.iloc[0]  - 1)
                                 rows.append({
                                     "代碼": tk,
-                                    "現價": float(s.iloc[-1]),
-                                    "1日%": float(s.iloc[-1] / s.iloc[-2] - 1),
-                                    "5日%": float(s.iloc[-1] / s.iloc[0] - 1),
+                                    "現價": round(float(s.iloc[-1]), 2),
+                                    "1日%": chg1,
+                                    "5日%": chg5,
+                                    "趨勢": "▲" if chg1 > 0 else "▼",
                                 })
+                        except Exception:
+                            continue
                     if rows:
                         snap_df = pd.DataFrame(rows).set_index("代碼")
                         def _color(v):
                             if isinstance(v, float) and not np.isnan(v):
-                                return "color:#4CAF50" if v > 0 else "color:#F44336"
-                            return ""
+                                return "color:#4CAF50;font-weight:600" if v > 0 else "color:#F44336;font-weight:600"
+                            return "color:#E8EAF0"
                         st.dataframe(
-                            snap_df.style.format({"現價": "{:.2f}", "1日%": "{:.2%}", "5日%": "{:.2%}"})
-                                          .applymap(_color, subset=["1日%", "5日%"]),
+                            snap_df.style
+                                .format({"現價": "{:.2f}", "1日%": "{:.2%}", "5日%": "{:.2%}"})
+                                .applymap(_color, subset=["1日%", "5日%"]),
                             use_container_width=True,
                         )
+                        gainers = sum(1 for r in rows if r["1日%"] > 0)
+                        losers  = sum(1 for r in rows if r["1日%"] < 0)
+                        st.caption(f"今日 🟢 上漲 {gainers} 支　🔴 下跌 {losers} 支　⚪ 持平 {len(rows)-gainers-losers} 支")
                 except Exception as e:
                     st.error(f"報價抓取失敗：{e}")
 
