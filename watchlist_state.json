@@ -1,0 +1,29 @@
+{
+  "watchlist": [
+    "AAPL",
+    "MSFT",
+    "NVDA",
+    "GOOGL",
+    "AMZN",
+    "TSLA",
+    "META",
+    "AMD",
+    "JPM",
+    "SPY",
+    "QQQ",
+    "PLTR",
+    "COIN",
+    "TSM",
+    "ARKK"
+  ],
+  "thresholds": {
+    "rsi_oversold": 35.0,
+    "rsi_overbought": 68.0,
+    "price_change_pct": 3.0,
+    "macd_enabled": true,
+    "bb_enabled": true,
+    "atr_enabled": true,
+    "vol_spike_ratio": 2.0
+  },
+  "last_update_id": 280895062
+}
