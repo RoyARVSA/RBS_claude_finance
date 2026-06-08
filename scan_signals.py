@@ -2,18 +2,25 @@
 scan_signals.py – RBS 自動訊號掃描器（GitHub Actions cron）
 
 Telegram 指令（傳給 Bot）：
-  /add AAPL TSLA     – 加入觀察清單
-  /remove TSLA       – 移除
-  /list              – 列出目前清單
-  /threshold         – 查看門檻
-  /set rsi_oversold 32       – 修改 RSI 超賣門檻
-  /set rsi_overbought 68     – 修改 RSI 超買門檻
-  /set price_change_pct 2.5  – 修改單日漲跌 % 門檻
-  /set macd on|off           – 開關 MACD 訊號
-  /set bb on|off             – 開關布林通道訊號
-  /set atr on|off            – 開關 ATR 進出場訊號
-  /scan              – 立即掃描並回傳結果
-  /help              – 指令說明
+  /add AAPL TSLA          – 加入觀察清單
+  /remove TSLA            – 移除
+  /list                   – 列出目前清單 + 門檻
+  /threshold              – 查看門檻設定
+  /set rsi_oversold 32    – 修改 RSI 超賣門檻
+  /set rsi_overbought 68  – 修改 RSI 超買門檻
+  /set price_change_pct 2.5 – 修改單日漲跌門檻（%）
+  /set macd on|off        – 開關 MACD 訊號
+  /set bb on|off          – 開關布林通道訊號
+  /set atr on|off         – 開關 ATR 進出場提示
+  /set vol_spike_ratio 2  – 成交量爆量倍數
+  /set scan_market_only on|off – 只在美股開盤時間掃描
+  /mute [小時數]          – 靜音 N 小時（預設 8）
+  /unmute                 – 解除靜音
+  /status                 – 查看 Bot 狀態 + 市場狀態
+  /top [N]                – 顯示今日漲跌幅前 N 名
+  /scan                   – 立即掃描（忽略靜音與市場狀態）
+  /clear                  – 清空觀察清單
+  /help                   – 顯示此說明
 
 環境變數（GitHub Secrets）：
   TELEGRAM_TOKEN    必填
@@ -27,8 +34,9 @@ import json
 import math
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, date, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
@@ -46,14 +54,82 @@ DEFAULT_WATCHLIST = [
 ]
 
 DEFAULT_THRESHOLDS = {
-    "rsi_oversold":    35.0,
-    "rsi_overbought":  68.0,
-    "price_change_pct": 3.0,
-    "macd_enabled":    True,
-    "bb_enabled":      True,
-    "atr_enabled":     True,
-    "vol_spike_ratio": 2.0,
+    "rsi_oversold":       35.0,
+    "rsi_overbought":     68.0,
+    "price_change_pct":   3.0,
+    "macd_enabled":       True,
+    "bb_enabled":         True,
+    "atr_enabled":        True,
+    "vol_spike_ratio":    2.0,
+    "scan_market_only":   True,   # skip scan when US market closed
 }
+
+ET = ZoneInfo("America/New_York")
+
+
+# ── Market calendar helpers ───────────────────────────────────────────────────
+
+def _us_holidays(year: int) -> set[date]:
+    """Compute approximate NYSE holidays for a given year."""
+    def _nth_weekday(year: int, month: int, n: int, weekday: int) -> date:
+        """nth occurrence (1-based) of weekday (0=Mon) in month."""
+        first = date(year, month, 1)
+        delta = (weekday - first.weekday()) % 7
+        return first + timedelta(days=delta + (n - 1) * 7)
+
+    def _last_weekday(year: int, month: int, weekday: int) -> date:
+        last = date(year, month + 1, 1) - timedelta(days=1) if month < 12 else date(year, 12, 31)
+        delta = (last.weekday() - weekday) % 7
+        return last - timedelta(days=delta)
+
+    def _observed(d: date) -> date:
+        """Shift weekend holidays to nearest weekday."""
+        if d.weekday() == 5:   # Saturday → Friday
+            return d - timedelta(days=1)
+        if d.weekday() == 6:   # Sunday → Monday
+            return d + timedelta(days=1)
+        return d
+
+    holidays = {
+        _observed(date(year, 1, 1)),                           # New Year's Day
+        _nth_weekday(year, 1, 3, 0),                           # MLK Day (3rd Mon Jan)
+        _nth_weekday(year, 2, 3, 0),                           # Presidents' Day (3rd Mon Feb)
+        _last_weekday(year, 5, 0) - timedelta(days=2),         # Good Friday (approx, Fri before Easter)
+        _last_weekday(year, 5, 0),                             # Memorial Day (last Mon May)
+        _observed(date(year, 6, 19)),                          # Juneteenth
+        _observed(date(year, 7, 4)),                           # Independence Day
+        _nth_weekday(year, 9, 1, 0),                           # Labor Day (1st Mon Sep)
+        _nth_weekday(year, 11, 4, 3),                          # Thanksgiving (4th Thu Nov)
+        _nth_weekday(year, 11, 4, 3) + timedelta(days=1),      # Black Friday (half-day, skip for safety)
+        _observed(date(year, 12, 25)),                         # Christmas
+    }
+    return holidays
+
+
+def market_status() -> dict:
+    """Return current NYSE market status."""
+    now_et = datetime.now(ET)
+    today  = now_et.date()
+    weekday = now_et.weekday()   # 0=Mon, 6=Sun
+
+    if weekday >= 5:
+        return {"open": False, "reason": f"週末（{'週六' if weekday==5 else '週日'}）"}
+
+    holidays = _us_holidays(today.year)
+    if today in holidays:
+        return {"open": False, "reason": f"美股假日"}
+
+    market_open  = now_et.replace(hour=9,  minute=30, second=0, microsecond=0)
+    market_close = now_et.replace(hour=16, minute=0,  second=0, microsecond=0)
+
+    if now_et < market_open:
+        opens_in = int((market_open - now_et).total_seconds() / 60)
+        return {"open": False, "reason": f"盤前（{opens_in} 分鐘後開盤）"}
+    if now_et > market_close:
+        return {"open": False, "reason": "收盤後"}
+
+    mins_left = int((market_close - now_et).total_seconds() / 60)
+    return {"open": True, "reason": f"交易中（距收盤 {mins_left} 分鐘）", "now_et": now_et.strftime("%H:%M ET")}
 
 TELEGRAM_TOKEN   = os.environ.get("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
@@ -109,18 +185,29 @@ def _tg_send(token: str, chat_id: str, text: str) -> bool:
 def _cmd_help() -> str:
     return (
         "📋 *RBS Bot 指令說明*\n\n"
+        "📌 *清單管理*\n"
         "`/add AAPL TSLA` — 加入觀察清單\n"
         "`/remove TSLA` — 移除標的\n"
-        "`/list` — 列出觀察清單\n"
-        "`/threshold` — 查看目前門檻設定\n"
-        "`/set rsi_oversold 32` — 修改 RSI 超賣門檻\n"
-        "`/set rsi_overbought 68` — 修改 RSI 超買門檻\n"
-        "`/set price_change_pct 2.5` — 修改單日漲跌門檻（%）\n"
-        "`/set macd on|off` — 開關 MACD 訊號\n"
-        "`/set bb on|off` — 開關布林通道訊號\n"
-        "`/set atr on|off` — 開關 ATR 進出場提示\n"
-        "`/set vol_spike_ratio 2.0` — 成交量爆量倍數\n"
-        "`/scan` — 立即掃描並回傳結果\n"
+        "`/clear` — 清空清單\n"
+        "`/list` — 列出清單 + 門檻\n\n"
+        "📊 *門檻設定*\n"
+        "`/threshold` — 查看目前設定\n"
+        "`/set rsi_oversold 32` — RSI 超賣門檻\n"
+        "`/set rsi_overbought 68` — RSI 超買門檻\n"
+        "`/set price_change_pct 2.5` — 單日漲跌 %\n"
+        "`/set macd on|off` — MACD 訊號\n"
+        "`/set bb on|off` — 布林通道訊號\n"
+        "`/set atr on|off` — ATR 進出場提示\n"
+        "`/set vol_spike_ratio 2.0` — 爆量倍數\n"
+        "`/set scan_market_only on|off` — 只在開盤時掃描\n\n"
+        "🔕 *靜音控制*\n"
+        "`/mute` — 靜音 8 小時\n"
+        "`/mute 4` — 靜音 4 小時\n"
+        "`/unmute` — 立即解除靜音\n\n"
+        "📈 *資訊查詢*\n"
+        "`/status` — Bot 狀態 + 市場狀態\n"
+        "`/top 5` — 今日漲跌幅前 5 名\n"
+        "`/scan` — 立即掃描（忽略靜音）\n\n"
         "`/help` — 顯示此說明"
     )
 
@@ -146,15 +233,85 @@ def _cmd_threshold(state: dict) -> str:
     th = state["thresholds"]
     return (
         "⚙️ *目前門檻設定*\n\n"
-        f"`rsi_oversold`     = {th['rsi_oversold']}\n"
-        f"`rsi_overbought`   = {th['rsi_overbought']}\n"
-        f"`price_change_pct` = {th['price_change_pct']}%\n"
-        f"`vol_spike_ratio`  = {th.get('vol_spike_ratio', 2.0)}x\n"
-        f"`macd_enabled`     = {th.get('macd_enabled', True)}\n"
-        f"`bb_enabled`       = {th.get('bb_enabled', True)}\n"
-        f"`atr_enabled`      = {th.get('atr_enabled', True)}\n\n"
+        f"`rsi_oversold`      = {th['rsi_oversold']}\n"
+        f"`rsi_overbought`    = {th['rsi_overbought']}\n"
+        f"`price_change_pct`  = {th['price_change_pct']}%\n"
+        f"`vol_spike_ratio`   = {th.get('vol_spike_ratio', 2.0)}x\n"
+        f"`macd_enabled`      = {th.get('macd_enabled', True)}\n"
+        f"`bb_enabled`        = {th.get('bb_enabled', True)}\n"
+        f"`atr_enabled`       = {th.get('atr_enabled', True)}\n"
+        f"`scan_market_only`  = {th.get('scan_market_only', True)}\n\n"
         "用 `/set <key> <value>` 修改"
     )
+
+
+def _cmd_status(state: dict) -> str:
+    ms = market_status()
+    mute_until = state.get("mute_until")
+    muted = ""
+    if mute_until:
+        mu = datetime.fromisoformat(mute_until)
+        if datetime.now(timezone.utc) < mu:
+            mins = int((mu - datetime.now(timezone.utc)).total_seconds() / 60)
+            muted = f"\n🔕 靜音中（剩餘 {mins} 分鐘）"
+        else:
+            muted = ""
+
+    market_icon = "🟢" if ms["open"] else "🔴"
+    return (
+        "📡 *RBS Bot 狀態*\n\n"
+        f"{market_icon} 市場：{ms['reason']}\n"
+        f"👁 觀察清單：{len(state['watchlist'])} 支\n"
+        f"🕐 最後更新：{state.get('last_scan_time', '尚未掃描')}"
+        f"{muted}"
+    )
+
+
+def _cmd_top(state: dict, n: int = 5) -> str:
+    tickers = state["watchlist"]
+    if not tickers:
+        return "❌ 觀察清單為空"
+    try:
+        raw = yf.download(tickers, period="2d", auto_adjust=True, progress=False)
+        rows = []
+        for t in tickers:
+            try:
+                if isinstance(raw.columns, pd.MultiIndex):
+                    s = raw["Close"][t].dropna() if ("Close", t) in raw.columns or t in raw["Close"].columns else None
+                else:
+                    s = raw["Close"].dropna()
+                if s is None or len(s) < 2:
+                    continue
+                chg = (float(s.iloc[-1]) / float(s.iloc[-2]) - 1) * 100
+                rows.append((t, round(float(s.iloc[-1]), 2), round(chg, 2)))
+            except Exception:
+                continue
+        if not rows:
+            return "❌ 無法取得數據"
+        rows.sort(key=lambda x: -x[2])
+        lines = [f"📈 *今日漲跌排行 Top {n}*\n"]
+        for t, price, chg in rows[:n]:
+            icon = "🟢" if chg > 0 else "🔴"
+            lines.append(f"{icon} *{t}* ${price}  ({chg:+.1f}%)")
+        if len(rows) > n:
+            lines.append(f"\n📉 *墊底 {n} 名*")
+            for t, price, chg in rows[-n:]:
+                icon = "🟢" if chg > 0 else "🔴"
+                lines.append(f"{icon} *{t}* ${price}  ({chg:+.1f}%)")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"❌ 查詢失敗：{e}"
+
+
+def _is_muted(state: dict) -> bool:
+    mute_until = state.get("mute_until")
+    if not mute_until:
+        return False
+    try:
+        mu = datetime.fromisoformat(mute_until)
+        return datetime.now(timezone.utc) < mu
+    except Exception:
+        return False
 
 
 def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]:
@@ -189,6 +346,9 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
         elif cmd == "/threshold":
             reply = _cmd_threshold(state)
 
+        elif cmd == "/status":
+            reply = _cmd_status(state)
+
         elif cmd == "/add" and args:
             added = []
             for t in args:
@@ -197,10 +357,8 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                     state["watchlist"].append(t)
                     added.append(t)
             changed = True
-            if added:
-                reply = f"✅ 已加入：{', '.join(added)}\n現有 {len(state['watchlist'])} 支"
-            else:
-                reply = "⚠️ 標的已在清單中，無需重複新增"
+            reply = (f"✅ 已加入：{', '.join(added)}\n現有 {len(state['watchlist'])} 支"
+                     if added else "⚠️ 標的已在清單中")
 
         elif cmd == "/remove" and args:
             removed = []
@@ -210,15 +368,37 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                     state["watchlist"].remove(t)
                     removed.append(t)
             changed = True
-            if removed:
-                reply = f"🗑 已移除：{', '.join(removed)}\n剩餘 {len(state['watchlist'])} 支"
-            else:
-                reply = "⚠️ 找不到該標的"
+            reply = (f"🗑 已移除：{', '.join(removed)}\n剩餘 {len(state['watchlist'])} 支"
+                     if removed else "⚠️ 找不到該標的")
+
+        elif cmd == "/clear":
+            count = len(state["watchlist"])
+            state["watchlist"] = []
+            changed = True
+            reply = f"🗑 已清空觀察清單（共 {count} 支）"
+
+        elif cmd == "/mute":
+            hours = int(args[0]) if args and args[0].isdigit() else 8
+            until = datetime.now(timezone.utc) + timedelta(hours=hours)
+            state["mute_until"] = until.isoformat()
+            changed = True
+            reply = f"🔕 靜音 {hours} 小時，直到 {until.strftime('%H:%M UTC')}"
+
+        elif cmd == "/unmute":
+            state.pop("mute_until", None)
+            changed = True
+            reply = "🔔 已解除靜音，恢復正常通知"
+
+        elif cmd == "/top":
+            n = int(args[0]) if args and args[0].isdigit() else 5
+            reply = "🔍 查詢中…"
+            _tg_send(token, src_chat or chat_id, reply)
+            reply = _cmd_top(state, min(n, 10))
 
         elif cmd == "/set" and len(args) >= 2:
             key, val = args[0].lower(), args[1].lower()
             th = state["thresholds"]
-            bool_keys = {"macd_enabled", "bb_enabled", "atr_enabled"}
+            bool_keys = {"macd_enabled", "bb_enabled", "atr_enabled", "scan_market_only"}
             float_keys = {"rsi_oversold", "rsi_overbought", "price_change_pct", "vol_spike_ratio"}
             if key in bool_keys:
                 th[key] = val in ("on", "true", "1", "yes")
@@ -542,20 +722,37 @@ def main() -> int:
             save_state(state)
             print("State updated from commands.")
 
-    tickers = state["watchlist"]
+    tickers    = state["watchlist"]
     thresholds = state["thresholds"]
-    print(f"\nWatchlist ({len(tickers)}): {', '.join(tickers)}\n")
+    ms = market_status()
+    print(f"Market status: {ms['reason']}")
+
+    # Step 2: Check mute & market hours
+    if _is_muted(state):
+        mu = datetime.fromisoformat(state["mute_until"])
+        mins = int((mu - datetime.now(timezone.utc)).total_seconds() / 60)
+        print(f"Muted for {mins} more minutes. Skipping scan.")
+        save_state(state)
+        return 0
+
+    if thresholds.get("scan_market_only", True) and not ms["open"]:
+        print(f"Market closed ({ms['reason']}). Skipping scan.")
+        save_state(state)
+        return 0
+
+    print(f"\nWatchlist ({len(tickers)}): {', '.join(tickers)}")
     print(f"Thresholds: RSI {thresholds['rsi_oversold']}/{thresholds['rsi_overbought']}  "
           f"Chg≥{thresholds['price_change_pct']}%  "
           f"MACD={'on' if thresholds.get('macd_enabled') else 'off'}  "
           f"BB={'on' if thresholds.get('bb_enabled') else 'off'}  "
           f"ATR={'on' if thresholds.get('atr_enabled') else 'off'}\n")
 
-    # Step 2: Scan
+    # Step 3: Scan
     print("── Running signal scan ──")
     results = scan(tickers, thresholds)
+    state["last_scan_time"] = now
 
-    # Step 3: Build & send message
+    # Step 4: Build & send message
     message = _build_message(results, now)
     if message is None:
         print("\nNo signals triggered. Nothing to send.")
@@ -565,7 +762,7 @@ def main() -> int:
             ok = _tg_send(TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, message)
             print("Telegram sent." if ok else "Telegram send failed.")
 
-    # Step 4: Save state (update_id always changes)
+    # Step 5: Save state
     save_state(state)
     return 0
 
