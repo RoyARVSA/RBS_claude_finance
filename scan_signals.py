@@ -382,6 +382,22 @@ def _ma_trend(close: pd.Series) -> dict:
 
 # ── Main scan ────────────────────────────────────────────────────────────────
 
+def _col(df: pd.DataFrame, price: str, ticker: str) -> pd.Series | None:
+    """Safely extract a price series from a yfinance multi-ticker DataFrame."""
+    try:
+        if isinstance(df.columns, pd.MultiIndex):
+            # Default yfinance layout: (price_type, ticker)
+            if (price, ticker) in df.columns:
+                return df[(price, ticker)].dropna()
+            # group_by="ticker" layout: (ticker, price_type)
+            if (ticker, price) in df.columns:
+                return df[(ticker, price)].dropna()
+        else:
+            return df[price].dropna() if price in df.columns else None
+    except Exception:
+        return None
+
+
 def scan(tickers: list[str], thresholds: dict) -> list[dict]:
     rsi_lo  = thresholds.get("rsi_oversold",    35)
     rsi_hi  = thresholds.get("rsi_overbought",  68)
@@ -391,18 +407,34 @@ def scan(tickers: list[str], thresholds: dict) -> list[dict]:
     atr_on  = thresholds.get("atr_enabled",   True)
     vol_r   = thresholds.get("vol_spike_ratio", 2.0)
 
+    print(f"Batch-downloading {len(tickers)} tickers (6mo)…")
+    try:
+        raw = yf.download(tickers, period="6mo", auto_adjust=True,
+                          progress=False, threads=True)
+    except Exception as e:
+        print(f"Batch download failed: {e}")
+        return []
+
+    # Single-ticker download returns flat columns; wrap for uniform handling
+    single = len(tickers) == 1
+
     results = []
     for ticker in tickers:
         try:
-            raw = yf.download(ticker, period="6mo", auto_adjust=True, progress=False)
-            if raw.empty or len(raw) < 20:
-                print(f"  {ticker}: insufficient data")
-                continue
+            if single:
+                close  = raw["Close"].squeeze().dropna()
+                high   = raw.get("High",   pd.Series()).squeeze().dropna() or None
+                low    = raw.get("Low",    pd.Series()).squeeze().dropna() or None
+                volume = raw.get("Volume", pd.Series()).squeeze().dropna() or None
+            else:
+                close  = _col(raw, "Close",  ticker)
+                high   = _col(raw, "High",   ticker)
+                low    = _col(raw, "Low",    ticker)
+                volume = _col(raw, "Volume", ticker)
 
-            close  = raw["Close"].squeeze().dropna()
-            high   = raw["High"].squeeze().dropna()  if "High"   in raw.columns else None
-            low    = raw["Low"].squeeze().dropna()   if "Low"    in raw.columns else None
-            volume = raw["Volume"].squeeze().dropna() if "Volume" in raw.columns else None
+            if close is None or len(close) < 20:
+                print(f"  {ticker}: insufficient data, skipping")
+                continue
 
             price  = round(float(close.iloc[-1]), 2)
             prev   = float(close.iloc[-2])
