@@ -189,6 +189,35 @@ ADB: dict[str, dict[str, dict]] = {
             "asset_type": "股票",
             "desc": "電力/天然氣公用事業，穩定現金流，防禦屬性強",
         },
+        "美股寬基ETF": {
+            "tickers": ["SPY", "QQQ", "IWM", "DIA", "VTI", "VOO", "SCHB"],
+            "strats":  ["growth", "defensive", "momentum"],
+            "macro":   ["景氣擴張", "降息環境", "流動性充裕"],
+            "asset_type": "ETF",
+            "desc": "追蹤S&P500/NASDAQ/Russell的核心指數ETF",
+        },
+        "板塊ETF": {
+            "tickers": ["XLK", "XLF", "XLE", "XLV", "XLY", "XLP", "XLI", "XLU", "XLRE", "XLB", "XLC"],
+            "strats":  ["macro", "momentum", "defensive"],
+            "macro":   ["景氣擴張", "景氣衰退", "高通膨", "降息環境"],
+            "asset_type": "ETF",
+            "desc": "SPDR板塊ETF，精準暴露特定行業",
+        },
+        "主題/槓桿ETF": {
+            "tickers": ["ARKK", "ARKW", "SMH", "SOXX", "BOTZ", "ROBO",
+                        "SOXL", "TQQQ", "UPRO", "SPXL"],
+            "strats":  ["growth", "momentum"],
+            "macro":   ["AI 浪潮", "科技週期上行", "流動性充裕"],
+            "asset_type": "ETF",
+            "desc": "主題/槓桿ETF，高彈性高風險，適合短線動量策略",
+        },
+        "固收/對沖ETF": {
+            "tickers": ["TLT", "IEF", "AGG", "BND", "HYG", "LQD", "GLD", "SLV", "USO", "UNG"],
+            "strats":  ["defensive", "dividend", "macro"],
+            "macro":   ["景氣衰退", "升息環境", "降息環境", "地緣風險", "高通膨"],
+            "asset_type": "ETF",
+            "desc": "債券/商品ETF，作為股票組合的對沖或穩定收益來源",
+        },
     },
 
     # ════════════════ TW ════════════════

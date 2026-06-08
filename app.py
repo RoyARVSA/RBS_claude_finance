@@ -94,6 +94,41 @@ st.markdown(
     div[data-testid="stSidebar"] {
         background-color: #0D1117;
     }
+    /* ── Dataframe / table text always light ── */
+    [data-testid="stDataFrame"] * {
+        color: #E8EAF0 !important;
+    }
+    [data-testid="stDataFrame"] td, [data-testid="stDataFrame"] th {
+        background-color: #1A1D27 !important;
+        border-color: #2D3142 !important;
+    }
+    /* ── Expander text ── */
+    .streamlit-expanderContent p,
+    .streamlit-expanderContent span,
+    .streamlit-expanderContent li {
+        color: #E8EAF0 !important;
+    }
+    /* ── Select / multiselect dropdowns ── */
+    [data-testid="stMultiSelect"] span,
+    [data-testid="stSelectbox"] span {
+        color: #E8EAF0 !important;
+    }
+    /* ── Tabs text ── */
+    button[data-baseweb="tab"] {
+        color: #9EA3B0 !important;
+    }
+    button[data-baseweb="tab"][aria-selected="true"] {
+        color: #FAFAFA !important;
+        border-bottom-color: #1E88E5 !important;
+    }
+    /* ── Input labels ── */
+    label[data-testid="stWidgetLabel"] p {
+        color: #C8CAD4 !important;
+    }
+    /* ── Plotly chart background fix ── */
+    .js-plotly-plot .plotly .bg {
+        fill: #0F1117 !important;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -905,10 +940,13 @@ def page_news_sentiment():
     tab1, tab2, tab3 = st.tabs(["Live News Feed", "Sentiment Analysis", "Financial Report"])
 
     FEEDS = {
-        "Yahoo Finance":  "https://finance.yahoo.com/news/rssindex",
-        "MarketWatch":    "https://feeds.marketwatch.com/marketwatch/topstories/",
-        "Reuters Finance":"https://feeds.reuters.com/reuters/businessNews",
-        "Investing.com":  "https://www.investing.com/rss/news.rss",
+        "Yahoo Finance":   "https://finance.yahoo.com/news/rssindex",
+        "MarketWatch":     "https://feeds.marketwatch.com/marketwatch/topstories/",
+        "Reuters":         "https://feeds.reuters.com/reuters/topNews",
+        "CNBC":            "https://www.cnbc.com/id/100003114/device/rss/rss.html",
+        "Bloomberg (BBG)": "https://feeds.bloomberg.com/markets/news.rss",
+        "Seeking Alpha":   "https://seekingalpha.com/feed.xml",
+        "Benzinga":        "https://www.benzinga.com/feed",
     }
 
     # ── Tab 1: Fetch ──────────────────────────────────────────────────
@@ -916,42 +954,51 @@ def page_news_sentiment():
         section("RSS / News Fetch")
         col1, col2 = st.columns([3, 1])
         with col1:
-            selected_feed = st.selectbox("News Source", list(FEEDS.keys()))
+            selected_feeds = st.multiselect(
+                "新聞來源（可多選）",
+                list(FEEDS.keys()),
+                default=["Yahoo Finance", "MarketWatch"],
+            )
         with col2:
-            max_articles = st.number_input("Max Articles", 5, 50, 15)
+            max_articles = st.number_input("每來源最多篇數", 5, 30, 10)
 
         if st.button("Fetch News", type="primary"):
-            try:
-                import feedparser
-                with st.spinner(f"Fetching from {selected_feed}…"):
-                    feed = feedparser.parse(FEEDS[selected_feed])
-                articles = []
-                for entry in feed.entries[: int(max_articles)]:
-                    summary = entry.get("summary", "")
-                    # Strip HTML tags from summary
-                    import re
-                    summary = re.sub(r"<[^>]+>", "", summary)[:400]
-                    articles.append({
-                        "Title":     entry.get("title", ""),
-                        "Published": entry.get("published", ""),
-                        "Summary":   summary,
-                        "Link":      entry.get("link", ""),
-                    })
-                if articles:
-                    st.success(f"Fetched {len(articles)} articles from {selected_feed}")
-                    st.session_state["news_articles"] = articles
-                    st.session_state["news_source"] = selected_feed
-                    for a in articles:
-                        with st.expander(a["Title"]):
-                            st.caption(a["Published"])
-                            st.write(a["Summary"])
-                            st.markdown(f"[Read more]({a['Link']})")
-                else:
-                    st.warning("No articles found. Try a different news source.")
-            except ImportError:
-                st.error("feedparser not installed.")
-            except Exception as e:
-                st.error(f"Feed error: {e}")
+            if not selected_feeds:
+                st.warning("請至少選擇一個新聞來源")
+            else:
+                try:
+                    import feedparser, re as _re
+                    articles = []
+                    for src in selected_feeds:
+                        with st.spinner(f"Fetching from {src}…"):
+                            try:
+                                feed = feedparser.parse(FEEDS[src])
+                                for entry in feed.entries[: int(max_articles)]:
+                                    summary = _re.sub(r"<[^>]+>", "", entry.get("summary", ""))[:400]
+                                    articles.append({
+                                        "Title":     entry.get("title", ""),
+                                        "Source":    src,
+                                        "Published": entry.get("published", ""),
+                                        "Summary":   summary,
+                                        "Link":      entry.get("link", ""),
+                                    })
+                            except Exception as _e:
+                                st.warning(f"{src} 載入失敗：{_e}")
+                    if articles:
+                        st.success(f"共取得 {len(articles)} 篇（{', '.join(selected_feeds)}）")
+                        st.session_state["news_articles"] = articles
+                        st.session_state["news_source"] = " + ".join(selected_feeds)
+                        for a in articles:
+                            with st.expander(f"[{a['Source']}] {a['Title']}"):
+                                st.caption(a["Published"])
+                                st.write(a["Summary"])
+                                st.markdown(f"[Read more]({a['Link']})")
+                    else:
+                        st.warning("No articles found. Try different sources.")
+                except ImportError:
+                    st.error("feedparser not installed.")
+                except Exception as e:
+                    st.error(f"Feed error: {e}")
 
     # ── Tab 2: Sentiment ──────────────────────────────────────────────
     with tab2:
@@ -1690,29 +1737,30 @@ def _fetch_market_snapshot():
         "XLI": "工業", "XLU": "公用事業", "XLRE": "房地產",
         "XLB": "原物料", "XLC": "通訊",
     }
-    all_tkrs = list(INDICES.keys()) + list(SECTORS.keys())
-    try:
-        raw = yf.download(all_tkrs, period="5d", auto_adjust=True, progress=False)
-        close = (raw["Close"] if isinstance(raw.columns, pd.MultiIndex) else raw).ffill().dropna(how="all")
-    except Exception:
-        return {}, {}
+    def _fetch_close(tkr: str, period: str = "5d") -> pd.Series | None:
+        try:
+            raw = yf.download(tkr, period=period, auto_adjust=True, progress=False)
+            if raw.empty:
+                return None
+            col = raw["Close"].squeeze()
+            return col.dropna() if not col.empty else None
+        except Exception:
+            return None
 
     snapshot: dict = {}
     for tkr, (name, cat) in INDICES.items():
-        if tkr in close.columns:
-            s = close[tkr].dropna()
-            if len(s) >= 2:
-                last, prev = float(s.iloc[-1]), float(s.iloc[-2])
-                snapshot[name] = {"price": last, "chg": last / prev - 1, "cat": cat}
+        s = _fetch_close(tkr, "5d")
+        if s is not None and len(s) >= 2:
+            last, prev = float(s.iloc[-1]), float(s.iloc[-2])
+            snapshot[name] = {"price": last, "chg": last / prev - 1, "cat": cat}
 
     sectors: dict = {}
     for tkr, name in SECTORS.items():
-        if tkr in close.columns:
-            s = close[tkr].dropna()
-            if len(s) >= 2:
-                chg = float(s.iloc[-1] / s.iloc[-2] - 1)
-                chg_1m = float(s.iloc[-1] / s.iloc[max(0, len(s) - 22)] - 1) if len(s) >= 22 else chg
-                sectors[name] = {"chg": chg, "chg_1m": chg_1m}
+        s = _fetch_close(tkr, "2mo")
+        if s is not None and len(s) >= 2:
+            chg = float(s.iloc[-1] / s.iloc[-2] - 1)
+            chg_1m = float(s.iloc[-1] / s.iloc[max(0, len(s) - 22)] - 1) if len(s) >= 22 else chg
+            sectors[name] = {"chg": chg, "chg_1m": chg_1m}
 
     return snapshot, sectors
 
@@ -1811,6 +1859,79 @@ def page_market_overview():
             st.markdown("---")
     except Exception:
         st.info("新聞載入失敗，請使用「📰 新聞情報」頁面。")
+
+    # ── AI Market Intelligence ─────────────────────────────────────
+    section("🤖 AI 市場智能分析")
+    with st.expander("展開 AI 自主市場分析（需要 API Key）", expanded=False):
+        ai_key_ov = st.text_input("API Key", type="password", key="ov_ai_key",
+                                   placeholder="sk-… 或 Anthropic key")
+        ai_model_ov = st.selectbox("模型", [
+            "claude-3-5-haiku-20241022", "claude-3-5-sonnet-20241022",
+            "gpt-4o-mini", "gpt-4o",
+        ], key="ov_ai_model")
+        ai_base_ov = st.text_input("API Base URL（留空自動判斷）", "", key="ov_ai_base")
+
+        if st.button("🚀 執行全市場 AI 分析", type="primary", key="ov_ai_run"):
+            if not ai_key_ov:
+                st.error("請輸入 API Key")
+            else:
+                with st.spinner("AI 正在分析市場數據，約需 20–40 秒…"):
+                    try:
+                        # Build a comprehensive market context for the AI
+                        ctx_lines = ["=== 當前市場快照 ==="]
+                        for name, data in snapshot.items():
+                            ctx_lines.append(f"{name}: {data['price']:.2f}  ({data['chg']:+.2%})")
+                        if sectors:
+                            ctx_lines.append("\n=== 板塊今日表現 ===")
+                            sorted_sec = sorted(sectors.items(), key=lambda x: -x[1]["chg"])
+                            for name, data in sorted_sec:
+                                ctx_lines.append(f"{name}: {data['chg']:+.2%}  (近1月:{data['chg_1m']:+.2%})")
+                        # Fetch top headlines for context
+                        try:
+                            import feedparser as _fp, re as _re
+                            _feed = _fp.parse("https://feeds.marketwatch.com/marketwatch/topstories/")
+                            headlines = [_re.sub(r"<[^>]+>","",e.get("title","")) for e in _feed.entries[:8]]
+                            ctx_lines.append("\n=== 今日重要新聞標題 ===")
+                            ctx_lines.extend(headlines)
+                        except Exception:
+                            pass
+
+                        market_ctx = "\n".join(ctx_lines)
+                        prompt = f"""你是一位頂尖的跨市場量化分析師。根據以下即時市場數據，提供全面的自主市場分析。
+
+{market_ctx}
+
+請完成以下分析（繁體中文回覆）：
+
+1. **整體市場情緒**：Risk-on 或 Risk-off？判斷依據是什麼？
+2. **最強/最弱板塊**：今日及近1個月的輪動方向，背後邏輯是什麼？
+3. **宏觀信號解讀**：VIX、10年期殖利率、美元指數、黃金、油價的綜合訊息
+4. **值得關注的機會**：基於當前數據，哪些板塊或主題有潛在機會？
+5. **主要風險提示**：當前市場最大的3個潛在風險因子
+6. **短期展望（1-2週）**：基於技術面與基本面，簡短預判市場走向
+
+每項分析要具體且有依據，避免泛泛而談。"""
+
+                        client = _llm_client(ai_key_ov, ai_base_ov, ai_model_ov)
+                        resp = client.chat.completions.create(
+                            model=ai_model_ov,
+                            messages=[{"role": "user", "content": prompt}],
+                            temperature=0.3,
+                            max_tokens=1500,
+                        )
+                        analysis = resp.choices[0].message.content
+                        st.session_state["ov_ai_analysis"] = analysis
+                    except Exception as e:
+                        st.error(f"AI 分析失敗：{e}")
+
+        if "ov_ai_analysis" in st.session_state:
+            st.markdown(
+                f"<div style='background:#1A1D27;border:1px solid #2D3142;border-radius:10px;"
+                f"padding:20px;margin-top:10px;color:#E8EAF0;line-height:1.7'>"
+                f"{st.session_state['ov_ai_analysis'].replace(chr(10),'<br>')}"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -2282,17 +2403,40 @@ def page_stock_research():
                 "KLAC","META","GOOGL","AMZN","NFLX","CRM","NOW","SNOW","PLTR","NET",
                 "ZS","PANW","DDOG","MDB","WDAY",
             ],
+            "AI / 半導體": [
+                "NVDA","AMD","AVGO","QCOM","AMAT","LRCX","KLAC","MU","ASML","TSM",
+                "PLTR","AI","SOUN","MSFT","GOOGL","META","AMZN","ORCL","IBM","ARM",
+            ],
+            "高成長/動量": [
+                "NVDA","TSLA","META","AMZN","NFLX","PLTR","COIN","MSTR","HOOD","SOFI",
+                "RBLX","SHOP","SQ","PYPL","AFRM","UPST","DKNG","LYFT","ABNB","UBER",
+            ],
             "台股半導體": [
                 "2330.TW","2303.TW","2308.TW","2454.TW","2317.TW",
                 "2382.TW","3711.TW","2376.TW","2049.TW","6770.TW",
             ],
+            "台股寬基": [
+                "2330.TW","2317.TW","2454.TW","2412.TW","2881.TW","2882.TW",
+                "2886.TW","1301.TW","1303.TW","2002.TW","2308.TW","3711.TW",
+                "2382.TW","2357.TW","4938.TW","6505.TW","2912.TW","2884.TW",
+            ],
             "全球 ETF": [
-                "SPY","QQQ","EEM","GLD","TLT","VNQ","SMH","SOXX",
+                "SPY","QQQ","IWM","EEM","GLD","TLT","VNQ","SMH","SOXX",
                 "EWJ","FXI","EWT","AGG","HYG","DBA","USO","XLK","XLF","XLE",
+            ],
+            "板塊 ETF": [
+                "XLK","XLF","XLE","XLV","XLY","XLP","XLI","XLU","XLRE","XLB","XLC",
             ],
             "高股息": [
                 "O","SCHD","DVY","VIG","JEPI","DIVO","T","VZ","KO","PEP",
-                "JNJ","MO","XOM","CVX","IBM",
+                "JNJ","MO","XOM","CVX","IBM","MCD","PG","MMM","ABBV","WMT",
+            ],
+            "中概 ADR": [
+                "BABA","JD","PDD","BIDU","NIO","XPEV","LI","TCOM","NTES","BILI",
+                "VIPS","IQ","TIGR","FUTU","BOSS",
+            ],
+            "加密概念股": [
+                "COIN","MSTR","MARA","RIOT","CLSK","HUT","BTBT","CIFR","BITF","SQ",
             ],
         }
         sc1, sc2 = st.columns([2, 1])
@@ -2310,16 +2454,15 @@ def page_stock_research():
         if st.button("開始篩選", type="primary", key="sc_run"):
             with st.spinner(f"篩選 {len(screen_tickers)} 檔，約需 15–30 秒…"):
                 try:
-                    raw_sc = yf.download(screen_tickers, period=sc_period,
-                                         auto_adjust=True, progress=False)
-                    close_sc = (
-                        raw_sc["Close"] if isinstance(raw_sc.columns, pd.MultiIndex) else raw_sc
-                    ).ffill().dropna(how="all")
                     rows_sc = []
                     for tkr_s in screen_tickers:
-                        if tkr_s not in close_sc.columns:
+                        try:
+                            _raw_s = yf.download(tkr_s, period=sc_period, auto_adjust=True, progress=False)
+                            if _raw_s.empty:
+                                continue
+                            s_s = _raw_s["Close"].squeeze().dropna()
+                        except Exception:
                             continue
-                        s_s = close_sc[tkr_s].dropna()
                         if len(s_s) < 10:
                             continue
                         r_s = s_s.pct_change().dropna()
