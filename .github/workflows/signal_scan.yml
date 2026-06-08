@@ -2,7 +2,7 @@ name: RBS Signal Scanner
 
 on:
   schedule:
-    - cron: '0 * * * *'   # 每小時整點（UTC）
+    - cron: '*/15 * * * *'   # 每 15 分鐘
   workflow_dispatch:
     inputs:
       watchlist:
