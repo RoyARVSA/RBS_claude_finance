@@ -62,6 +62,21 @@ st.set_page_config(
 st.markdown(
     """
     <style>
+    /* ══ Global text ══════════════════════════════════════════════════ */
+    html, body, [class*="css"], .main, .block-container,
+    p, span, div, li, td, th, label, small, caption,
+    .stMarkdown, .stText, .stCaption {
+        color: #E8EAF0 !important;
+    }
+    h1, h2, h3, h4, h5, h6 { color: #FAFAFA !important; }
+
+    /* ══ Sidebar ══════════════════════════════════════════════════════ */
+    div[data-testid="stSidebar"] {
+        background-color: #0D1117 !important;
+    }
+    div[data-testid="stSidebar"] * { color: #E8EAF0 !important; }
+
+    /* ══ Metric cards (custom) ════════════════════════════════════════ */
     .metric-card {
         background: #1A1D27;
         border: 1px solid #2D3142;
@@ -71,7 +86,7 @@ st.markdown(
     }
     .metric-label {
         font-size: 0.78rem;
-        color: #9EA3B0;
+        color: #A0A8BB !important;
         text-transform: uppercase;
         letter-spacing: 0.05em;
         margin-bottom: 4px;
@@ -79,56 +94,91 @@ st.markdown(
     .metric-value {
         font-size: 1.5rem;
         font-weight: 700;
-        color: #FAFAFA;
+        color: #FAFAFA !important;
     }
-    .metric-positive { color: #4CAF50; }
-    .metric-negative { color: #F44336; }
+    .metric-positive { color: #4CAF50 !important; }
+    .metric-negative { color: #F44336 !important; }
+
+    /* ══ Section header ═══════════════════════════════════════════════ */
     .section-header {
         font-size: 1.1rem;
         font-weight: 600;
-        color: #1E88E5;
+        color: #5BA4EF !important;
         border-left: 3px solid #1E88E5;
         padding-left: 10px;
         margin: 16px 0 10px 0;
     }
-    div[data-testid="stSidebar"] {
-        background-color: #0D1117;
+
+    /* ══ Native st.metric ═════════════════════════════════════════════ */
+    [data-testid="stMetricLabel"]  { color: #A0A8BB !important; }
+    [data-testid="stMetricValue"]  { color: #FAFAFA !important; }
+    [data-testid="stMetricDelta"]  { color: #E8EAF0 !important; }
+
+    /* ══ Dataframe / table ════════════════════════════════════════════ */
+    [data-testid="stDataFrame"],
+    [data-testid="stDataFrame"] *  { color: #E8EAF0 !important; }
+    [data-testid="stDataFrame"] thead th {
+        background-color: #1E2235 !important;
+        color: #FAFAFA !important;
+        font-weight: 600 !important;
     }
-    /* ── Dataframe / table text always light ── */
-    [data-testid="stDataFrame"] * {
-        color: #E8EAF0 !important;
-    }
-    [data-testid="stDataFrame"] td, [data-testid="stDataFrame"] th {
-        background-color: #1A1D27 !important;
+    [data-testid="stDataFrame"] tbody td {
+        background-color: #14172A !important;
         border-color: #2D3142 !important;
     }
-    /* ── Expander text ── */
-    .streamlit-expanderContent p,
-    .streamlit-expanderContent span,
-    .streamlit-expanderContent li {
-        color: #E8EAF0 !important;
+    [data-testid="stDataFrame"] tbody tr:hover td {
+        background-color: #1E2235 !important;
     }
-    /* ── Select / multiselect dropdowns ── */
-    [data-testid="stMultiSelect"] span,
-    [data-testid="stSelectbox"] span {
-        color: #E8EAF0 !important;
-    }
-    /* ── Tabs text ── */
+
+    /* ══ Tabs ═════════════════════════════════════════════════════════ */
     button[data-baseweb="tab"] {
-        color: #9EA3B0 !important;
+        color: #8892A4 !important;
+        font-weight: 500;
     }
     button[data-baseweb="tab"][aria-selected="true"] {
         color: #FAFAFA !important;
-        border-bottom-color: #1E88E5 !important;
+        border-bottom: 2px solid #1E88E5 !important;
     }
-    /* ── Input labels ── */
-    label[data-testid="stWidgetLabel"] p {
-        color: #C8CAD4 !important;
-    }
-    /* ── Plotly chart background fix ── */
-    .js-plotly-plot .plotly .bg {
-        fill: #0F1117 !important;
-    }
+
+    /* ══ Widgets ══════════════════════════════════════════════════════ */
+    label[data-testid="stWidgetLabel"] p,
+    label[data-testid="stWidgetLabel"] span { color: #C8CAD4 !important; }
+
+    /* selectbox / multiselect pills & options */
+    [data-testid="stSelectbox"] *,
+    [data-testid="stMultiSelect"] * { color: #E8EAF0 !important; }
+    div[data-baseweb="select"] *    { color: #E8EAF0 !important; }
+    li[role="option"]               { color: #E8EAF0 !important; }
+
+    /* text_input, number_input */
+    [data-testid="stTextInput"] input,
+    [data-testid="stNumberInput"] input { color: #E8EAF0 !important; }
+
+    /* slider labels */
+    [data-testid="stSlider"] * { color: #C8CAD4 !important; }
+
+    /* radio & checkbox */
+    [data-testid="stRadio"] label,
+    [data-testid="stCheckbox"] label { color: #C8CAD4 !important; }
+
+    /* caption */
+    [data-testid="stCaptionContainer"] p { color: #8892A4 !important; }
+
+    /* ══ Expander ═════════════════════════════════════════════════════ */
+    details summary p,
+    [data-testid="stExpander"] *    { color: #E8EAF0 !important; }
+
+    /* ══ Alert / info boxes ═══════════════════════════════════════════ */
+    [data-testid="stAlert"] *       { color: #E8EAF0 !important; }
+
+    /* ══ Plotly SVG text override ═════════════════════════════════════ */
+    .js-plotly-plot .plotly text { fill: #E8EAF0 !important; }
+    .js-plotly-plot .plotly .bg  { fill: #0F1117 !important; }
+
+    /* ══ Scrollbar ════════════════════════════════════════════════════ */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #0D1117; }
+    ::-webkit-scrollbar-thumb { background: #2D3142; border-radius: 3px; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -136,12 +186,41 @@ st.markdown(
 
 # ─────────────────────────── Helpers ────────────────────────────────
 
+_AXIS = dict(
+    color="#E8EAF0",
+    tickfont=dict(color="#E8EAF0", size=11),
+    title_font=dict(color="#C8CAD4", size=12),
+    gridcolor="#2D3142",
+    linecolor="#2D3142",
+    zerolinecolor="#3D4255",
+)
+
 PLOTLY_LAYOUT = dict(
     template="plotly_dark",
     paper_bgcolor="#0F1117",
-    plot_bgcolor="#0F1117",
-    font=dict(family="Inter, sans-serif", size=12, color="#FAFAFA"),
-    margin=dict(l=40, r=20, t=40, b=40),
+    plot_bgcolor="#14172A",
+    font=dict(family="Inter, sans-serif", size=12, color="#E8EAF0"),
+    margin=dict(l=40, r=20, t=45, b=40),
+    xaxis=_AXIS,
+    yaxis=_AXIS,
+    legend=dict(
+        font=dict(color="#E8EAF0", size=11),
+        bgcolor="#1A1D27",
+        bordercolor="#2D3142",
+        borderwidth=1,
+    ),
+    coloraxis=dict(
+        colorbar=dict(
+            tickfont=dict(color="#E8EAF0"),
+            title_font=dict(color="#E8EAF0"),
+        )
+    ),
+    title_font=dict(color="#FAFAFA", size=14),
+    hoverlabel=dict(
+        bgcolor="#1E2235",
+        bordercolor="#3D4255",
+        font=dict(color="#FAFAFA", size=12),
+    ),
 )
 
 
