@@ -62,21 +62,9 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-    /* ══ Global text ══════════════════════════════════════════════════ */
-    html, body, [class*="css"], .main, .block-container,
-    p, span, div, li, td, th, label, small, caption,
-    .stMarkdown, .stText, .stCaption {
-        color: #E8EAF0 !important;
-    }
-    h1, h2, h3, h4, h5, h6 { color: #FAFAFA !important; }
+    /* ══ Custom HTML components only — native Streamlit handled by config.toml ══ */
 
-    /* ══ Sidebar ══════════════════════════════════════════════════════ */
-    div[data-testid="stSidebar"] {
-        background-color: #0D1117 !important;
-    }
-    div[data-testid="stSidebar"] * { color: #E8EAF0 !important; }
-
-    /* ══ Metric cards (custom) ════════════════════════════════════════ */
+    /* Metric cards */
     .metric-card {
         background: #1A1D27;
         border: 1px solid #2D3142;
@@ -86,7 +74,7 @@ st.markdown(
     }
     .metric-label {
         font-size: 0.78rem;
-        color: #A0A8BB !important;
+        color: #9EA3B0;
         text-transform: uppercase;
         letter-spacing: 0.05em;
         margin-bottom: 4px;
@@ -94,88 +82,47 @@ st.markdown(
     .metric-value {
         font-size: 1.5rem;
         font-weight: 700;
-        color: #FAFAFA !important;
+        color: #FAFAFA;
     }
-    .metric-positive { color: #4CAF50 !important; }
-    .metric-negative { color: #F44336 !important; }
+    .metric-positive { color: #4CAF50; }
+    .metric-negative { color: #F44336; }
 
-    /* ══ Section header ═══════════════════════════════════════════════ */
+    /* Section header */
     .section-header {
         font-size: 1.1rem;
         font-weight: 600;
-        color: #5BA4EF !important;
+        color: #5BA4EF;
         border-left: 3px solid #1E88E5;
         padding-left: 10px;
         margin: 16px 0 10px 0;
     }
 
-    /* ══ Native st.metric ═════════════════════════════════════════════ */
-    [data-testid="stMetricLabel"]  { color: #A0A8BB !important; }
-    [data-testid="stMetricValue"]  { color: #FAFAFA !important; }
-    [data-testid="stMetricDelta"]  { color: #E8EAF0 !important; }
+    /* Sidebar */
+    div[data-testid="stSidebar"] {
+        background-color: #0D1117;
+    }
 
-    /* ══ Dataframe / table ════════════════════════════════════════════ */
-    [data-testid="stDataFrame"],
-    [data-testid="stDataFrame"] *  { color: #E8EAF0 !important; }
-    [data-testid="stDataFrame"] thead th {
-        background-color: #1E2235 !important;
-        color: #FAFAFA !important;
-        font-weight: 600 !important;
-    }
-    [data-testid="stDataFrame"] tbody td {
-        background-color: #14172A !important;
-        border-color: #2D3142 !important;
-    }
-    [data-testid="stDataFrame"] tbody tr:hover td {
+    /* Dataframe — only target the canvas/cell layer, not the whole page */
+    [data-testid="stDataFrame"] canvas { filter: none; }
+    [data-testid="stDataFrame"] thead tr th {
         background-color: #1E2235 !important;
     }
 
-    /* ══ Tabs ═════════════════════════════════════════════════════════ */
-    button[data-baseweb="tab"] {
-        color: #8892A4 !important;
-        font-weight: 500;
-    }
+    /* Active tab indicator color */
     button[data-baseweb="tab"][aria-selected="true"] {
-        color: #FAFAFA !important;
         border-bottom: 2px solid #1E88E5 !important;
     }
 
-    /* ══ Widgets ══════════════════════════════════════════════════════ */
-    label[data-testid="stWidgetLabel"] p,
-    label[data-testid="stWidgetLabel"] span { color: #C8CAD4 !important; }
+    /* Plotly SVG: only override text that sits on dark chart backgrounds */
+    .js-plotly-plot .plotly .gtitle { fill: #FAFAFA !important; }
+    .js-plotly-plot .plotly .xtick text,
+    .js-plotly-plot .plotly .ytick text { fill: #E8EAF0 !important; }
+    .js-plotly-plot .plotly .g-xtitle text,
+    .js-plotly-plot .plotly .g-ytitle text { fill: #C8CAD4 !important; }
+    .js-plotly-plot .plotly .legendtext { fill: #E8EAF0 !important; }
+    .js-plotly-plot .plotly .colorbar text { fill: #E8EAF0 !important; }
 
-    /* selectbox / multiselect pills & options */
-    [data-testid="stSelectbox"] *,
-    [data-testid="stMultiSelect"] * { color: #E8EAF0 !important; }
-    div[data-baseweb="select"] *    { color: #E8EAF0 !important; }
-    li[role="option"]               { color: #E8EAF0 !important; }
-
-    /* text_input, number_input */
-    [data-testid="stTextInput"] input,
-    [data-testid="stNumberInput"] input { color: #E8EAF0 !important; }
-
-    /* slider labels */
-    [data-testid="stSlider"] * { color: #C8CAD4 !important; }
-
-    /* radio & checkbox */
-    [data-testid="stRadio"] label,
-    [data-testid="stCheckbox"] label { color: #C8CAD4 !important; }
-
-    /* caption */
-    [data-testid="stCaptionContainer"] p { color: #8892A4 !important; }
-
-    /* ══ Expander ═════════════════════════════════════════════════════ */
-    details summary p,
-    [data-testid="stExpander"] *    { color: #E8EAF0 !important; }
-
-    /* ══ Alert / info boxes ═══════════════════════════════════════════ */
-    [data-testid="stAlert"] *       { color: #E8EAF0 !important; }
-
-    /* ══ Plotly SVG text override ═════════════════════════════════════ */
-    .js-plotly-plot .plotly text { fill: #E8EAF0 !important; }
-    .js-plotly-plot .plotly .bg  { fill: #0F1117 !important; }
-
-    /* ══ Scrollbar ════════════════════════════════════════════════════ */
+    /* Scrollbar */
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: #0D1117; }
     ::-webkit-scrollbar-thumb { background: #2D3142; border-radius: 3px; }
