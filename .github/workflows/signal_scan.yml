@@ -1,28 +1,32 @@
 name: RBS Signal Scanner
 
 on:
-  # Run every hour at minute 0
   schedule:
-    - cron: '0 * * * *'
-  # Allow manual trigger from GitHub Actions UI
+    - cron: '0 * * * *'   # 每小時整點（UTC）
   workflow_dispatch:
     inputs:
       watchlist:
-        description: 'Comma-separated tickers to scan (overrides WATCHLIST secret)'
+        description: '臨時覆蓋 watchlist（逗號分隔），留空使用 watchlist_state.json'
         required: false
         default: ''
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
+permissions:
+  contents: write   # 允許 workflow 把 watchlist_state.json commit 回 repo
+
 jobs:
   scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 1
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -33,7 +37,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-scanner-${{ hashFiles('**/requirements-scan.txt') }}
+          key: ${{ runner.os }}-pip-scanner-v2
           restore-keys: |
             ${{ runner.os }}-pip-scanner-
 
@@ -44,12 +48,21 @@ jobs:
         env:
           TELEGRAM_TOKEN:   ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          # Use manual input if provided, otherwise fall back to repository secret
-          WATCHLIST: ${{ github.event.inputs.watchlist || secrets.WATCHLIST }}
-          MIN_RSI_OVERSOLD:    ${{ secrets.MIN_RSI_OVERSOLD }}
-          MAX_RSI_OVERBOUGHT:  ${{ secrets.MAX_RSI_OVERBOUGHT }}
-          PRICE_CHANGE_PCT:    ${{ secrets.PRICE_CHANGE_PCT }}
+          # 手動觸發時可臨時覆蓋 watchlist（不會存入 state）
+          WATCHLIST: ${{ github.event.inputs.watchlist }}
         run: python scan_signals.py
+
+      - name: Commit updated watchlist state
+        run: |
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name  "github-actions[bot]"
+          git add watchlist_state.json 2>/dev/null || true
+          git diff --staged --quiet && echo "No state changes." || \
+            git commit -m "chore: update watchlist_state.json [skip ci]"
+
+      - name: Push state changes
+        run: git push origin HEAD
+        continue-on-error: true   # 不讓 push 失敗影響整體工作
 
       - name: Upload scan log
         if: always()
