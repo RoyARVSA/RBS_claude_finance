@@ -15,7 +15,8 @@
     "COIN",
     "TSM",
     "ARKK",
-    "VRT"
+    "VRT",
+    "GLD"
   ],
   "thresholds": {
     "rsi_oversold": 35.0,
@@ -26,6 +27,6 @@
     "atr_enabled": true,
     "vol_spike_ratio": 2.0
   },
-  "last_update_id": 280895066,
+  "last_update_id": 280895067,
   "last_scan_time": "2026-06-24 18:06 UTC"
 }
