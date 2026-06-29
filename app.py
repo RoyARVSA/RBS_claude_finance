@@ -2220,7 +2220,7 @@ def page_stock_research():
     st.title("🔍 股票研究")
     st.caption("個股深度分析 · K 線 · RSI · AI 研究報告 · 市場篩選器")
 
-    tab1, tab2 = st.tabs(["📊 個股深度分析", "🔎 市場篩選器"])
+    tab1, tab2, tab3 = st.tabs(["📊 個股深度分析", "🔎 市場篩選器", "🧪 訊號回測"])
 
     # ── Tab 1: Individual deep dive ────────────────────────────────
     with tab1:
@@ -2581,6 +2581,123 @@ def page_stock_research():
                 data=fdf.reset_index().to_csv(index=False).encode("utf-8"),
                 file_name=f"screener_{date.today()}.csv",
                 mime="text/csv",
+            )
+
+    # ── Tab 3: Signal Backtest (Triple-Barrier) ────────────────────
+    with tab3:
+        section("訊號回測 — 三重關卡法 (Triple-Barrier)")
+        st.caption(
+            "每當訊號觸發，往後看 N 天設停利/停損/到期三道關卡，先碰到哪個決定勝負。"
+            "方法源自 López de Prado《Advances in Financial ML》與實證量化研究。"
+        )
+
+        bt_c1, bt_c2, bt_c3, bt_c4 = st.columns(4)
+        with bt_c1:
+            bt_ticker = st.text_input("股票代碼", "AAPL", key="bt_tk").upper().strip()
+        with bt_c2:
+            bt_period = st.selectbox("回測期間", ["1y", "2y", "5y", "max"], index=1, key="bt_pd")
+        with bt_c3:
+            bt_tp = st.slider("停利 %", 1, 20, 5, key="bt_tp") / 100
+        with bt_c4:
+            bt_sl = st.slider("停損 %", 1, 15, 3, key="bt_sl") / 100
+        bt_h = st.slider("持有上限（交易日）", 3, 30, 10, key="bt_h")
+
+        st.markdown(
+            "<small style='color:#B8C0D0'>💡 停利/停損比建議 ≥ 1.5:1（如停利5%/停損3%）。"
+            "交易數 <5 的規則統計上不可靠，會排到後面。</small>",
+            unsafe_allow_html=True,
+        )
+
+        if st.button("🧪 執行回測", type="primary", key="bt_run"):
+            try:
+                import backtest as _bt
+            except ImportError:
+                st.error("找不到 backtest.py，請確認已同步該檔案（Colab 需更新 Cell 2）。")
+                _bt = None
+
+            if _bt and bt_ticker:
+                with st.spinner(f"回測 {bt_ticker} 全部 9 種訊號規則…"):
+                    try:
+                        raw_bt = yf.download(bt_ticker, period=bt_period,
+                                             auto_adjust=True, progress=False)
+                        if raw_bt.empty:
+                            st.error("無資料，請確認代碼。")
+                        else:
+                            df_bt = (raw_bt if "Close" in raw_bt.columns
+                                     else raw_bt.xs(bt_ticker, axis=1, level=1))
+                            res = _bt.backtest_all(df_bt, tp=bt_tp, sl=bt_sl, horizon=bt_h)
+                            st.session_state["bt_result"] = res
+                            st.session_state["bt_meta"] = (bt_ticker, bt_tp, bt_sl, bt_h)
+                    except Exception as e:
+                        st.error(f"回測失敗：{e}")
+
+        if st.session_state.get("bt_result") is not None:
+            res = st.session_state["bt_result"]
+            mtk, mtp, msl, mh = st.session_state.get("bt_meta", (bt_ticker, bt_tp, bt_sl, bt_h))
+            st.markdown(f"#### {mtk} · 停利{mtp:.0%} / 停損{msl:.0%} / 持有≤{mh}日")
+
+            disp = res.copy()
+            disp_fmt = disp.rename(columns={
+                "trades": "交易數", "win_rate": "勝率", "profit_factor": "獲利因子",
+                "expectancy": "期望值/筆", "avg_win": "平均獲利", "avg_loss": "平均虧損",
+                "avg_held": "平均持有", "total_ret": "累積報酬",
+            })
+
+            def _pf_color(v):
+                if isinstance(v, float) and np.isfinite(v):
+                    return "color:#4CAF50;font-weight:700" if v >= 1.5 else (
+                        "color:#FFC107" if v >= 1.0 else "color:#F44336")
+                return "color:#E8EAF0"
+            def _wr_color(v):
+                if isinstance(v, float) and not np.isnan(v):
+                    return "color:#4CAF50" if v >= 0.55 else (
+                        "color:#FFC107" if v >= 0.45 else "color:#F44336")
+                return ""
+
+            st.dataframe(
+                disp_fmt.style
+                    .format({
+                        "勝率": "{:.1%}", "獲利因子": "{:.2f}", "期望值/筆": "{:+.2%}",
+                        "平均獲利": "{:+.2%}", "平均虧損": "{:+.2%}",
+                        "平均持有": "{:.1f}", "累積報酬": "{:+.1%}",
+                    }, na_rep="—")
+                    .applymap(_pf_color, subset=["獲利因子"])
+                    .applymap(_wr_color, subset=["勝率"]),
+                use_container_width=True,
+            )
+
+            # Best rule callout
+            valid = res[res["trades"] >= 5].copy()
+            if not valid.empty and np.isfinite(valid["profit_factor"].iloc[0]):
+                best = valid.iloc[0]
+                st.success(
+                    f"🏆 最佳訊號：**{valid.index[0]}** — "
+                    f"勝率 {best['win_rate']:.0%}，獲利因子 {best['profit_factor']:.2f}，"
+                    f"{int(best['trades'])} 筆交易，期望值每筆 {best['expectancy']:+.2%}"
+                )
+
+            # Profit factor bar chart
+            chart_df = valid.reset_index() if not valid.empty else res.reset_index()
+            chart_df = chart_df[np.isfinite(chart_df["profit_factor"])]
+            if not chart_df.empty:
+                fig_bt = px.bar(
+                    chart_df.sort_values("profit_factor"),
+                    x="profit_factor", y="rule", orientation="h",
+                    color="win_rate", color_continuous_scale="RdYlGn",
+                    color_continuous_midpoint=0.5,
+                    labels={"profit_factor": "獲利因子", "rule": "", "win_rate": "勝率"},
+                )
+                fig_bt.add_vline(x=1.0, line_dash="dash", line_color="#888")
+                fig_bt.update_layout(**PLOTLY_LAYOUT, height=400,
+                                     title="各訊號獲利因子（虛線=1.0 損益兩平）")
+                st.plotly_chart(fig_bt, use_container_width=True)
+
+            st.markdown(
+                "<small style='color:#B8C0D0'>"
+                "📖 **獲利因子** = 總獲利/總虧損，>1.5 佳、>1.0 才賺錢。"
+                "**期望值** = 每筆交易平均報酬，正值代表長期有利。"
+                "回測為歷史模擬，未計交易成本與滑價，僅供訊號相對強弱參考。</small>",
+                unsafe_allow_html=True,
             )
 
 
