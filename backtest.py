@@ -306,6 +306,75 @@ def walk_forward(df: pd.DataFrame, n_splits: int = 4, **kw) -> dict[str, float]:
     return consistency
 
 
+# ── 參數最佳化（mini-hyperopt）─────────────────────────────────────────────────
+
+def optimize_params(
+    df: pd.DataFrame,
+    rule: str | None = None,
+    tp_grid: list[float] | None = None,
+    sl_grid: list[float] | None = None,
+    horizon_grid: list[int] | None = None,
+    cost: float = 0.001,
+    min_trades: int = 8,
+) -> pd.DataFrame:
+    """
+    網格搜尋最佳 (停利, 停損, 持有天數)。學習自 freqtrade hyperopt，
+    但目標函數加入「樣本外一致性」以抑制過擬合：
+
+      objective = expectancy × profit_factor_capped × consistency
+
+    rule=None 時，每組參數取「當組表現最好的單一規則」當代表（找最適合此標的的玩法）；
+    指定 rule 時只最佳化該規則。回傳依 objective 排序的網格結果表。
+    """
+    tp_grid = tp_grid or [0.03, 0.05, 0.08]
+    sl_grid = sl_grid or [0.02, 0.03, 0.05]
+    horizon_grid = horizon_grid or [5, 10, 20]
+
+    rows = []
+    for tp in tp_grid:
+        for sl in sl_grid:
+            for h in horizon_grid:
+                bt = backtest_all(df, tp=tp, sl=sl, horizon=h, cost=cost)
+                cons = walk_forward(df, tp=tp, sl=sl, horizon=h, cost=cost)
+
+                if rule is not None:
+                    if rule not in bt.index:
+                        continue
+                    candidates = [rule]
+                else:
+                    candidates = list(bt.index)
+
+                best_obj, best = -np.inf, None
+                for rname in candidates:
+                    row = bt.loc[rname]
+                    if row["trades"] < min_trades or not np.isfinite(row["profit_factor"]):
+                        continue
+                    pf_cap = min(row["profit_factor"], 3.0)
+                    c = cons.get(rname, 0.5)
+                    obj = row["expectancy"] * pf_cap * c
+                    if obj > best_obj:
+                        best_obj, best = obj, rname
+
+                if best is None:
+                    continue
+                row = bt.loc[best]
+                rows.append({
+                    "tp": tp, "sl": sl, "horizon": h,
+                    "best_rule": best,
+                    "trades": int(row["trades"]),
+                    "win_rate": float(row["win_rate"]),
+                    "profit_factor": float(row["profit_factor"]),
+                    "expectancy": float(row["expectancy"]),
+                    "consistency": float(cons.get(best, 0.5)),
+                    "objective": float(best_obj),
+                })
+
+    if not rows:
+        return pd.DataFrame()
+    out = pd.DataFrame(rows).sort_values("objective", ascending=False).reset_index(drop=True)
+    return out
+
+
 # ── CLI 自我測試 ──────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
