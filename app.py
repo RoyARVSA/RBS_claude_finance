@@ -2600,11 +2600,16 @@ def page_stock_research():
             bt_tp = st.slider("停利 %", 1, 20, 5, key="bt_tp") / 100
         with bt_c4:
             bt_sl = st.slider("停損 %", 1, 15, 3, key="bt_sl") / 100
-        bt_h = st.slider("持有上限（交易日）", 3, 30, 10, key="bt_h")
+        bt_cc1, bt_cc2 = st.columns(2)
+        with bt_cc1:
+            bt_h = st.slider("持有上限（交易日）", 3, 30, 10, key="bt_h")
+        with bt_cc2:
+            bt_cost = st.slider("來回交易成本 ‰（手續費+滑價）", 0, 30, 10, key="bt_cost") / 1000
 
         st.markdown(
             "<small style='color:#B8C0D0'>💡 停利/停損比建議 ≥ 1.5:1（如停利5%/停損3%）。"
-            "交易數 <5 的規則統計上不可靠，會排到後面。</small>",
+            "已採用<b>下一根進場</b>（消除前視偏誤）+ <b>扣交易成本</b> + "
+            "<b>樣本外一致性</b>檢測（防過擬合）。交易數 <5 的規則統計上不可靠。</small>",
             unsafe_allow_html=True,
         )
 
@@ -2625,7 +2630,15 @@ def page_stock_research():
                         else:
                             df_bt = (raw_bt if "Close" in raw_bt.columns
                                      else raw_bt.xs(bt_ticker, axis=1, level=1))
-                            res = _bt.backtest_all(df_bt, tp=bt_tp, sl=bt_sl, horizon=bt_h)
+                            res = _bt.backtest_all(df_bt, tp=bt_tp, sl=bt_sl,
+                                                   horizon=bt_h, cost=bt_cost)
+                            # 加上樣本外一致性（穩健度）欄
+                            try:
+                                wf = _bt.walk_forward(df_bt, tp=bt_tp, sl=bt_sl,
+                                                      horizon=bt_h, cost=bt_cost)
+                                res["穩健度"] = [wf.get(r, np.nan) for r in res.index]
+                            except Exception:
+                                res["穩健度"] = np.nan
                             st.session_state["bt_result"] = res
                             st.session_state["bt_meta"] = (bt_ticker, bt_tp, bt_sl, bt_h)
                     except Exception as e:
@@ -2653,18 +2666,26 @@ def page_stock_research():
                     return "color:#4CAF50" if v >= 0.55 else (
                         "color:#FFC107" if v >= 0.45 else "color:#F44336")
                 return ""
+            def _rob_color(v):
+                if isinstance(v, float) and not np.isnan(v):
+                    return "color:#4CAF50" if v >= 0.6 else (
+                        "color:#FFC107" if v >= 0.4 else "color:#F44336")
+                return ""
 
-            st.dataframe(
-                disp_fmt.style
-                    .format({
-                        "勝率": "{:.1%}", "獲利因子": "{:.2f}", "期望值/筆": "{:+.2%}",
-                        "平均獲利": "{:+.2%}", "平均虧損": "{:+.2%}",
-                        "平均持有": "{:.1f}", "累積報酬": "{:+.1%}",
-                    }, na_rep="—")
-                    .applymap(_pf_color, subset=["獲利因子"])
-                    .applymap(_wr_color, subset=["勝率"]),
-                use_container_width=True,
-            )
+            _fmt = {
+                "勝率": "{:.1%}", "獲利因子": "{:.2f}", "期望值/筆": "{:+.2%}",
+                "平均獲利": "{:+.2%}", "平均虧損": "{:+.2%}",
+                "平均持有": "{:.1f}", "累積報酬": "{:+.1%}",
+            }
+            _styler = disp_fmt.style
+            if "穩健度" in disp_fmt.columns:
+                _fmt["穩健度"] = "{:.0%}"
+            _styler = _styler.format(_fmt, na_rep="—") \
+                             .applymap(_pf_color, subset=["獲利因子"]) \
+                             .applymap(_wr_color, subset=["勝率"])
+            if "穩健度" in disp_fmt.columns:
+                _styler = _styler.applymap(_rob_color, subset=["穩健度"])
+            st.dataframe(_styler, use_container_width=True)
 
             # Best rule callout
             valid = res[res["trades"] >= 5].copy()
@@ -2695,8 +2716,11 @@ def page_stock_research():
             st.markdown(
                 "<small style='color:#B8C0D0'>"
                 "📖 **獲利因子** = 總獲利/總虧損，>1.5 佳、>1.0 才賺錢。"
-                "**期望值** = 每筆交易平均報酬，正值代表長期有利。"
-                "回測為歷史模擬，未計交易成本與滑價，僅供訊號相對強弱參考。</small>",
+                "**期望值** = 每筆交易平均報酬（已扣成本），正值代表長期有利。"
+                "**穩健度** = 樣本外一致性，把資料切成 4 段看每段是否都賺，"
+                "<60% 代表只在某些時期有效（過擬合風險）。"
+                "回測採下一根進場（無前視）並已扣交易成本，但仍為歷史模擬，"
+                "僅供訊號相對強弱參考。</small>",
                 unsafe_allow_html=True,
             )
 
