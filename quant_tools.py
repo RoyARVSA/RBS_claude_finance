@@ -107,8 +107,14 @@ def risk_contributions(weights, cov) -> np.ndarray:
 def risk_parity_weights(cov, max_iter: int = 2000, tol: float = 1e-10) -> np.ndarray:
     """
     等風險貢獻（Equal Risk Contribution, ERC）配置。
-    乘法更新法：w_i ← w_i × (σ_p/N) / RC_i，迭代至各資產風險貢獻相等。
-    僅做多、權重正規化至總和 1。退化情形回退到反波動加權。
+
+    用「循環座標下降法」（Spinu 2013 / Griveau-Billion 2013）求解，對任意
+    正半定共變異數矩陣都可證明收斂——逐一更新每個權重至其風險貢獻達 1/N：
+        w_i = (-c_i + √(c_i² + 4·σ_ii/N)) / (2·σ_ii)
+    其中 c_i = Σ_{j≠i} σ_ij·w_j。僅做多、最終正規化至總和 1。
+
+    （先前的乘法更新法在 n≥3、相關性較高時會震盪並塌縮到單一資產角解，
+      已改用此可證明收斂的解法。）
     """
     cov = np.asarray(cov, dtype=float)
     n = cov.shape[0]
@@ -117,34 +123,22 @@ def risk_parity_weights(cov, max_iter: int = 2000, tol: float = 1e-10) -> np.nda
     if n == 1:
         return np.array([1.0])
 
-    # 退化檢查：對角線（變異數）需為正
+    # 退化檢查：對角線（變異數）需為正且矩陣有限
     var = np.diag(cov)
     if np.any(var <= 0) or not np.all(np.isfinite(cov)):
         return inverse_vol_weights(np.sqrt(np.clip(var, 1e-12, None)))
 
-    w = inverse_vol_weights(np.sqrt(var))   # 從反波動起始（收斂更快）
-    target = 1.0 / n
-
+    w = 1.0 / np.sqrt(var)        # 反波動起始（未正規化）
     for _ in range(max_iter):
-        port_var = float(w @ cov @ w)
-        if port_var <= 0:
+        w_old = w.copy()
+        for i in range(n):
+            ci = cov[i] @ w - cov[i, i] * w[i]      # Σ_{j≠i} σ_ij·w_j
+            w[i] = (-ci + np.sqrt(ci * ci + 4.0 * cov[i, i] / n)) / (2.0 * cov[i, i])
+        if np.max(np.abs(w - w_old)) < tol:
             break
-        sigma = np.sqrt(port_var)
-        mrc = cov @ w / sigma
-        rc = w * mrc                          # 風險貢獻
-        rc_frac = rc / sigma                  # 佔比（總和=1）
-        # 乘法更新：低於目標的加重、高於目標的減輕
-        w_new = w * (target / np.where(rc_frac <= 0, 1e-12, rc_frac))
-        w_new = np.clip(w_new, 0, None)
-        s = w_new.sum()
-        if s <= 0:
-            break
-        w_new /= s
-        if np.max(np.abs(w_new - w)) < tol:
-            w = w_new
-            break
-        w = w_new
-    return w
+    w = np.clip(w, 0, None)
+    s = w.sum()
+    return w / s if s > 0 else np.full(n, 1.0 / n)
 
 
 # ── CLI 自我測試 ──────────────────────────────────────────────────────────────
@@ -162,12 +156,18 @@ if __name__ == "__main__":
     print(" win40/ratio1.0:", kelly_fraction(0.40, 1.0))
 
     print("\n=== Risk Parity 驗證（風險貢獻應相等）===")
-    rng = np.random.default_rng(0)
-    vols = np.array([0.10, 0.20, 0.40])
-    corr = np.array([[1, 0.3, 0.1], [0.3, 1, 0.2], [0.1, 0.2, 1]])
+    # 用較高相關性 + 5 檔測試（先前乘法解法會在此塌縮，座標下降法不會）
+    vols = np.array([0.10, 0.20, 0.40, 0.15, 0.30])
+    corr = np.array([
+        [1.0, 0.6, 0.3, 0.5, 0.2],
+        [0.6, 1.0, 0.4, 0.3, 0.5],
+        [0.3, 0.4, 1.0, 0.2, 0.6],
+        [0.5, 0.3, 0.2, 1.0, 0.4],
+        [0.2, 0.5, 0.6, 0.4, 1.0],
+    ])
     cov = np.outer(vols, vols) * corr
     w_erc = risk_parity_weights(cov)
     rc = risk_contributions(w_erc, cov)
-    print("  weights:", np.round(w_erc, 4))
-    print("  risk contrib %:", np.round(rc / rc.sum(), 4), "(應接近相等 ~0.333)")
+    print("  weights:", np.round(w_erc, 4), "  sum:", round(float(w_erc.sum()), 6))
+    print("  risk contrib %:", np.round(rc / rc.sum(), 4), "(應全部 ~0.20)")
     print("  inverse-vol:", np.round(inverse_vol_weights(vols), 4))

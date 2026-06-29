@@ -2681,8 +2681,7 @@ def page_stock_research():
                         if raw_bt.empty:
                             st.error("無資料，請確認代碼。")
                         else:
-                            df_bt = (raw_bt if "Close" in raw_bt.columns
-                                     else raw_bt.xs(bt_ticker, axis=1, level=1))
+                            df_bt = _bt.normalize_ohlc(raw_bt, bt_ticker)
                             res = _bt.backtest_all(df_bt, tp=bt_tp, sl=bt_sl,
                                                    horizon=bt_h, cost=bt_cost)
                             # 加上樣本外一致性（穩健度）欄
@@ -2798,8 +2797,7 @@ def page_stock_research():
                         if raw_o.empty:
                             st.error("無資料。")
                         else:
-                            df_o = (raw_o if "Close" in raw_o.columns
-                                    else raw_o.xs(opt_tkr, axis=1, level=1))
+                            df_o = _bt2.normalize_ohlc(raw_o, opt_tkr)
                             opt = _bt2.optimize_params(df_o)
                             st.session_state["opt_result"] = (opt_tkr, opt)
                     except Exception as e:

@@ -26,6 +26,25 @@ import numpy as np
 import pandas as pd
 
 
+# ── yfinance 單檔下載正規化 ───────────────────────────────────────────────────
+
+def normalize_ohlc(raw: pd.DataFrame, ticker: str) -> pd.DataFrame:
+    """
+    把單檔 yfinance 下載結果正規化成「平面欄位」DataFrame（Close/High/Low/Volume）。
+    新版 yfinance 單檔也回傳 MultiIndex (field,ticker) 或 (ticker,field)，
+    若不處理，df["Close"] 會得到 (N,1) DataFrame 而非 Series，導致指標計算錯誤。
+    """
+    if not isinstance(raw.columns, pd.MultiIndex):
+        return raw
+    lvl0 = set(raw.columns.get_level_values(0))
+    if "Close" in lvl0:                       # (field, ticker)
+        return raw.xs(ticker, axis=1, level=1) if ticker in raw.columns.get_level_values(1) \
+            else raw.droplevel(1, axis=1)
+    # (ticker, field)
+    return raw.xs(ticker, axis=1, level=0) if ticker in lvl0 \
+        else raw.droplevel(0, axis=1)
+
+
 # ── 指標計算（向量化）──────────────────────────────────────────────────────────
 
 def rsi(close: pd.Series, period: int = 14) -> pd.Series:
@@ -389,7 +408,7 @@ if __name__ == "__main__":
     raw = yf.download(ticker, period="2y", auto_adjust=True, progress=False)
     if raw.empty:
         print("無資料"); sys.exit(1)
-    df = raw if "Close" in raw.columns else raw.xs(ticker, axis=1, level=1)
+    df = normalize_ohlc(raw, ticker)
 
     print(f"\n=== {ticker} 訊號回測（停利5% / 停損3% / 持有10天）===\n")
     bt = backtest_all(df, tp=0.05, sl=0.03, horizon=10)

@@ -937,10 +937,13 @@ def scan(tickers: list[str], thresholds: dict, calibration: dict | None = None) 
     for ticker in tickers:
         try:
             if single:
+                def _ser(field):
+                    s = raw.get(field, pd.Series()).squeeze().dropna()
+                    return s if not s.empty else None
                 close  = raw["Close"].squeeze().dropna()
-                high   = raw.get("High",   pd.Series()).squeeze().dropna() or None
-                low    = raw.get("Low",    pd.Series()).squeeze().dropna() or None
-                volume = raw.get("Volume", pd.Series()).squeeze().dropna() or None
+                high   = _ser("High")
+                low    = _ser("Low")
+                volume = _ser("Volume")
             else:
                 close  = _col(raw, "Close",  ticker)
                 high   = _col(raw, "High",   ticker)
