@@ -2177,7 +2177,7 @@ def page_risk_management():
         r_df = px_df.pct_change().dropna()
         roll_w_c = st.number_input("滾動窗口（天）", 30, 1000, 126, key="rm_rollw")
         bench_c  = st.text_input("基準代碼", "^GSPC", key="rm_bench")
-        ct_a, ct_b, ct_c = st.tabs(["相關係數矩陣", "滾動 Beta", "散佈矩陣"])
+        ct_a, ct_b, ct_c, ct_d = st.tabs(["相關係數矩陣", "滾動 Beta", "散佈矩陣", "⚖️ 風險平價配置"])
 
         with ct_a:
             corr = r_df.corr()
@@ -2185,6 +2185,59 @@ def page_risk_management():
                             zmin=-1, zmax=1, aspect="auto")
             fig.update_layout(**PLOTLY_LAYOUT, title="Pairwise Correlation", height=450)
             st.plotly_chart(fig, use_container_width=True)
+
+        with ct_d:
+            section("等風險貢獻配置（Risk Parity / ERC）")
+            st.caption(
+                "讓每檔標的對組合的風險貢獻相等，而非等權重。"
+                "高波動標的自動減碼，整體分散更佳（學習自 Riskfolio-Lib）。"
+            )
+            try:
+                import quant_tools as _qt
+            except ImportError:
+                _qt = None
+                st.error("找不到 quant_tools.py，請確認已同步。")
+            if _qt is not None and r_df.shape[1] >= 2:
+                cov_ann = (r_df.cov() * 252).values
+                tickers_rp = list(r_df.columns)
+                w_erc = _qt.risk_parity_weights(cov_ann)
+                w_iv  = _qt.inverse_vol_weights(np.sqrt(np.diag(cov_ann)))
+                w_eq  = np.full(len(tickers_rp), 1.0 / len(tickers_rp))
+                rc_erc = _qt.risk_contributions(w_erc, cov_ann)
+                rc_eq  = _qt.risk_contributions(w_eq, cov_ann)
+
+                alloc = pd.DataFrame({
+                    "標的": tickers_rp,
+                    "等風險權重": w_erc,
+                    "反波動權重": w_iv,
+                    "等權重": w_eq,
+                    "風險貢獻%(ERC)": rc_erc / rc_erc.sum() if rc_erc.sum() else w_eq,
+                    "風險貢獻%(等權)": rc_eq / rc_eq.sum() if rc_eq.sum() else w_eq,
+                }).set_index("標的")
+
+                st.dataframe(
+                    alloc.style.format({
+                        "等風險權重": "{:.1%}", "反波動權重": "{:.1%}", "等權重": "{:.1%}",
+                        "風險貢獻%(ERC)": "{:.1%}", "風險貢獻%(等權)": "{:.1%}",
+                    }),
+                    use_container_width=True,
+                )
+
+                fig_rp = go.Figure()
+                fig_rp.add_trace(go.Bar(x=tickers_rp, y=w_erc, name="等風險權重",
+                                        marker_color="#1E88E5"))
+                fig_rp.add_trace(go.Bar(x=tickers_rp, y=w_eq, name="等權重",
+                                        marker_color="#888"))
+                fig_rp.update_layout(**PLOTLY_LAYOUT, height=380, barmode="group",
+                                     title="權重比較：風險平價 vs 等權")
+                st.plotly_chart(fig_rp, use_container_width=True)
+
+                st.info(
+                    "💡 **等權重**下，高波動標的會貢獻過多風險（看「風險貢獻%(等權)」欄差異）；"
+                    "**等風險貢獻**讓每檔貢獻接近一致，降低單一標的主導組合波動。"
+                )
+            elif _qt is not None:
+                st.warning("請在 Tickers 加入至少 2 檔標的。")
 
         with ct_b:
             if bench_c in r_df.columns:
@@ -2724,6 +2777,61 @@ def page_stock_research():
                 unsafe_allow_html=True,
             )
 
+        # ── Parameter optimizer (mini-hyperopt) ───────────────────
+        section("⚙️ 參數最佳化（找最適停利/停損/持有）")
+        st.caption(
+            "網格搜尋 27 組 (停利×停損×持有) 參數，依「期望值×獲利因子×樣本外一致性」"
+            "綜合評分排名，自動避開只在歷史過擬合的組合。約需 20-40 秒。"
+        )
+        if st.button("🔍 搜尋最佳參數", key="opt_run"):
+            try:
+                import backtest as _bt2
+            except ImportError:
+                _bt2 = None
+                st.error("找不到 backtest.py。")
+            opt_tkr = st.session_state.get("bt_tk", "AAPL").upper().strip()
+            if _bt2 and opt_tkr:
+                with st.spinner(f"最佳化 {opt_tkr} 參數（27 組）…"):
+                    try:
+                        raw_o = yf.download(opt_tkr, period="2y",
+                                            auto_adjust=True, progress=False)
+                        if raw_o.empty:
+                            st.error("無資料。")
+                        else:
+                            df_o = (raw_o if "Close" in raw_o.columns
+                                    else raw_o.xs(opt_tkr, axis=1, level=1))
+                            opt = _bt2.optimize_params(df_o)
+                            st.session_state["opt_result"] = (opt_tkr, opt)
+                    except Exception as e:
+                        st.error(f"最佳化失敗：{e}")
+
+        if st.session_state.get("opt_result") is not None:
+            o_tkr, opt = st.session_state["opt_result"]
+            if opt is None or opt.empty:
+                st.info("找不到足夠交易數的參數組合。")
+            else:
+                best = opt.iloc[0]
+                st.success(
+                    f"🏆 {o_tkr} 最佳參數：停利 **{best['tp']:.0%}** / 停損 **{best['sl']:.0%}** / "
+                    f"持有 **{int(best['horizon'])}日** · 規則「{best['best_rule']}」\n\n"
+                    f"勝率 {best['win_rate']:.0%}，獲利因子 {best['profit_factor']:.2f}，"
+                    f"期望值 {best['expectancy']:+.2%}/筆，穩健度 {best['consistency']:.0%}"
+                )
+                opt_disp = opt.head(10).rename(columns={
+                    "tp": "停利", "sl": "停損", "horizon": "持有",
+                    "best_rule": "最佳規則", "trades": "交易數", "win_rate": "勝率",
+                    "profit_factor": "獲利因子", "expectancy": "期望值", "consistency": "穩健度",
+                    "objective": "綜合分",
+                })
+                st.dataframe(
+                    opt_disp.style.format({
+                        "停利": "{:.0%}", "停損": "{:.0%}", "勝率": "{:.0%}",
+                        "獲利因子": "{:.2f}", "期望值": "{:+.2%}", "穩健度": "{:.0%}",
+                        "綜合分": "{:.4f}",
+                    }),
+                    use_container_width=True,
+                )
+
 
 # ════════════════════════════════════════════════════════════════════
 # PAGE: Real-time Alerts & Monitoring
@@ -3091,8 +3199,8 @@ def page_trading_tools():
     st.title("🛠️ 交易工具")
     st.caption("部位大小計算 · Kelly 公式 · 風險報酬比 · 複利計算")
 
-    tab1, tab2, tab3, tab4 = st.tabs([
-        "📐 部位大小", "🎲 Kelly 公式", "🎯 風險報酬比", "💰 複利計算",
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "📐 部位大小", "🌊 波動率部位", "🎲 Kelly 公式", "🎯 風險報酬比", "💰 複利計算",
     ])
 
     # ── Tab 1: Position sizing ─────────────────────────────────────
@@ -3128,8 +3236,80 @@ def page_trading_tools():
         st.info(f"此部位佔帳戶 **{position_pct:.1%}**" +
                 ("，槓桿較重" if position_pct > 0.5 else ""))
 
-    # ── Tab 2: Kelly criterion ─────────────────────────────────────
+    # ── Tab 2: Volatility-targeted sizing (ATR + vol target) ───────
     with tab2:
+        section("波動率目標部位（ATR 風險基準）")
+        st.caption(
+            "依個股波動度反比配置：高波動少買、低波動多買，讓每筆風險一致。"
+            "輸入代碼自動抓 ATR 與年化波動率。學習自 freqtrade 動態 stake。"
+        )
+        try:
+            import quant_tools as _qt
+            import yfinance as _yf
+        except ImportError:
+            _qt = None
+            st.error("找不到 quant_tools.py，請確認已同步（Colab 需更新 Cell 2）。")
+
+        if _qt:
+            vt1, vt2, vt3 = st.columns(3)
+            with vt1:
+                vt_tkr = st.text_input("股票代碼", "AAPL", key="vt_tk").upper().strip()
+                vt_acct = st.number_input("帳戶總值 (USD)", 100.0, 1e9, 100_000.0,
+                                          step=1_000.0, key="vt_acct")
+            with vt2:
+                vt_risk = st.slider("單筆風險 (%)", 0.1, 5.0, 1.0, 0.1, key="vt_risk") / 100
+                vt_atr_mult = st.slider("ATR 停損倍數", 0.5, 4.0, 1.5, 0.1, key="vt_am")
+            with vt3:
+                vt_target = st.slider("組合目標年化波動 (%)", 5, 40, 15, 1, key="vt_tg") / 100
+                vt_maxlev = st.slider("最大槓桿", 1.0, 3.0, 2.0, 0.1, key="vt_ml")
+
+            if st.button("計算波動率部位", type="primary", key="vt_run"):
+                with st.spinner(f"抓取 {vt_tkr} 波動數據…"):
+                    try:
+                        raw_vt = _yf.download(vt_tkr, period="6mo",
+                                              auto_adjust=True, progress=False)
+                        if raw_vt.empty:
+                            st.error("無資料，請確認代碼。")
+                        else:
+                            cl = raw_vt["Close"].squeeze().dropna()
+                            hi = raw_vt["High"].squeeze().dropna() if "High" in raw_vt.columns else cl
+                            lo = raw_vt["Low"].squeeze().dropna() if "Low" in raw_vt.columns else cl
+                            price = float(cl.iloc[-1])
+                            # ATR(14)
+                            tr = pd.concat([hi - lo, (hi - cl.shift()).abs(),
+                                            (lo - cl.shift()).abs()], axis=1).max(axis=1)
+                            atr = float(tr.rolling(14).mean().iloc[-1])
+                            ann_vol = float(cl.pct_change().dropna().std() * np.sqrt(252))
+
+                            ps = _qt.atr_position_size(vt_acct, vt_risk, price, atr, vt_atr_mult)
+                            lev = _qt.volatility_target(ann_vol, vt_target, vt_maxlev)
+                            vol_adj_value = ps["position_value"] * lev
+
+                            st.markdown("---")
+                            m1, m2, m3, m4 = st.columns(4)
+                            with m1: metric_card("現價",        f"${price:.2f}")
+                            with m2: metric_card("ATR(14)",     f"${atr:.2f}")
+                            with m3: metric_card("年化波動",     f"{ann_vol:.1%}")
+                            with m4: metric_card("波動目標槓桿", f"{lev:.2f}×")
+
+                            st.markdown("---")
+                            n1, n2, n3, n4 = st.columns(4)
+                            with n1: metric_card("建議股數",   f"{ps['shares']:,.0f}")
+                            with n2: metric_card("停損價",     f"${ps['stop_price']:.2f}")
+                            with n3: metric_card("ATR 部位",   f"${ps['position_value']:,.0f}",
+                                                 positive=ps['pct_of_account'] < 0.5)
+                            with n4: metric_card("波動調整後", f"${vol_adj_value:,.0f}")
+
+                            st.info(
+                                f"ATR 部位佔帳戶 **{ps['pct_of_account']:.1%}**（風險 ${ps['risk_amount']:,.0f}）。"
+                                f"此股年化波動 {ann_vol:.0%} vs 目標 {vt_target:.0%} → "
+                                f"建議{'放大' if lev > 1 else '縮小'}部位至 **{lev:.2f}×**。"
+                            )
+                    except Exception as e:
+                        st.error(f"計算失敗：{e}")
+
+    # ── Tab 3: Kelly criterion ─────────────────────────────────────
+    with tab3:
         section("Kelly 公式 — 最佳下注比例")
         st.caption("公式：f* = (bp - q) / b，b = 賠率，p = 勝率，q = 1-p")
         ke1, ke2 = st.columns(2)
@@ -3166,8 +3346,8 @@ def page_trading_tools():
                             xaxis_title="勝率 (%)", yaxis_title="最佳下注 %")
         st.plotly_chart(fig_k, use_container_width=True)
 
-    # ── Tab 3: Risk:Reward ─────────────────────────────────────────
-    with tab3:
+    # ── Tab 4: Risk:Reward ─────────────────────────────────────────
+    with tab4:
         section("風險報酬比 R:R 分析")
         rr1, rr2, rr3 = st.columns(3)
         with rr1: rr_e = st.number_input("進場價",   0.01, 1e6, 100.0, step=0.5, key="rr_e")
@@ -3208,8 +3388,8 @@ def page_trading_tools():
                              xaxis_title="勝率 (%)", yaxis_title="每筆期望值 ($)")
         st.plotly_chart(fig_ev, use_container_width=True)
 
-    # ── Tab 4: Compound interest ───────────────────────────────────
-    with tab4:
+    # ── Tab 5: Compound interest ───────────────────────────────────
+    with tab5:
         section("複利計算（含定期投入）")
         cm1, cm2, cm3 = st.columns(3)
         with cm1:

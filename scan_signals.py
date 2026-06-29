@@ -21,6 +21,7 @@ Telegram 指令（傳給 Bot）：
   /rank                   – 綜合評分排名（趨勢/MACD/RSI/布林/動量 合成 -1~+1）
   /calibrate              – 用歷史回測勝率校準各訊號權重（自我優化迴圈）
   /protections            – 查看防護機制（訊號冷卻 / 大盤風險濾網）狀態
+  /risk [帳戶 風險%]       – 設定/查看部位風險（訊號附建議部位股數）
   /scan                   – 立即掃描（忽略靜音與市場狀態）
   /clear                  – 清空觀察清單
   /help                   – 顯示此說明
@@ -69,6 +70,11 @@ DEFAULT_THRESHOLDS = {
     "cooldown_enabled":   True,   # 同標的同類訊號冷卻，防洗版
     "cooldown_hours":     6.0,    # 冷卻時數
     "regime_filter_enabled": True,  # 大盤風險濾網（加狀態頭）
+    # ── Position sizing ──
+    "position_sizing_enabled": True,  # 訊號附建議部位
+    "account_size":       100000.0,   # 帳戶總值（USD）
+    "risk_pct":           0.01,       # 單筆風險比例
+    "atr_mult":           1.5,        # ATR 停損倍數
 }
 
 ET = ZoneInfo("America/New_York")
@@ -224,6 +230,9 @@ def _cmd_help() -> str:
         "`/set cooldown_hours 4` — 訊號冷卻時數\n"
         "`/set cooldown_enabled off` — 關閉冷卻\n"
         "`/set regime_filter_enabled off` — 關閉大盤濾網\n\n"
+        "💰 *部位風險*\n"
+        "`/risk 100000 1` — 設定帳戶 $10萬、單筆風險 1%\n"
+        "`/risk` — 查看目前部位設定\n\n"
         "📈 *資訊查詢*\n"
         "`/status` — Bot 狀態 + 市場狀態\n"
         "`/top 5` — 今日漲跌幅前 5 名\n"
@@ -445,9 +454,11 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
             key, val = args[0].lower(), args[1].lower()
             th = state["thresholds"]
             bool_keys = {"macd_enabled", "bb_enabled", "atr_enabled", "scan_market_only",
-                         "cooldown_enabled", "regime_filter_enabled"}
+                         "cooldown_enabled", "regime_filter_enabled",
+                         "position_sizing_enabled"}
             float_keys = {"rsi_oversold", "rsi_overbought", "price_change_pct",
-                          "vol_spike_ratio", "cooldown_hours"}
+                          "vol_spike_ratio", "cooldown_hours",
+                          "account_size", "risk_pct", "atr_mult"}
             if key in bool_keys:
                 th[key] = val in ("on", "true", "1", "yes")
                 changed = True
@@ -483,6 +494,25 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                 reply = "\n".join(lines)
             else:
                 reply = "⚠️ 校準無結果（資料不足或 backtest.py 缺失）"
+
+        elif cmd == "/risk":
+            th = state["thresholds"]
+            if len(args) >= 2:
+                try:
+                    th["account_size"] = float(args[0])
+                    th["risk_pct"] = float(args[1]) / 100 if float(args[1]) > 1 else float(args[1])
+                    changed = True
+                except ValueError:
+                    pass
+            reply = (
+                "💰 *部位風險設定*\n\n"
+                f"帳戶總值：${th.get('account_size', 100000):,.0f}\n"
+                f"單筆風險：{th.get('risk_pct', 0.01):.1%}\n"
+                f"ATR 停損倍數：{th.get('atr_mult', 1.5)}\n"
+                f"部位提示：{'✅ 開' if th.get('position_sizing_enabled', True) else '❌ 關'}\n\n"
+                "設定範例：`/risk 100000 1`（帳戶 $10萬、單筆風險 1%）\n"
+                "或 `/set atr_mult 2`、`/set position_sizing_enabled off`"
+            )
 
         elif cmd == "/protections":
             th = state["thresholds"]
@@ -849,6 +879,40 @@ def _col(df: pd.DataFrame, price: str, ticker: str) -> pd.Series | None:
         return None
 
 
+def _atr_value(close, high, low, period: int = 14) -> float:
+    """ATR(14) 數值（H/L 缺失時退回用收盤近似）。"""
+    if high is None or low is None:
+        high = close
+        low = close
+    tr = pd.concat([high - low,
+                    (high - close.shift()).abs(),
+                    (low - close.shift()).abs()], axis=1).max(axis=1)
+    atr = tr.rolling(period).mean().iloc[-1]
+    return float(atr) if not pd.isna(atr) else 0.0
+
+
+def _position_hint(close, high, low, price: float, thresholds: dict) -> dict | None:
+    """ATR 風險基準的建議部位（共用 quant_tools，與 dashboard 一致）。"""
+    try:
+        import quant_tools as qt
+    except Exception:
+        return None
+    atr = _atr_value(close, high, low)
+    if atr <= 0 or price <= 0:
+        return None
+    acct = float(thresholds.get("account_size", 100000))
+    risk = float(thresholds.get("risk_pct", 0.01))
+    mult = float(thresholds.get("atr_mult", 1.5))
+    ps = qt.atr_position_size(acct, risk, price, atr, mult)
+    ann_vol = float(close.pct_change().dropna().std() * (252 ** 0.5)) if len(close) > 5 else 0.0
+    return {
+        "shares":   ps["shares"],
+        "pct":      ps["pct_of_account"],
+        "stop":     ps["stop_price"],
+        "ann_vol":  round(ann_vol, 3),
+    }
+
+
 def scan(tickers: list[str], thresholds: dict, calibration: dict | None = None) -> list[dict]:
     rsi_lo  = thresholds.get("rsi_oversold",    35)
     rsi_hi  = thresholds.get("rsi_overbought",  68)
@@ -937,6 +1001,11 @@ def scan(tickers: list[str], thresholds: dict, calibration: dict | None = None) 
             edge_w = (calibration or {}).get(ticker)
             cs = _composite_score(close, high, low, volume, edge_weights=edge_w)
 
+            # ── Position sizing hint (ATR risk-based) ─────────────
+            pos = None
+            if thresholds.get("position_sizing_enabled", True):
+                pos = _position_hint(close, high, low, price, thresholds)
+
             results.append({
                 "ticker":  ticker,
                 "price":   price,
@@ -945,6 +1014,7 @@ def scan(tickers: list[str], thresholds: dict, calibration: dict | None = None) 
                 "score":   cs["score"],
                 "rating":  cs["rating"],
                 "emoji":   cs["emoji"],
+                "position": pos,
                 "signals": [s for s in signals if s],
             })
             flag = "🚨" if signals else "  "
@@ -1074,6 +1144,12 @@ def _build_message(results: list[dict], timestamp: str,
         )
         for s in r.get("signals", []):
             lines.append(f"   ↳ {s}")
+        pos = r.get("position")
+        if pos and pos.get("shares", 0) > 0:
+            lines.append(
+                f"   💰 建議 {pos['shares']:.0f} 股（佔帳戶 {pos['pct']:.1%}）"
+                f"｜停損 ${pos['stop']:.2f}｜年化波動 {pos['ann_vol']:.0%}"
+            )
         lines.append("")
 
     # ── Ranking board: top bullish / bearish across ALL scanned ─────
