@@ -18,6 +18,7 @@ Telegram 指令（傳給 Bot）：
   /unmute                 – 解除靜音
   /status                 – 查看 Bot 狀態 + 市場狀態
   /top [N]                – 顯示今日漲跌幅前 N 名
+  /rank                   – 綜合評分排名（趨勢/MACD/RSI/布林/動量 合成 -1~+1）
   /scan                   – 立即掃描（忽略靜音與市場狀態）
   /clear                  – 清空觀察清單
   /help                   – 顯示此說明
@@ -207,6 +208,7 @@ def _cmd_help() -> str:
         "📈 *資訊查詢*\n"
         "`/status` — Bot 狀態 + 市場狀態\n"
         "`/top 5` — 今日漲跌幅前 5 名\n"
+        "`/rank` — 綜合評分排名（-1~+1）\n"
         "`/scan` — 立即掃描（忽略靜音）\n\n"
         "`/help` — 顯示此說明"
     )
@@ -303,6 +305,25 @@ def _cmd_top(state: dict, n: int = 5) -> str:
         return f"❌ 查詢失敗：{e}"
 
 
+def _cmd_rank(state: dict) -> str:
+    """Run a full composite-score scan and return the ranked board."""
+    tickers = state["watchlist"]
+    if not tickers:
+        return "❌ 觀察清單為空"
+    results = scan(tickers, state["thresholds"])
+    if not results:
+        return "❌ 無法取得數據"
+    ranked = sorted(results, key=lambda r: -r.get("score", 0))
+    lines = ["🏆 *綜合評分排名*（-1 極空 ~ +1 極多）\n"]
+    for r in ranked:
+        bar_len = int((r["score"] + 1) / 2 * 10)
+        bar = "█" * bar_len + "░" * (10 - bar_len)
+        lines.append(f"{r['emoji']} *{r['ticker']}*  `{bar}` {r['score']:+.2f}")
+        lines.append(f"   {r['rating']} · ${r['price']} ({r['chg']:+.1f}%)")
+    lines.append("\n_評分綜合趨勢/MACD/RSI/布林/動量_")
+    return "\n".join(lines)
+
+
 def _is_muted(state: dict) -> bool:
     mute_until = state.get("mute_until")
     if not mute_until:
@@ -394,6 +415,11 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
             reply = "🔍 查詢中…"
             _tg_send(token, src_chat or chat_id, reply)
             reply = _cmd_top(state, min(n, 10))
+
+        elif cmd == "/rank":
+            reply = "🏆 計算綜合評分中，約需 30 秒…"
+            _tg_send(token, src_chat or chat_id, reply)
+            reply = _cmd_rank(state)
 
         elif cmd == "/set" and len(args) >= 2:
             key, val = args[0].lower(), args[1].lower()
@@ -560,6 +586,115 @@ def _ma_trend(close: pd.Series) -> dict:
     return {"signal": "neutral"}
 
 
+# ── Composite scoring ─────────────────────────────────────────────────────────
+
+def _composite_score(close: pd.Series, high: pd.Series | None,
+                     low: pd.Series | None, volume: pd.Series | None) -> dict:
+    """
+    Blend every indicator into a single -1 (極空) .. +1 (極多) score.
+    Returns {"score", "rating", "emoji", "components"}.
+
+    各子分數權重（偏趨勢跟隨，RSI/布林只在極端區作用以免與趨勢打架）：
+      趨勢 (MA 排列)      35%
+      MACD 動能           25%
+      動量 (1個月報酬)    20%
+      RSI 極端反轉        10%
+      布林通道極端        10%
+    成交量爆量作為「信心放大器」，最多 ±15% 加權。
+    """
+    comps: dict[str, float] = {}
+    price = float(close.iloc[-1])
+
+    # ── 1. 趨勢：價格相對 MA20/50/200 ───────────────────────────
+    trend = 0.0
+    for span, w in [(20, 0.4), (50, 0.35), (200, 0.25)]:
+        if len(close) >= span:
+            ma = float(close.rolling(span).mean().iloc[-1])
+            trend += w * (1.0 if price > ma else -1.0)
+    comps["trend"] = round(float(trend), 3)
+
+    # ── 2. MACD 動能（histogram 正規化）─────────────────────────
+    macd_s = 0.0
+    if len(close) >= 35:
+        ema12 = close.ewm(span=12, adjust=False).mean()
+        ema26 = close.ewm(span=26, adjust=False).mean()
+        macd_line = ema12 - ema26
+        sig_line  = macd_line.ewm(span=9, adjust=False).mean()
+        h = float((macd_line - sig_line).iloc[-1])
+        norm = h / price * 100 if price else 0
+        macd_s = max(-1.0, min(1.0, norm * 4))
+    comps["macd"] = round(float(macd_s), 3)
+
+    # ── 3. 動量：1個月（約22交易日）報酬 ────────────────────────
+    mom_s = 0.0
+    if len(close) >= 22:
+        ret_1m = price / float(close.iloc[-22]) - 1
+        mom_s = max(-1.0, min(1.0, ret_1m * 8))   # ±12.5% → ±1
+    comps["momentum"] = round(float(mom_s), 3)
+
+    # ── 4. RSI：只在極端區作用（<35 偏多反彈、>65 偏空）─────────
+    rsi = _rsi(close)
+    if rsi < 35:
+        rsi_s = (35 - rsi) / 25          # rsi=10 → +1
+    elif rsi > 65:
+        rsi_s = -(rsi - 65) / 25         # rsi=90 → -1
+    else:
+        rsi_s = 0.0                      # 35~65 中性，不干擾趨勢
+    rsi_s = max(-1.0, min(1.0, rsi_s))
+    comps["rsi"] = round(float(rsi_s), 3)
+
+    # ── 5. 布林通道：只在貼邊（極端）時作用 ─────────────────────
+    bb_s = 0.0
+    if len(close) >= 20:
+        ma20 = close.rolling(20).mean()
+        std20 = close.rolling(20).std()
+        u = float((ma20 + 2 * std20).iloc[-1])
+        l = float((ma20 - 2 * std20).iloc[-1])
+        if u > l:
+            pct_b = (price - l) / (u - l)
+            if pct_b < 0.15:
+                bb_s = (0.15 - pct_b) / 0.15      # 貼下軌 → 偏多
+            elif pct_b > 0.85:
+                bb_s = -(pct_b - 0.85) / 0.15     # 貼上軌 → 偏空
+    bb_s = max(-1.0, min(1.0, bb_s))
+    comps["bollinger"] = round(float(bb_s), 3)
+
+    # ── 加權合成 ─────────────────────────────────────────────────
+    score = (
+        0.35 * comps["trend"] +
+        0.25 * comps["macd"] +
+        0.20 * comps["momentum"] +
+        0.10 * comps["rsi"] +
+        0.10 * comps["bollinger"]
+    )
+
+    # ── 成交量信心放大器 ─────────────────────────────────────────
+    if volume is not None and len(volume) >= 21:
+        avg_vol  = float(volume.iloc[-21:-1].mean())
+        curr_vol = float(volume.iloc[-1])
+        if avg_vol > 0:
+            vol_ratio = curr_vol / avg_vol
+            if vol_ratio > 1.5:
+                # amplify the existing direction up to +15%
+                amp = min(0.15, (vol_ratio - 1.5) * 0.1)
+                score *= (1 + amp)
+    score = max(-1.0, min(1.0, score))
+
+    # ── 評級 ─────────────────────────────────────────────────────
+    if score >= 0.5:
+        rating, emoji = "強力買進", "🟢🟢"
+    elif score >= 0.2:
+        rating, emoji = "買進", "🟢"
+    elif score > -0.2:
+        rating, emoji = "中性", "⚪"
+    elif score > -0.5:
+        rating, emoji = "賣出", "🔴"
+    else:
+        rating, emoji = "強力賣出", "🔴🔴"
+
+    return {"score": round(score, 3), "rating": rating, "emoji": emoji, "components": comps}
+
+
 # ── Main scan ────────────────────────────────────────────────────────────────
 
 def _col(df: pd.DataFrame, price: str, ticker: str) -> pd.Series | None:
@@ -662,15 +797,22 @@ def scan(tickers: list[str], thresholds: dict) -> list[dict]:
                 if vs["signal"] == "vol_spike":
                     signals.append(vs.get("label", ""))
 
+            # ── Composite score (always computed) ─────────────────
+            cs = _composite_score(close, high, low, volume)
+
             results.append({
                 "ticker":  ticker,
                 "price":   price,
                 "rsi":     rsi,
                 "chg":     chg,
+                "score":   cs["score"],
+                "rating":  cs["rating"],
+                "emoji":   cs["emoji"],
                 "signals": [s for s in signals if s],
             })
             flag = "🚨" if signals else "  "
-            print(f"{flag} {ticker}: ${price}  RSI={rsi}  chg={chg:+.1f}%  signals={len(signals)}")
+            print(f"{flag} {ticker}: ${price}  RSI={rsi}  chg={chg:+.1f}%  "
+                  f"score={cs['score']:+.2f}({cs['rating']})  signals={len(signals)}")
 
         except Exception as exc:
             print(f"  {ticker}: error – {exc}")
@@ -685,12 +827,36 @@ def _build_message(results: list[dict], timestamp: str) -> str | None:
     if not flagged:
         return None
 
+    # Sort flagged signals by absolute conviction (strongest first)
+    flagged_sorted = sorted(flagged, key=lambda r: -abs(r.get("score", 0)))
+
     lines = [f"🚨 *RBS 自動訊號掃描* — {timestamp}", ""]
-    for r in flagged:
+    for r in flagged_sorted:
         arrow = "🟢" if r["chg"] > 0 else ("🔴" if r["chg"] < 0 else "⚪")
-        lines.append(f"{arrow} *{r['ticker']}* ${r['price']}  ({r['chg']:+.1f}%)  RSI={r['rsi']}")
+        score = r.get("score", 0)
+        rating = r.get("rating", "")
+        lines.append(
+            f"{arrow} *{r['ticker']}* ${r['price']}  ({r['chg']:+.1f}%)  "
+            f"RSI={r['rsi']}\n   📊 評分 *{score:+.2f}* ({rating})"
+        )
         for s in r["signals"]:
             lines.append(f"   ↳ {s}")
+        lines.append("")
+
+    # ── Ranking board: top bullish / bearish across ALL scanned ─────
+    ranked = sorted(results, key=lambda r: -r.get("score", 0))
+    bullish = [r for r in ranked if r.get("score", 0) >= 0.2][:5]
+    bearish = [r for r in ranked if r.get("score", 0) <= -0.2][-5:]
+
+    if bullish:
+        lines.append("📈 *今日最看多 Top 5*")
+        for r in bullish:
+            lines.append(f"   {r['emoji']} {r['ticker']}  {r['score']:+.2f} ({r['rating']})")
+        lines.append("")
+    if bearish:
+        lines.append("📉 *今日最看空 Top 5*")
+        for r in reversed(bearish):
+            lines.append(f"   {r['emoji']} {r['ticker']}  {r['score']:+.2f} ({r['rating']})")
         lines.append("")
 
     no_signal = [r["ticker"] for r in results if not r["signals"]]
