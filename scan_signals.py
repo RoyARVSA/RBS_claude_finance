@@ -19,6 +19,7 @@ Telegram 指令（傳給 Bot）：
   /status                 – 查看 Bot 狀態 + 市場狀態
   /top [N]                – 顯示今日漲跌幅前 N 名
   /rank                   – 綜合評分排名（趨勢/MACD/RSI/布林/動量 合成 -1~+1）
+  /calibrate              – 用歷史回測勝率校準各訊號權重（自我優化迴圈）
   /scan                   – 立即掃描（忽略靜音與市場狀態）
   /clear                  – 清空觀察清單
   /help                   – 顯示此說明
@@ -209,7 +210,8 @@ def _cmd_help() -> str:
         "`/status` — Bot 狀態 + 市場狀態\n"
         "`/top 5` — 今日漲跌幅前 5 名\n"
         "`/rank` — 綜合評分排名（-1~+1）\n"
-        "`/scan` — 立即掃描（忽略靜音）\n\n"
+        "`/scan` — 立即掃描（忽略靜音）\n"
+        "`/calibrate` — 回測校準訊號權重（自我優化）\n\n"
         "`/help` — 顯示此說明"
     )
 
@@ -310,7 +312,7 @@ def _cmd_rank(state: dict) -> str:
     tickers = state["watchlist"]
     if not tickers:
         return "❌ 觀察清單為空"
-    results = scan(tickers, state["thresholds"])
+    results = scan(tickers, state["thresholds"], calibration=_calibration_weights(state))
     if not results:
         return "❌ 無法取得數據"
     ranked = sorted(results, key=lambda r: -r.get("score", 0))
@@ -443,8 +445,24 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
         elif cmd == "/scan":
             reply = "🔍 掃描中，請稍候約 30 秒…"
             _tg_send(token, src_chat or chat_id, reply)
-            results = scan(state["watchlist"], state["thresholds"])
+            results = scan(state["watchlist"], state["thresholds"],
+                           calibration=_calibration_weights(state))
             reply = _build_message(results, "手動觸發") or "✅ 掃描完成，目前無訊號觸發"
+
+        elif cmd == "/calibrate":
+            reply = "🔬 回測校準中，每支需 2-5 秒，請稍候…"
+            _tg_send(token, src_chat or chat_id, reply)
+            maybe_calibrate(state, force=True)
+            changed = True
+            cal = _calibration_weights(state)
+            if cal:
+                lines = ["✅ *校準完成*（訊號權重已依歷史勝率調整）\n"]
+                for tk, mult in list(cal.items())[:15]:
+                    parts = [f"{k}×{v}" for k, v in mult.items()]
+                    lines.append(f"• *{tk}*: {', '.join(parts)}")
+                reply = "\n".join(lines)
+            else:
+                reply = "⚠️ 校準無結果（資料不足或 backtest.py 缺失）"
 
         else:
             reply = f"❓ 未知指令：{cmd}\n輸入 /help 查看說明"
@@ -589,10 +607,14 @@ def _ma_trend(close: pd.Series) -> dict:
 # ── Composite scoring ─────────────────────────────────────────────────────────
 
 def _composite_score(close: pd.Series, high: pd.Series | None,
-                     low: pd.Series | None, volume: pd.Series | None) -> dict:
+                     low: pd.Series | None, volume: pd.Series | None,
+                     edge_weights: dict | None = None) -> dict:
     """
     Blend every indicator into a single -1 (極空) .. +1 (極多) score.
     Returns {"score", "rating", "emoji", "components"}.
+
+    edge_weights: 各元件的歷史勝率乘數（來自回測校準），如 {"macd":1.4,"rsi":0.7}。
+                  有提供時會放大歷史表現好的元件、縮小表現差的，並重新正規化。
 
     各子分數權重（偏趨勢跟隨，RSI/布林只在極端區作用以免與趨勢打架）：
       趨勢 (MA 排列)      35%
@@ -659,14 +681,16 @@ def _composite_score(close: pd.Series, high: pd.Series | None,
     bb_s = max(-1.0, min(1.0, bb_s))
     comps["bollinger"] = round(float(bb_s), 3)
 
-    # ── 加權合成 ─────────────────────────────────────────────────
-    score = (
-        0.35 * comps["trend"] +
-        0.25 * comps["macd"] +
-        0.20 * comps["momentum"] +
-        0.10 * comps["rsi"] +
-        0.10 * comps["bollinger"]
-    )
+    # ── 加權合成（可被回測校準的 edge_weights 調整）──────────────
+    base_w = {"trend": 0.35, "macd": 0.25, "momentum": 0.20,
+              "rsi": 0.10, "bollinger": 0.10}
+    if edge_weights:
+        adj = {k: base_w[k] * float(edge_weights.get(k, 1.0)) for k in base_w}
+        tot = sum(adj.values()) or 1.0
+        w = {k: adj[k] / tot for k in adj}   # 重新正規化使總和=1，分數仍 -1~+1
+    else:
+        w = base_w
+    score = sum(w[k] * comps[k] for k in comps)
 
     # ── 成交量信心放大器 ─────────────────────────────────────────
     if volume is not None and len(volume) >= 21:
@@ -695,6 +719,74 @@ def _composite_score(close: pd.Series, high: pd.Series | None,
     return {"score": round(score, 3), "rating": rating, "emoji": emoji, "components": comps}
 
 
+# ── 回測校準：把歷史勝率回饋成元件權重 ────────────────────────────────────────
+
+# 回測規則 → 評分元件 的對應
+_RULE_TO_COMPONENT = {
+    "MA20/50 黃金交叉":          "trend",
+    "黃金交叉+站上200MA":        "trend",
+    "⭐三層確認(MACD+RSI+趨勢)":  "trend",
+    "MACD 金叉":                 "macd",
+    "MACD 死叉(空)":             "macd",
+    "RSI<30 超賣反彈":           "rsi",
+    "RSI>70 超買回落(空)":       "rsi",
+    "布林下軌反彈":              "bollinger",
+    "布林上軌突破":              "bollinger",
+}
+
+
+def calibrate_ticker(df) -> dict:
+    """
+    對單一標的跑回測，把各規則的 edge 分數聚合成「元件權重乘數」。
+    回傳如 {"macd":1.35,"rsi":0.72,...}，乘數範圍約 0.5~1.5。
+    勝率高的元件 >1（加重），表現差的 <1（縮小）。
+    """
+    try:
+        import backtest as bt
+        edges = bt.rule_edge_scores(df)   # {rule: edge(-1~+1)}
+    except Exception as e:
+        print(f"  calibrate 失敗（backtest 不可用）：{e}")
+        return {}
+
+    comp_sum: dict[str, float] = {}
+    comp_cnt: dict[str, int] = {}
+    for rule, edge in edges.items():
+        comp = _RULE_TO_COMPONENT.get(rule)
+        if comp is None:
+            continue
+        comp_sum[comp] = comp_sum.get(comp, 0.0) + edge
+        comp_cnt[comp] = comp_cnt.get(comp, 0) + 1
+
+    mult = {}
+    for comp, total in comp_sum.items():
+        avg = total / comp_cnt[comp]
+        # edge -0.5~+0.5 → 乘數 0.5~1.5
+        mult[comp] = round(1 + max(-0.5, min(0.5, avg)), 3)
+    return mult
+
+
+def calibrate(tickers: list[str], period: str = "2y") -> dict:
+    """
+    對清單每支標的跑回測校準，回傳 {ticker: {component: multiplier}}。
+    這是較重的操作（每支下載 2 年資料），建議每天/每週跑一次，不要每次掃描都跑。
+    """
+    print(f"校準 {len(tickers)} 支標的的訊號權重（回測 {period}）…")
+    result = {}
+    for tk in tickers:
+        try:
+            raw = yf.download(tk, period=period, auto_adjust=True, progress=False)
+            if raw.empty or len(raw) < 60:
+                continue
+            df = raw if "Close" in raw.columns else raw.xs(tk, axis=1, level=1)
+            mult = calibrate_ticker(df)
+            if mult:
+                result[tk] = mult
+                print(f"  {tk}: {mult}")
+        except Exception as e:
+            print(f"  {tk}: 校準錯誤 {e}")
+    return result
+
+
 # ── Main scan ────────────────────────────────────────────────────────────────
 
 def _col(df: pd.DataFrame, price: str, ticker: str) -> pd.Series | None:
@@ -713,7 +805,7 @@ def _col(df: pd.DataFrame, price: str, ticker: str) -> pd.Series | None:
         return None
 
 
-def scan(tickers: list[str], thresholds: dict) -> list[dict]:
+def scan(tickers: list[str], thresholds: dict, calibration: dict | None = None) -> list[dict]:
     rsi_lo  = thresholds.get("rsi_oversold",    35)
     rsi_hi  = thresholds.get("rsi_overbought",  68)
     chg_th  = thresholds.get("price_change_pct", 3.0)
@@ -797,8 +889,9 @@ def scan(tickers: list[str], thresholds: dict) -> list[dict]:
                 if vs["signal"] == "vol_spike":
                     signals.append(vs.get("label", ""))
 
-            # ── Composite score (always computed) ─────────────────
-            cs = _composite_score(close, high, low, volume)
+            # ── Composite score (always computed; calibration-weighted) ──
+            edge_w = (calibration or {}).get(ticker)
+            cs = _composite_score(close, high, low, volume, edge_weights=edge_w)
 
             results.append({
                 "ticker":  ticker,
@@ -867,6 +960,38 @@ def _build_message(results: list[dict], timestamp: str) -> str | None:
     return "\n".join(lines)
 
 
+# ── Auto-calibration helper ──────────────────────────────────────────────────
+
+def maybe_calibrate(state: dict, max_age_days: int = 7, force: bool = False) -> bool:
+    """
+    若校準資料超過 max_age_days 天（或不存在），重新跑回測校準。
+    回傳 True 表示有更新（呼叫端應 save_state）。
+    """
+    cal = state.get("calibration", {})
+    updated = cal.get("_updated")
+    stale = True
+    if updated and not force:
+        try:
+            age = datetime.now(timezone.utc) - datetime.fromisoformat(updated)
+            stale = age.days >= max_age_days
+        except Exception:
+            stale = True
+    if not (stale or force):
+        return False
+
+    new_cal = calibrate(state["watchlist"])
+    new_cal["_updated"] = datetime.now(timezone.utc).isoformat()
+    state["calibration"] = new_cal
+    return True
+
+
+def _calibration_weights(state: dict) -> dict:
+    """取出可傳入 scan() 的 {ticker: {component: mult}}（去掉 _updated）。"""
+    cal = dict(state.get("calibration", {}))
+    cal.pop("_updated", None)
+    return cal
+
+
 # ── Entrypoint ───────────────────────────────────────────────────────────────
 
 def main() -> int:
@@ -913,9 +1038,14 @@ def main() -> int:
           f"BB={'on' if thresholds.get('bb_enabled') else 'off'}  "
           f"ATR={'on' if thresholds.get('atr_enabled') else 'off'}\n")
 
-    # Step 3: Scan
+    # Step 2.5: Auto-calibrate signal weights weekly (self-optimizing loop)
+    if maybe_calibrate(state):
+        save_state(state)
+        print("Calibration refreshed from backtest edges.")
+
+    # Step 3: Scan (calibration-weighted scoring)
     print("── Running signal scan ──")
-    results = scan(tickers, thresholds)
+    results = scan(tickers, thresholds, calibration=_calibration_weights(state))
     state["last_scan_time"] = now
 
     # Step 4: Build & send message

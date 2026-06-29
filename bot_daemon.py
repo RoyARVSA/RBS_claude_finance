@@ -57,8 +57,14 @@ def _auto_scan(state: dict) -> None:
         print(f"[{now}] 市場關閉（{ms['reason']}），跳過自動掃描")
         return
 
+    # 每週自動回測校準（自我優化迴圈）
+    if ss.maybe_calibrate(state):
+        ss.save_state(state)
+        print(f"[{now}] 校準已更新")
+
     print(f"[{now}] 執行自動掃描 {len(state['watchlist'])} 支…")
-    results = ss.scan(state["watchlist"], state["thresholds"])
+    results = ss.scan(state["watchlist"], state["thresholds"],
+                      calibration=ss._calibration_weights(state))
     state["last_scan_time"] = now
     msg = ss._build_message(results, now)
     if msg and TOKEN and CHAT_ID:
