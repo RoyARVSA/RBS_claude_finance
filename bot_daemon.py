@@ -57,21 +57,15 @@ def _auto_scan(state: dict) -> None:
         print(f"[{now}] 市場關閉（{ms['reason']}），跳過自動掃描")
         return
 
-    # 每週自動回測校準（自我優化迴圈）
-    if ss.maybe_calibrate(state):
-        ss.save_state(state)
-        print(f"[{now}] 校準已更新")
-
     print(f"[{now}] 執行自動掃描 {len(state['watchlist'])} 支…")
-    results = ss.scan(state["watchlist"], state["thresholds"],
-                      calibration=ss._calibration_weights(state))
-    state["last_scan_time"] = now
-    msg = ss._build_message(results, now)
+    # 與 main() 共用的掃描+防護流程（校準/大盤濾網/冷卻去重）
+    msg, results = ss.scan_and_report(state, now)
+    ss.save_state(state)
     if msg and TOKEN and CHAT_ID:
         ss._tg_send(TOKEN, CHAT_ID, msg)
         print(f"[{now}] 已推送訊號通知")
     else:
-        print(f"[{now}] 無訊號觸發")
+        print(f"[{now}] 無訊號觸發（或全在冷卻中）")
 
 
 def main() -> int:

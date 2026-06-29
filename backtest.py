@@ -26,6 +26,25 @@ import numpy as np
 import pandas as pd
 
 
+# ── yfinance 單檔下載正規化 ───────────────────────────────────────────────────
+
+def normalize_ohlc(raw: pd.DataFrame, ticker: str) -> pd.DataFrame:
+    """
+    把單檔 yfinance 下載結果正規化成「平面欄位」DataFrame（Close/High/Low/Volume）。
+    新版 yfinance 單檔也回傳 MultiIndex (field,ticker) 或 (ticker,field)，
+    若不處理，df["Close"] 會得到 (N,1) DataFrame 而非 Series，導致指標計算錯誤。
+    """
+    if not isinstance(raw.columns, pd.MultiIndex):
+        return raw
+    lvl0 = set(raw.columns.get_level_values(0))
+    if "Close" in lvl0:                       # (field, ticker)
+        return raw.xs(ticker, axis=1, level=1) if ticker in raw.columns.get_level_values(1) \
+            else raw.droplevel(1, axis=1)
+    # (ticker, field)
+    return raw.xs(ticker, axis=1, level=0) if ticker in lvl0 \
+        else raw.droplevel(0, axis=1)
+
+
 # ── 指標計算（向量化）──────────────────────────────────────────────────────────
 
 def rsi(close: pd.Series, period: int = 14) -> pd.Series:
@@ -115,47 +134,53 @@ def triple_barrier(
     sl: float = 0.03,
     horizon: int = 10,
     short: bool = False,
+    cost: float = 0.001,
 ) -> list[dict]:
     """
     對每個進場點，往後 horizon 天評估三道關卡。
     tp/sl 為正數比例（如 0.05 = 5%）。short=True 時方向反轉（做空）。
-    回傳每筆交易的結果 list。
+
+    避免前視偏誤：訊號在第 i 根收盤才確認，因此「下一根」第 i+1 根才進場
+    （以 i+1 收盤為進場價），關卡從 i+2 起算 — 不偷看產生訊號當根的未來。
+    cost：來回交易成本（手續費+滑價，預設 0.001 = 0.1%），自每筆報酬扣除。
     """
     px = close.values
     idx = np.where(entries.fillna(False).values)[0]
     trades = []
 
     for i in idx:
-        if i + 1 >= len(px):
+        entry_i = i + 1                     # 下一根才進場（消除同棒前視）
+        if entry_i + 1 >= len(px):
             continue
-        entry_px = px[i]
+        entry_px = px[entry_i]
         if entry_px <= 0 or np.isnan(entry_px):
             continue
 
-        end = min(i + horizon, len(px) - 1)
+        end = min(entry_i + horizon, len(px) - 1)
         tp_line = entry_px * (1 + tp) if not short else entry_px * (1 - tp)
         sl_line = entry_px * (1 - sl) if not short else entry_px * (1 + sl)
 
-        outcome, exit_px, held = "time", px[end], end - i
-        for j in range(i + 1, end + 1):
+        outcome, exit_px, held = "time", px[end], end - entry_i
+        for j in range(entry_i + 1, end + 1):
             p = px[j]
             if np.isnan(p):
                 continue
             if not short:
                 if p >= tp_line:
-                    outcome, exit_px, held = "win", tp_line, j - i; break
+                    outcome, exit_px, held = "win", tp_line, j - entry_i; break
                 if p <= sl_line:
-                    outcome, exit_px, held = "loss", sl_line, j - i; break
+                    outcome, exit_px, held = "loss", sl_line, j - entry_i; break
             else:
                 if p <= tp_line:
-                    outcome, exit_px, held = "win", tp_line, j - i; break
+                    outcome, exit_px, held = "win", tp_line, j - entry_i; break
                 if p >= sl_line:
-                    outcome, exit_px, held = "loss", sl_line, j - i; break
+                    outcome, exit_px, held = "loss", sl_line, j - entry_i; break
 
-        ret = (exit_px / entry_px - 1) * (-1 if short else 1)
+        gross = (exit_px / entry_px - 1) * (-1 if short else 1)
+        ret = gross - cost                  # 扣除來回交易成本
         trades.append({
-            "entry_idx": int(i),
-            "entry_date": close.index[i],
+            "entry_idx": int(entry_i),
+            "entry_date": close.index[entry_i],
             "ret": float(ret),
             "outcome": outcome,
             "held": int(held),
@@ -201,10 +226,12 @@ def backtest_all(
     tp: float = 0.05,
     sl: float = 0.03,
     horizon: int = 10,
+    cost: float = 0.001,
 ) -> pd.DataFrame:
     """
     對所有訊號規則跑回測，回傳排序後的績效比較表。
     名稱含「(空)」的規則自動以做空方向評估。
+    cost：來回交易成本（預設 0.1%）。
     """
     close = df["Close"].dropna()
     rules = signal_rules(df)
@@ -212,7 +239,7 @@ def backtest_all(
     for name, entries in rules.items():
         is_short = "(空)" in name
         trades = triple_barrier(close, entries.reindex(close.index),
-                                tp=tp, sl=sl, horizon=horizon, short=is_short)
+                                tp=tp, sl=sl, horizon=horizon, short=is_short, cost=cost)
         m = evaluate(trades)
         m["rule"] = name
         rows.append(m)
@@ -232,10 +259,13 @@ def backtest_all(
 
 # ── 規則勝率 → 回饋給評分系統的權重 ───────────────────────────────────────────
 
-def rule_edge_scores(df: pd.DataFrame, **kw) -> dict[str, float]:
+def rule_edge_scores(df: pd.DataFrame, robust: bool = True, **kw) -> dict[str, float]:
     """
     回傳每個規則的「edge」分數 = (勝率-0.5)×2 × min(profit_factor,3)/3，
     範圍約 -1~+1，可用來動態加權訊號（勝率高的訊號權重大）。
+
+    robust=True：用樣本外一致性折減 edge（過擬合的規則被打折），
+                 避免自我優化迴圈追逐只在歷史成立、未來無效的雜訊。
     """
     bt = backtest_all(df, **kw)
     edges = {}
@@ -246,7 +276,122 @@ def rule_edge_scores(df: pd.DataFrame, **kw) -> dict[str, float]:
         wr_edge = (row["win_rate"] - 0.5) * 2
         pf_factor = min(row["profit_factor"], 3.0) / 3.0
         edges[name] = float(np.clip(wr_edge * pf_factor, -1, 1))
+
+    if robust:
+        consistency = walk_forward(df, **kw)   # {rule: 0~1 一致性}
+        for name in edges:
+            edges[name] *= consistency.get(name, 0.5)  # 不穩定者折減
     return edges
+
+
+def walk_forward(df: pd.DataFrame, n_splits: int = 4, **kw) -> dict[str, float]:
+    """
+    Walk-forward 樣本外一致性檢測（防過擬合）。
+    把資料切成 n_splits 段，逐段獨立回測，看每個規則「賺錢方向是否穩定」。
+
+    回傳 {rule: consistency 0~1}：
+      = (期望值為正的分段數 / 有效分段數)，分段越一致分數越高。
+    一致性低 → 該規則只在某些時期有效，不該重押。
+    """
+    close = df["Close"].dropna()
+    if len(close) < n_splits * 40:
+        return {}   # 資料太短，無法切段
+
+    bounds = np.linspace(0, len(df), n_splits + 1).astype(int)
+    rules = list(signal_rules(df).keys())
+    pos_count = {r: 0 for r in rules}
+    valid_count = {r: 0 for r in rules}
+
+    for s in range(n_splits):
+        seg = df.iloc[bounds[s]:bounds[s + 1]]
+        if len(seg) < 40:
+            continue
+        seg_close = seg["Close"].dropna()
+        seg_rules = signal_rules(seg)
+        for name, entries in seg_rules.items():
+            is_short = "(空)" in name
+            trades = triple_barrier(seg_close, entries.reindex(seg_close.index),
+                                    short=is_short,
+                                    tp=kw.get("tp", 0.05), sl=kw.get("sl", 0.03),
+                                    horizon=kw.get("horizon", 10), cost=kw.get("cost", 0.001))
+            if len(trades) >= 3:
+                valid_count[name] += 1
+                if evaluate(trades)["expectancy"] > 0:
+                    pos_count[name] += 1
+
+    consistency = {}
+    for r in rules:
+        consistency[r] = (pos_count[r] / valid_count[r]) if valid_count[r] >= 2 else 0.5
+    return consistency
+
+
+# ── 參數最佳化（mini-hyperopt）─────────────────────────────────────────────────
+
+def optimize_params(
+    df: pd.DataFrame,
+    rule: str | None = None,
+    tp_grid: list[float] | None = None,
+    sl_grid: list[float] | None = None,
+    horizon_grid: list[int] | None = None,
+    cost: float = 0.001,
+    min_trades: int = 8,
+) -> pd.DataFrame:
+    """
+    網格搜尋最佳 (停利, 停損, 持有天數)。學習自 freqtrade hyperopt，
+    但目標函數加入「樣本外一致性」以抑制過擬合：
+
+      objective = expectancy × profit_factor_capped × consistency
+
+    rule=None 時，每組參數取「當組表現最好的單一規則」當代表（找最適合此標的的玩法）；
+    指定 rule 時只最佳化該規則。回傳依 objective 排序的網格結果表。
+    """
+    tp_grid = tp_grid or [0.03, 0.05, 0.08]
+    sl_grid = sl_grid or [0.02, 0.03, 0.05]
+    horizon_grid = horizon_grid or [5, 10, 20]
+
+    rows = []
+    for tp in tp_grid:
+        for sl in sl_grid:
+            for h in horizon_grid:
+                bt = backtest_all(df, tp=tp, sl=sl, horizon=h, cost=cost)
+                cons = walk_forward(df, tp=tp, sl=sl, horizon=h, cost=cost)
+
+                if rule is not None:
+                    if rule not in bt.index:
+                        continue
+                    candidates = [rule]
+                else:
+                    candidates = list(bt.index)
+
+                best_obj, best = -np.inf, None
+                for rname in candidates:
+                    row = bt.loc[rname]
+                    if row["trades"] < min_trades or not np.isfinite(row["profit_factor"]):
+                        continue
+                    pf_cap = min(row["profit_factor"], 3.0)
+                    c = cons.get(rname, 0.5)
+                    obj = row["expectancy"] * pf_cap * c
+                    if obj > best_obj:
+                        best_obj, best = obj, rname
+
+                if best is None:
+                    continue
+                row = bt.loc[best]
+                rows.append({
+                    "tp": tp, "sl": sl, "horizon": h,
+                    "best_rule": best,
+                    "trades": int(row["trades"]),
+                    "win_rate": float(row["win_rate"]),
+                    "profit_factor": float(row["profit_factor"]),
+                    "expectancy": float(row["expectancy"]),
+                    "consistency": float(cons.get(best, 0.5)),
+                    "objective": float(best_obj),
+                })
+
+    if not rows:
+        return pd.DataFrame()
+    out = pd.DataFrame(rows).sort_values("objective", ascending=False).reset_index(drop=True)
+    return out
 
 
 # ── CLI 自我測試 ──────────────────────────────────────────────────────────────
@@ -263,7 +408,7 @@ if __name__ == "__main__":
     raw = yf.download(ticker, period="2y", auto_adjust=True, progress=False)
     if raw.empty:
         print("無資料"); sys.exit(1)
-    df = raw if "Close" in raw.columns else raw.xs(ticker, axis=1, level=1)
+    df = normalize_ohlc(raw, ticker)
 
     print(f"\n=== {ticker} 訊號回測（停利5% / 停損3% / 持有10天）===\n")
     bt = backtest_all(df, tp=0.05, sl=0.03, horizon=10)
