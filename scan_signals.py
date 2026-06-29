@@ -20,6 +20,7 @@ Telegram 指令（傳給 Bot）：
   /top [N]                – 顯示今日漲跌幅前 N 名
   /rank                   – 綜合評分排名（趨勢/MACD/RSI/布林/動量 合成 -1~+1）
   /calibrate              – 用歷史回測勝率校準各訊號權重（自我優化迴圈）
+  /protections            – 查看防護機制（訊號冷卻 / 大盤風險濾網）狀態
   /scan                   – 立即掃描（忽略靜音與市場狀態）
   /clear                  – 清空觀察清單
   /help                   – 顯示此說明
@@ -64,6 +65,10 @@ DEFAULT_THRESHOLDS = {
     "atr_enabled":        True,
     "vol_spike_ratio":    2.0,
     "scan_market_only":   True,   # skip scan when US market closed
+    # ── Protections (freqtrade-style) ──
+    "cooldown_enabled":   True,   # 同標的同類訊號冷卻，防洗版
+    "cooldown_hours":     6.0,    # 冷卻時數
+    "regime_filter_enabled": True,  # 大盤風險濾網（加狀態頭）
 }
 
 ET = ZoneInfo("America/New_York")
@@ -142,15 +147,23 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 def load_state() -> dict:
     if STATE_FILE.exists():
         try:
-            return json.loads(STATE_FILE.read_text(encoding="utf-8"))
+            state = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+            # 向後相容：補上新版才有的 threshold 預設鍵（不覆蓋既有值）
+            th = state.setdefault("thresholds", {})
+            for k, v in DEFAULT_THRESHOLDS.items():
+                th.setdefault(k, v)
+            state.setdefault("signal_history", {})
+            state.setdefault("last_update_id", 0)
+            return state
         except Exception as e:
             print(f"State load error: {e}, using defaults")
     # Bootstrap from env var if first run
     raw_wl = os.environ.get("WATCHLIST", "")
     watchlist = [t.strip().upper() for t in raw_wl.split(",") if t.strip()] or DEFAULT_WATCHLIST
     return {
-        "watchlist":     watchlist,
-        "thresholds":    DEFAULT_THRESHOLDS.copy(),
+        "watchlist":      watchlist,
+        "thresholds":     DEFAULT_THRESHOLDS.copy(),
+        "signal_history": {},
         "last_update_id": 0,
     }
 
@@ -206,11 +219,16 @@ def _cmd_help() -> str:
         "`/mute` — 靜音 8 小時\n"
         "`/mute 4` — 靜音 4 小時\n"
         "`/unmute` — 立即解除靜音\n\n"
+        "🛡 *防護機制*\n"
+        "`/protections` — 查看冷卻/大盤濾網狀態\n"
+        "`/set cooldown_hours 4` — 訊號冷卻時數\n"
+        "`/set cooldown_enabled off` — 關閉冷卻\n"
+        "`/set regime_filter_enabled off` — 關閉大盤濾網\n\n"
         "📈 *資訊查詢*\n"
         "`/status` — Bot 狀態 + 市場狀態\n"
         "`/top 5` — 今日漲跌幅前 5 名\n"
         "`/rank` — 綜合評分排名（-1~+1）\n"
-        "`/scan` — 立即掃描（忽略靜音）\n"
+        "`/scan` — 立即掃描（忽略靜音/冷卻）\n"
         "`/calibrate` — 回測校準訊號權重（自我優化）\n\n"
         "`/help` — 顯示此說明"
     )
@@ -426,8 +444,10 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
         elif cmd == "/set" and len(args) >= 2:
             key, val = args[0].lower(), args[1].lower()
             th = state["thresholds"]
-            bool_keys = {"macd_enabled", "bb_enabled", "atr_enabled", "scan_market_only"}
-            float_keys = {"rsi_oversold", "rsi_overbought", "price_change_pct", "vol_spike_ratio"}
+            bool_keys = {"macd_enabled", "bb_enabled", "atr_enabled", "scan_market_only",
+                         "cooldown_enabled", "regime_filter_enabled"}
+            float_keys = {"rsi_oversold", "rsi_overbought", "price_change_pct",
+                          "vol_spike_ratio", "cooldown_hours"}
             if key in bool_keys:
                 th[key] = val in ("on", "true", "1", "yes")
                 changed = True
@@ -463,6 +483,30 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                 reply = "\n".join(lines)
             else:
                 reply = "⚠️ 校準無結果（資料不足或 backtest.py 缺失）"
+
+        elif cmd == "/protections":
+            th = state["thresholds"]
+            hist = state.get("signal_history", {})
+            cd_h = float(th.get("cooldown_hours", 6))
+            _now = datetime.now(timezone.utc)
+            active = 0
+            for cats in hist.values():
+                for ts in cats.values():
+                    try:
+                        if (_now - datetime.fromisoformat(ts)).total_seconds() / 3600 < cd_h:
+                            active += 1
+                    except Exception:
+                        pass
+            reply = (
+                "🛡 *防護機制狀態*\n\n"
+                f"🔕 訊號冷卻：{'✅ 開' if th.get('cooldown_enabled', True) else '❌ 關'}"
+                f"（{th.get('cooldown_hours', 6)} 小時內同類訊號不重發）\n"
+                f"🌊 大盤濾網：{'✅ 開' if th.get('regime_filter_enabled', True) else '❌ 關'}\n"
+                f"🕐 市場時段限制：{'✅ 開' if th.get('scan_market_only', True) else '❌ 關'}\n\n"
+                f"目前追蹤 {active} 個冷卻中訊號\n\n"
+                "調整：`/set cooldown_hours 4`、`/set cooldown_enabled off`、"
+                "`/set regime_filter_enabled off`"
+            )
 
         else:
             reply = f"❓ 未知指令：{cmd}\n輸入 /help 查看說明"
@@ -913,17 +957,113 @@ def scan(tickers: list[str], thresholds: dict, calibration: dict | None = None) 
     return results
 
 
+# ── Protections (freqtrade-style) ─────────────────────────────────────────────
+
+def _signal_category(label: str) -> str:
+    """把訊號文字歸類，供冷卻去重使用。"""
+    if "RSI" in label:
+        return "rsi"
+    if "MACD" in label:
+        return "macd"
+    if "黃金交叉" in label or "死亡交叉" in label:
+        return "ma_cross"
+    if "BB" in label or "布林" in label:
+        return "bollinger"
+    if "ATR" in label:
+        return "atr"
+    if "爆量" in label or "波動率" in label:
+        return "volume"
+    if "暴漲" in label or "暴跌" in label:
+        return "price"
+    return "other"
+
+
+def apply_cooldown(results: list[dict], state: dict, now: datetime | None = None) -> tuple[list[dict], int]:
+    """
+    CooldownPeriod：同標的同類訊號在 cooldown_hours 內只發一次，防洗版。
+    只在「實際保留（會發送）」的訊號上更新時間戳；被壓制者不更新。
+    回傳 (過濾後的 results, 被壓制的訊號數)。會就地更新 state["signal_history"]。
+    """
+    now = now or datetime.now(timezone.utc)
+    cd_hours = float(state["thresholds"].get("cooldown_hours", 6))
+    hist = state.setdefault("signal_history", {})
+    suppressed = 0
+
+    for r in results:
+        tk_hist = hist.setdefault(r["ticker"], {})
+        kept = []
+        newly_sent: dict[str, str] = {}   # 本次掃描新發送的類別 → 時間戳
+        for label in r.get("signals", []):
+            cat = _signal_category(label)
+            # 只根據「先前掃描」留下的歷史判斷冷卻，避免同次掃描同類互相壓制
+            last = tk_hist.get(cat)
+            if last:
+                try:
+                    age_h = (now - datetime.fromisoformat(last)).total_seconds() / 3600
+                    if age_h < cd_hours:
+                        suppressed += 1
+                        continue  # 冷卻中，壓制（不更新時間戳）
+                except Exception:
+                    pass
+            kept.append(label)
+            newly_sent[cat] = now.isoformat()
+        tk_hist.update(newly_sent)   # 本次掃描結束後才寫回歷史
+        r["signals"] = kept
+
+    # 清理 >7 天舊紀錄，避免 state 膨脹
+    cutoff = now - timedelta(days=7)
+    for tk in list(hist.keys()):
+        for cat in list(hist[tk].keys()):
+            try:
+                if datetime.fromisoformat(hist[tk][cat]) < cutoff:
+                    del hist[tk][cat]
+            except Exception:
+                del hist[tk][cat]
+        if not hist[tk]:
+            del hist[tk]
+
+    return results, suppressed
+
+
+def market_regime() -> dict | None:
+    """
+    MaxDrawdown-style 大盤風險濾網：用 SPY 相對 MA50 與近月動量判斷 risk-on/off。
+    回傳 {"regime","emoji","label"} 或 None（資料不足）。
+    """
+    try:
+        raw = yf.download("SPY", period="3mo", auto_adjust=True, progress=False)
+        if raw.empty:
+            return None
+        close = raw["Close"].squeeze().dropna()
+        if len(close) < 50:
+            return None
+        price = float(close.iloc[-1])
+        ma50 = float(close.rolling(50).mean().iloc[-1])
+        ret_1m = price / float(close.iloc[-22]) - 1 if len(close) >= 22 else 0.0
+        if price > ma50 and ret_1m > 0:
+            return {"regime": "risk_on", "emoji": "🟢", "label": "偏多（大盤站上 MA50）"}
+        if price < ma50 and ret_1m < -0.03:
+            return {"regime": "risk_off", "emoji": "🔴", "label": "偏空（大盤跌破 MA50 且弱勢）"}
+        return {"regime": "neutral", "emoji": "🟡", "label": "中性震盪"}
+    except Exception:
+        return None
+
+
 # ── Message builder ──────────────────────────────────────────────────────────
 
-def _build_message(results: list[dict], timestamp: str) -> str | None:
-    flagged = [r for r in results if r["signals"]]
+def _build_message(results: list[dict], timestamp: str,
+                   regime: dict | None = None, suppressed: int = 0) -> str | None:
+    flagged = [r for r in results if r.get("signals")]
     if not flagged:
         return None
 
     # Sort flagged signals by absolute conviction (strongest first)
     flagged_sorted = sorted(flagged, key=lambda r: -abs(r.get("score", 0)))
 
-    lines = [f"🚨 *RBS 自動訊號掃描* — {timestamp}", ""]
+    lines = [f"🚨 *RBS 自動訊號掃描* — {timestamp}"]
+    if regime:
+        lines.append(f"{regime['emoji']} 大盤風險：{regime['label']}")
+    lines.append("")
     for r in flagged_sorted:
         arrow = "🟢" if r["chg"] > 0 else ("🔴" if r["chg"] < 0 else "⚪")
         score = r.get("score", 0)
@@ -932,7 +1072,7 @@ def _build_message(results: list[dict], timestamp: str) -> str | None:
             f"{arrow} *{r['ticker']}* ${r['price']}  ({r['chg']:+.1f}%)  "
             f"RSI={r['rsi']}\n   📊 評分 *{score:+.2f}* ({rating})"
         )
-        for s in r["signals"]:
+        for s in r.get("signals", []):
             lines.append(f"   ↳ {s}")
         lines.append("")
 
@@ -952,11 +1092,13 @@ def _build_message(results: list[dict], timestamp: str) -> str | None:
             lines.append(f"   {r['emoji']} {r['ticker']}  {r['score']:+.2f} ({r['rating']})")
         lines.append("")
 
-    no_signal = [r["ticker"] for r in results if not r["signals"]]
+    no_signal = [r["ticker"] for r in results if not r.get("signals")]
     lines.append(f"共掃描 *{len(results)}* 支，觸發 *{len(flagged)}* 支")
+    if suppressed:
+        lines.append(f"_🔕 {suppressed} 個重複訊號因冷卻被合併_")
     if no_signal:
         lines.append(f"_無訊號：{', '.join(no_signal[:10])}{'…' if len(no_signal)>10 else ''}_")
-    lines.append("_由 GitHub Actions 自動執行 · 輸入 /help 管理清單_")
+    lines.append("_輸入 /help 管理清單 · /protections 查看防護_")
     return "\n".join(lines)
 
 
@@ -990,6 +1132,40 @@ def _calibration_weights(state: dict) -> dict:
     cal = dict(state.get("calibration", {}))
     cal.pop("_updated", None)
     return cal
+
+
+# ── 自動掃描循環（main 與 daemon 共用，確保兩邊行為一致）─────────────────────────
+
+def scan_and_report(state: dict, timestamp: str) -> tuple[str | None, list[dict]]:
+    """
+    執行一次完整的自動掃描：校準 → 掃描 → 大盤濾網 → 冷卻去重 → 組訊息。
+    就地更新 state（calibration / signal_history / last_scan_time）。
+    回傳 (訊息字串或 None, results)。供 main() 與 bot_daemon 共用。
+    """
+    th = state["thresholds"]
+
+    # 每週自動回測校準（自我優化迴圈）
+    if maybe_calibrate(state):
+        print("Calibration refreshed from backtest edges.")
+
+    # 掃描（校準加權評分）
+    results = scan(state["watchlist"], th, calibration=_calibration_weights(state))
+    state["last_scan_time"] = timestamp
+
+    # 大盤風險濾網
+    regime = market_regime() if th.get("regime_filter_enabled", True) else None
+    if regime:
+        print(f"Market regime: {regime['label']}")
+
+    # 冷卻去重（防洗版）
+    suppressed = 0
+    if th.get("cooldown_enabled", True):
+        results, suppressed = apply_cooldown(results, state)
+        if suppressed:
+            print(f"Cooldown suppressed {suppressed} duplicate signals.")
+
+    message = _build_message(results, timestamp, regime=regime, suppressed=suppressed)
+    return message, results
 
 
 # ── Entrypoint ───────────────────────────────────────────────────────────────
@@ -1038,20 +1214,13 @@ def main() -> int:
           f"BB={'on' if thresholds.get('bb_enabled') else 'off'}  "
           f"ATR={'on' if thresholds.get('atr_enabled') else 'off'}\n")
 
-    # Step 2.5: Auto-calibrate signal weights weekly (self-optimizing loop)
-    if maybe_calibrate(state):
-        save_state(state)
-        print("Calibration refreshed from backtest edges.")
-
-    # Step 3: Scan (calibration-weighted scoring)
+    # Step 3: Scan + protections (shared with daemon)
     print("── Running signal scan ──")
-    results = scan(tickers, thresholds, calibration=_calibration_weights(state))
-    state["last_scan_time"] = now
+    message, results = scan_and_report(state, now)
 
-    # Step 4: Build & send message
-    message = _build_message(results, now)
+    # Step 4: Send
     if message is None:
-        print("\nNo signals triggered. Nothing to send.")
+        print("\nNo signals triggered (or all in cooldown). Nothing to send.")
     else:
         print(f"\n{len([r for r in results if r['signals']])} tickers flagged.")
         if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
