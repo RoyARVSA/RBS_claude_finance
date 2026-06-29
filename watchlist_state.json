@@ -26,8 +26,50 @@
     "macd_enabled": true,
     "bb_enabled": true,
     "atr_enabled": true,
-    "vol_spike_ratio": 2.0
+    "vol_spike_ratio": 2.0,
+    "scan_market_only": true,
+    "cooldown_enabled": true,
+    "cooldown_hours": 6.0,
+    "regime_filter_enabled": true,
+    "position_sizing_enabled": true,
+    "account_size": 100000.0,
+    "risk_pct": 0.01,
+    "atr_mult": 1.5
   },
   "last_update_id": 280895068,
-  "last_scan_time": "2026-06-26 18:54 UTC"
+  "last_scan_time": "2026-06-29 16:28 UTC",
+  "signal_history": {
+    "AAPL": {
+      "macd": "2026-06-29T16:28:52.722604+00:00"
+    },
+    "NVDA": {
+      "macd": "2026-06-29T16:28:52.722604+00:00"
+    },
+    "GOOGL": {
+      "price": "2026-06-29T16:28:52.722604+00:00"
+    },
+    "AMZN": {
+      "price": "2026-06-29T16:28:52.722604+00:00"
+    },
+    "TSLA": {
+      "price": "2026-06-29T16:28:52.722604+00:00",
+      "atr": "2026-06-29T16:28:52.722604+00:00"
+    },
+    "TSM": {
+      "price": "2026-06-29T16:28:52.722604+00:00"
+    },
+    "ARKK": {
+      "macd": "2026-06-29T16:28:52.722604+00:00"
+    },
+    "VRT": {
+      "macd": "2026-06-29T16:28:52.722604+00:00",
+      "atr": "2026-06-29T16:28:52.722604+00:00"
+    },
+    "GLD": {
+      "rsi": "2026-06-29T16:28:52.722604+00:00"
+    }
+  },
+  "calibration": {
+    "_updated": "2026-06-29T16:28:51.619549+00:00"
+  }
 }
