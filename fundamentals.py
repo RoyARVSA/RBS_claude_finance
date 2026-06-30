@@ -298,7 +298,14 @@ def fetch_fundamentals(ticker: str) -> dict:
         if out["fcf"] is not None and rev:
             out["fcf_margin"] = out["fcf"] / rev
 
-        out["dividend_yield"] = _num(info.get("dividendYield"))
+        # 股利率：優先用 dividendRate/price（無歧義的 %），
+        # 退回 dividendYield 並正規化（yfinance 版本有時回小數 0.005、有時回百分比 0.5）
+        div_rate = _num(info.get("dividendRate"))
+        if div_rate is not None and out["price"]:
+            out["dividend_yield"] = div_rate / out["price"] * 100
+        else:
+            dy = _num(info.get("dividendYield"))
+            out["dividend_yield"] = (dy * 100 if (dy is not None and dy < 1) else dy)
         out["target_mean"] = _num(info.get("targetMeanPrice"))
         out["recommendation"] = info.get("recommendationKey")
 

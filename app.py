@@ -2917,11 +2917,16 @@ def page_company_analysis():
     if run_fa and fa_tkr:
         with st.spinner(f"抓取 {fa_tkr} 基本面資料…"):
             st.session_state["fa_data"] = fa.fetch_fundamentals(fa_tkr)
+        st.session_state.pop("fa_ai_out", None)   # 換股時清掉舊的 AI 解讀
 
     data = st.session_state.get("fa_data")
     if not data:
         st.info("輸入代碼後按「分析」。ETF / 指數無公司基本面資料。")
         return
+
+    # 提醒：輸入框與目前顯示資料的標的不一致（尚未按分析）
+    if fa_tkr and data.get("ticker") != fa_tkr:
+        st.info(f"目前顯示 **{data.get('ticker')}** 的資料；輸入框為 **{fa_tkr}**，請按「分析」更新。")
 
     if not data.get("ok"):
         st.warning(f"⚠️ {data.get('ticker','')}：{data.get('error') or '無法取得基本面資料'}")
