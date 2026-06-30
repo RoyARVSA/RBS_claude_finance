@@ -50,6 +50,10 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           # 手動觸發時可臨時覆蓋 watchlist（不會存入 state）
           WATCHLIST: ${{ github.event.inputs.watchlist }}
+          # 每日 AI 晨報用（未設則晨報走純數據版，不會壞）
+          LLM_API_KEY:  ${{ secrets.LLM_API_KEY }}
+          LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
+          LLM_MODEL:    ${{ secrets.LLM_MODEL }}
         run: python scan_signals.py
 
       - name: Commit updated watchlist state

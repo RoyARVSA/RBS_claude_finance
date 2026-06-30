@@ -34,6 +34,13 @@
 | `MIN_RSI_OVERSOLD` | 選填 | RSI 超賣門檻（預設 `35`） |
 | `MAX_RSI_OVERBOUGHT` | 選填 | RSI 超買門檻（預設 `70`） |
 | `PRICE_CHANGE_PCT` | 選填 | 單日漲跌 % 警示門檻（預設 `3.0`） |
+| `LLM_API_KEY` | 選填 | 每日 AI 晨報用的 LLM key（Claude 或 OpenAI）。**不設則晨報走純數據版** |
+| `LLM_BASE_URL` | 選填 | 自訂 API 端點（留空自動判斷 Anthropic/OpenAI） |
+| `LLM_MODEL` | 選填 | 模型名（預設 Claude 用 `claude-3-5-haiku`，OpenAI 用 `gpt-4o-mini`） |
+
+> ☀️ **每日 AI 晨報**：每交易日 ET 08:30 自動推送大盤+觀察清單評分+訊號。
+> 設了 `LLM_API_KEY` 會多一段 AI 白話解讀；沒設則只推數據排名（仍可用）。
+> 用 `/briefing` 可隨時手動測試、`/set briefing_enabled off` 關閉。
 
 ---
 
