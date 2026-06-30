@@ -65,8 +65,14 @@ jobs:
             git commit -m "chore: update watchlist_state.json [skip ci]"
 
       - name: Push state changes
-        run: git push origin HEAD
-        continue-on-error: true   # 不讓 push 失敗影響整體工作
+        run: |
+          # rebase-retry：避免非快進推送失敗導致 last_briefing_date 等狀態遺失（→ 晨報重複發送）
+          for i in 1 2 3; do
+            git push origin HEAD && exit 0
+            echo "push 失敗，rebase 後重試 ($i)…"
+            git pull --rebase --autostash origin "${GITHUB_REF_NAME}" || true
+          done
+          git push origin HEAD || echo "push 最終失敗（狀態未持久化，下次可能重發）"
 
       - name: Upload scan log
         if: always()

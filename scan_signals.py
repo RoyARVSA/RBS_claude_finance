@@ -1275,8 +1275,8 @@ def daily_briefing(state: dict, force: bool = False) -> str | None:
         lines.append(f"📈 {idx_str}")
     lines.append("")
 
-    # AI 解讀（可選）
-    if state["thresholds"].get("briefing_enabled", True):
+    # AI 解讀（可選；force=手動 /briefing 即使關閉也產生）
+    if force or state["thresholds"].get("briefing_enabled", True):
         ctx = [f"日期：{date_str}"]
         if regime:
             ctx.append(f"大盤風險：{regime['label']}")
