@@ -221,6 +221,7 @@ with st.sidebar:
             "📈 持倉分析",
             "⚠️ 風險管理",
             "🔍 股票研究",
+            "🏢 公司分析",
             "🚨 即時警報",
             "🛠️ 交易工具",
             "🏦 機構選股",
@@ -2892,6 +2893,227 @@ def _send_email(smtp_host: str, port: int, user: str, pwd: str,
         return (False, str(e))
 
 
+# ════════════════════════════════════════════════════════════════════
+# PAGE: Company Fundamental Analysis
+# ════════════════════════════════════════════════════════════════════
+
+def page_company_analysis():
+    st.title("🏢 公司分析")
+    st.caption("基本面體質分析 · 財務健康評分 · 估值 · 三表趨勢 · AI 解讀（資料來源 yfinance）")
+
+    try:
+        import fundamentals as fa
+    except ImportError:
+        st.error("找不到 fundamentals.py，請確認已同步（Colab 需更新 Cell 2）。")
+        return
+
+    ca1, ca2 = st.columns([3, 1])
+    with ca1:
+        fa_tkr = st.text_input("輸入股票代碼", "AAPL",
+                               placeholder="AAPL / MSFT / 2330.TW").upper().strip()
+    with ca2:
+        run_fa = st.button("分析", type="primary", use_container_width=True)
+
+    if run_fa and fa_tkr:
+        with st.spinner(f"抓取 {fa_tkr} 基本面資料…"):
+            st.session_state["fa_data"] = fa.fetch_fundamentals(fa_tkr)
+        st.session_state.pop("fa_ai_out", None)   # 換股時清掉舊的 AI 解讀
+
+    data = st.session_state.get("fa_data")
+    if not data:
+        st.info("輸入代碼後按「分析」。ETF / 指數無公司基本面資料。")
+        return
+
+    # 提醒：輸入框與目前顯示資料的標的不一致（尚未按分析）
+    if fa_tkr and data.get("ticker") != fa_tkr:
+        st.info(f"目前顯示 **{data.get('ticker')}** 的資料；輸入框為 **{fa_tkr}**，請按「分析」更新。")
+
+    if not data.get("ok"):
+        st.warning(f"⚠️ {data.get('ticker','')}：{data.get('error') or '無法取得基本面資料'}")
+        return
+
+    cur = data.get("currency") or ""
+
+    # ① 公司概況卡 ─────────────────────────────────────────────
+    section(f"{data['name']}（{data['ticker']}）")
+    info_bits = [b for b in [data.get("sector"), data.get("industry")] if b]
+    if info_bits:
+        st.caption(" · ".join(info_bits))
+    o1, o2, o3, o4 = st.columns(4)
+    with o1:
+        metric_card("股價", f"{data['price']:.2f} {cur}" if data.get("price") else "—")
+    with o2:
+        mc = data.get("market_cap")
+        mc_s = (f"{mc/1e12:.2f}T" if mc and mc >= 1e12 else
+                f"{mc/1e9:.1f}B" if mc and mc >= 1e9 else
+                f"{mc/1e6:.0f}M" if mc else "—")
+        metric_card("市值", mc_s)
+    with o3:
+        hi, lo, pr = data.get("high_52w"), data.get("low_52w"), data.get("price")
+        pos = f"{(pr-lo)/(hi-lo)*100:.0f}%" if (hi and lo and pr and hi > lo) else "—"
+        metric_card("52週位階", pos)
+    with o4:
+        dy = data.get("dividend_yield")
+        metric_card("股利率", f"{dy:.2f}%" if dy else "—")
+
+    # ② 財務健康評分 ──────────────────────────────────────────
+    hs = fa.health_score(data)
+    section("財務健康評分")
+    if hs["score"] is None:
+        st.warning("基本面資料不足，無法評分。")
+    else:
+        sc1, sc2 = st.columns([1, 2])
+        with sc1:
+            color = ("#4CAF50" if hs["score"] >= 75 else "#8BC34A" if hs["score"] >= 55
+                     else "#FFC107" if hs["score"] >= 40 else "#F44336")
+            st.markdown(
+                f"<div class='metric-card' style='text-align:center;border-color:{color}80'>"
+                f"<div class='metric-label'>綜合評分（{hs['covered']}/5 構面）</div>"
+                f"<div style='font-size:2.4rem;font-weight:800;color:{color}'>{hs['score']:.0f}</div>"
+                f"<div style='color:{color};font-weight:700;font-size:1.1rem'>{hs['rating']}</div>"
+                f"</div>", unsafe_allow_html=True,
+            )
+        with sc2:
+            bd = {k: v for k, v in hs["breakdown"].items() if v is not None}
+            if bd:
+                cats = list(bd.keys()) + [list(bd.keys())[0]]
+                vals = list(bd.values()) + [list(bd.values())[0]]
+                fig_r = go.Figure(go.Scatterpolar(r=vals, theta=cats, fill="toself",
+                                                   line_color="#1E88E5"))
+                fig_r.update_layout(**PLOTLY_LAYOUT, height=300,
+                                    polar=dict(radialaxis=dict(range=[0, 100], color="#E8EAF0"),
+                                               bgcolor="#14172A"),
+                                    title="各構面評分（0~100）")
+                st.plotly_chart(fig_r, use_container_width=True)
+
+    tab_v, tab_p, tab_s, tab_ai = st.tabs(["估值", "獲利能力", "財報三表", "🤖 AI 解讀"])
+
+    # ③ 估值 ─────────────────────────────────────────────────
+    with tab_v:
+        flags = fa.valuation_flags(data)
+        flag_emoji = {"cheap": "🟢 偏便宜", "fair": "🟡 合理",
+                      "expensive": "🔴 偏貴", "na": "— 無資料"}
+        rows_v = [
+            ("本益比 P/E", data.get("pe"), flags["pe"]),
+            ("股價淨值比 P/B", data.get("pb"), flags["pb"]),
+            ("PEG", data.get("peg"), flags["peg"]),
+            ("EV/EBITDA", data.get("ev_ebitda"), flags["ev_ebitda"]),
+        ]
+        vdf = pd.DataFrame(
+            [{"指標": n, "數值": (f"{v:.2f}" if v else "—"), "評估": flag_emoji[f]}
+             for n, v, f in rows_v]
+        ).set_index("指標")
+        st.dataframe(vdf, use_container_width=True)
+        st.caption("估值用絕對合理區間判斷，未做產業比較；不同產業合理區間本就不同，僅供參考。")
+
+    # ④ 獲利能力 ──────────────────────────────────────────────
+    with tab_p:
+        p1, p2, p3 = st.columns(3)
+        def _pct(x): return f"{x*100:.1f}%" if x is not None else "—"
+        with p1:
+            metric_card("ROE", _pct(data.get("roe")))
+            metric_card("ROA", _pct(data.get("roa")))
+        with p2:
+            metric_card("毛利率", _pct(data.get("gross_margin")))
+            metric_card("營業利益率", _pct(data.get("op_margin")))
+        with p3:
+            metric_card("淨利率", _pct(data.get("net_margin")))
+            metric_card("FCF 利潤率", _pct(data.get("fcf_margin")))
+        if data.get("roe_note"):
+            st.caption(f"ℹ️ ROE {data['roe_note']}")
+        gr1, gr2 = st.columns(2)
+        with gr1:
+            metric_card("營收成長", _pct(data.get("revenue_growth")),
+                        positive=(data.get("revenue_growth") or 0) > 0)
+        with gr2:
+            metric_card("盈餘成長", _pct(data.get("earnings_growth")),
+                        positive=(data.get("earnings_growth") or 0) > 0)
+
+    # ⑤ 財報三表 ──────────────────────────────────────────────
+    with tab_s:
+        def _bar(title, series, color):
+            periods, vals = series
+            pairs = [(p, v) for p, v in zip(periods, vals) if v is not None]
+            if not pairs:
+                st.caption(f"{title}：無資料")
+                return
+            pp, vv = zip(*pairs)
+            fig = go.Figure(go.Bar(x=list(pp), y=[v/1e9 for v in vv], marker_color=color))
+            fig.update_layout(**PLOTLY_LAYOUT, height=240, title=f"{title}（十億 {cur}）")
+            st.plotly_chart(fig, use_container_width=True)
+        _bar("營收", data.get("revenue_series", ([], [])), "#1E88E5")
+        _bar("淨利", data.get("netincome_series", ([], [])), "#4CAF50")
+        _bar("自由現金流", data.get("fcf_series", ([], [])), "#FF9800")
+        ana_t, ana_r = data.get("target_mean"), data.get("recommendation")
+        if ana_t or ana_r:
+            section("分析師")
+            aa1, aa2, aa3 = st.columns(3)
+            with aa1: metric_card("目標均價", f"{ana_t:.2f} {cur}" if ana_t else "—")
+            with aa2:
+                up = ((ana_t / data["price"] - 1) * 100) if (ana_t and data.get("price")) else None
+                metric_card("上漲空間", f"{up:+.1f}%" if up is not None else "—",
+                            positive=(up or 0) > 0)
+            with aa3: metric_card("評等", str(ana_r).upper() if ana_r else "—")
+
+    # ⑥ AI 解讀（lazy）────────────────────────────────────────
+    with tab_ai:
+        st.caption("把上述數字交給 LLM 生成白話財務體質解讀（不會自行抓資料，僅解讀給定數字）。")
+        ak1, ak2 = st.columns([2, 1])
+        with ak1:
+            fa_key = st.text_input("API Key", type="password", key="fa_ai_key",
+                                   placeholder="sk-… 或 Anthropic key")
+        with ak2:
+            fa_model = st.selectbox("模型", [
+                "claude-3-5-haiku-20241022", "claude-3-5-sonnet-20241022",
+                "gpt-4o-mini", "gpt-4o",
+            ], key="fa_ai_model")
+        fa_base = st.text_input("API Base URL（留空自動判斷）", "", key="fa_ai_base")
+        if st.button("🤖 生成 AI 解讀", key="fa_ai_run"):
+            if not fa_key:
+                st.error("請輸入 API Key")
+            else:
+                facts = (
+                    f"公司：{data['name']} ({data['ticker']})；產業：{data.get('sector')}/{data.get('industry')}\n"
+                    f"財務健康評分：{hs['score']}（{hs['rating']}），各構面：{hs['breakdown']}\n"
+                    f"估值：P/E={data.get('pe')}, P/B={data.get('pb')}, PEG={data.get('peg')}, "
+                    f"EV/EBITDA={data.get('ev_ebitda')}\n"
+                    f"獲利：ROE={data.get('roe')}, 淨利率={data.get('net_margin')}, "
+                    f"毛利率={data.get('gross_margin')}\n"
+                    f"成長：營收={data.get('revenue_growth')}, 盈餘={data.get('earnings_growth')}\n"
+                    f"財務：負債權益比={data.get('debt_to_equity')}, 流動比={data.get('current_ratio')}, "
+                    f"FCF={data.get('fcf')}\n"
+                )
+                prompt = (
+                    "你是專業基本面分析師。僅根據以下數字解讀這家公司的財務體質，"
+                    "不得編造未提供的事實。用繁體中文，分『優勢』『隱憂』『總評』三段，簡潔具體。\n\n"
+                    + facts
+                )
+                with st.spinner("AI 解讀中…"):
+                    try:
+                        client = _llm_client(fa_key, fa_base, fa_model)
+                        resp = client.chat.completions.create(
+                            model=fa_model,
+                            messages=[{"role": "user", "content": prompt}],
+                            temperature=0.3, max_tokens=900,
+                        )
+                        st.session_state["fa_ai_out"] = resp.choices[0].message.content
+                    except Exception as e:
+                        st.error(f"AI 解讀失敗：{e}")
+        if st.session_state.get("fa_ai_out"):
+            st.markdown(
+                f"<div style='background:#1A1D27;border:1px solid #2D3142;border-radius:10px;"
+                f"padding:18px;color:#E8EAF0;line-height:1.7'>"
+                f"{st.session_state['fa_ai_out'].replace(chr(10),'<br>')}</div>",
+                unsafe_allow_html=True,
+            )
+
+    st.markdown(
+        "<small style='color:#B8C0D0'>⚠️ 資料來源 yfinance，季報更新、非即時；"
+        "部分標的（尤其非美股）欄位可能缺漏。評分為相對輔助，非投資建議。</small>",
+        unsafe_allow_html=True,
+    )
+
+
 def page_alerts():
     import yfinance as yf
     st.title("🚨 即時警報 & 監控")
@@ -3441,6 +3663,7 @@ PAGES = {
     "📈 持倉分析":  page_portfolio_performance,
     "⚠️ 風險管理":  page_risk_management,
     "🔍 股票研究":  page_stock_research,
+    "🏢 公司分析":  page_company_analysis,
     "🚨 即時警報":  page_alerts,
     "🛠️ 交易工具":  page_trading_tools,
     "🏦 機構選股":  page_stock_selector,

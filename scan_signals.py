@@ -22,6 +22,7 @@ Telegram 指令（傳給 Bot）：
   /calibrate              – 用歷史回測勝率校準各訊號權重（自我優化迴圈）
   /protections            – 查看防護機制（訊號冷卻 / 大盤風險濾網）狀態
   /risk [帳戶 風險%]       – 設定/查看部位風險（訊號附建議部位股數）
+  /fundamentals TICKER    – 查公司基本面摘要（健康評分/ROE/估值，快取一天）（別名 /f）
   /scan                   – 立即掃描（忽略靜音與市場狀態）
   /clear                  – 清空觀察清單
   /help                   – 顯示此說明
@@ -237,6 +238,7 @@ def _cmd_help() -> str:
         "`/status` — Bot 狀態 + 市場狀態\n"
         "`/top 5` — 今日漲跌幅前 5 名\n"
         "`/rank` — 綜合評分排名（-1~+1）\n"
+        "`/fundamentals AAPL`（或 `/f`）— 公司基本面摘要\n"
         "`/scan` — 立即掃描（忽略靜音/冷卻）\n"
         "`/calibrate` — 回測校準訊號權重（自我優化）\n\n"
         "`/help` — 顯示此說明"
@@ -332,6 +334,54 @@ def _cmd_top(state: dict, n: int = 5) -> str:
         return "\n".join(lines)
     except Exception as e:
         return f"❌ 查詢失敗：{e}"
+
+
+def _cmd_fundamentals(state: dict, ticker: str) -> str:
+    """查詢單檔基本面摘要（快取一天，避免重複慢呼叫）。"""
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    cache = state.setdefault("fund_cache", {})
+    hit = cache.get(ticker)
+    if hit and hit.get("date") == today:
+        return hit["text"]
+
+    try:
+        import fundamentals as fa
+    except Exception:
+        return "❌ 找不到 fundamentals.py（請同步該檔案）"
+
+    try:
+        d = fa.fetch_fundamentals(ticker)
+    except Exception as e:
+        return f"❌ {ticker} 查詢失敗：{e}"
+
+    if not d.get("ok"):
+        return f"⚠️ {ticker}：{d.get('error') or '無基本面資料'}"
+
+    hs = fa.health_score(d)
+
+    def _pct(x):
+        return f"{x*100:.1f}%" if x is not None else "—"
+    def _num(x, f="{:.2f}"):
+        return f.format(x) if x is not None else "—"
+
+    score_line = (f"{hs['score']:.0f}（{hs['rating']}，{hs['covered']}/5構面）"
+                  if hs["score"] is not None else "資料不足")
+    text = (
+        f"🏢 *{d['name']}* ({ticker})\n"
+        f"{d.get('sector') or ''} {('· ' + d.get('industry')) if d.get('industry') else ''}\n\n"
+        f"📊 *財務健康*：{score_line}\n"
+        f"ROE：{_pct(d.get('roe'))}　淨利率：{_pct(d.get('net_margin'))}\n"
+        f"營收成長：{_pct(d.get('revenue_growth'))}　盈餘成長：{_pct(d.get('earnings_growth'))}\n"
+        f"P/E：{_num(d.get('pe'))}　PEG：{_num(d.get('peg'))}　P/B：{_num(d.get('pb'))}\n"
+        f"負債權益比：{_num(d.get('debt_to_equity'))}　流動比：{_num(d.get('current_ratio'))}\n"
+    )
+    tgt, pr = d.get("target_mean"), d.get("price")
+    if tgt and pr:
+        text += f"分析師目標：{tgt:.2f}（{(tgt/pr-1)*100:+.1f}%）\n"
+    text += "\n_資料 yfinance，季報非即時 · 僅供參考_"
+
+    cache[ticker] = {"date": today, "text": text}
+    return text
 
 
 def _cmd_rank(state: dict) -> str:
@@ -537,6 +587,16 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                 "調整：`/set cooldown_hours 4`、`/set cooldown_enabled off`、"
                 "`/set regime_filter_enabled off`"
             )
+
+        elif cmd in ("/fundamentals", "/f"):
+            if not args:
+                reply = "用法：`/fundamentals AAPL` 或 `/f AAPL`"
+            else:
+                tkr = args[0].upper()
+                reply = f"🏢 查詢 {tkr} 基本面中…"
+                _tg_send(token, src_chat or chat_id, reply)
+                reply = _cmd_fundamentals(state, tkr)
+                changed = True   # 可能更新快取
 
         else:
             reply = f"❓ 未知指令：{cmd}\n輸入 /help 查看說明"
