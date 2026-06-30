@@ -35,6 +35,13 @@ def _num(x):
         return None
 
 
+def _as_series(obj):
+    """df.loc[label] 在 index 有重複科目名時會回 DataFrame；取第一列收斂成 Series。"""
+    if isinstance(obj, pd.DataFrame):
+        return obj.iloc[0] if len(obj) else pd.Series(dtype=float)
+    return obj
+
+
 def pick_row(df: pd.DataFrame, candidates: list[str]):
     """
     從三表 DataFrame（index 為科目名）依候選關鍵字模糊取列（最新一期）。
@@ -47,7 +54,7 @@ def pick_row(df: pd.DataFrame, candidates: list[str]):
         key = cand.lower().replace(" ", "")
         # 完全相符優先
         if key in norm:
-            row = df.loc[norm[key]]
+            row = _as_series(df.loc[norm[key]])
             val = _num(row.iloc[0]) if len(row) else None
             return norm[key], val
     # 退而求其次：包含關係
@@ -55,7 +62,7 @@ def pick_row(df: pd.DataFrame, candidates: list[str]):
         key = cand.lower().replace(" ", "")
         for nk, orig in norm.items():
             if key in nk:
-                row = df.loc[orig]
+                row = _as_series(df.loc[orig])
                 val = _num(row.iloc[0]) if len(row) else None
                 return orig, val
     return None, None
@@ -81,7 +88,7 @@ def series_row(df: pd.DataFrame, candidates: list[str], n: int = 4):
                 break
     if target is None:
         return [], []
-    row = df.loc[target]
+    row = _as_series(df.loc[target])   # 重複科目名 → 收斂成 Series，避免軸錯亂
     vals = [_num(v) for v in row.iloc[:n]]
     # yfinance 欄位由新到舊 → 反轉成舊到新
     periods = [str(c)[:10] for c in row.index[:n]][::-1]
