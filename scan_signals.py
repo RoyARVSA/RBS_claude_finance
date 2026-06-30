@@ -23,6 +23,8 @@ Telegram 指令（傳給 Bot）：
   /protections            – 查看防護機制（訊號冷卻 / 大盤風險濾網）狀態
   /risk [帳戶 風險%]       – 設定/查看部位風險（訊號附建議部位股數）
   /fundamentals TICKER    – 查公司基本面摘要（健康評分/ROE/估值，快取一天）（別名 /f）
+  /briefing               – 立即生成每日 AI 晨報（每交易日 ET 08:30 自動推送）
+  /set mtf_enabled on/off – 週線同向確認（日線分數與週線同向加強、背離減弱）
   /scan                   – 立即掃描（忽略靜音與市場狀態）
   /clear                  – 清空觀察清單
   /help                   – 顯示此說明
@@ -76,6 +78,11 @@ DEFAULT_THRESHOLDS = {
     "account_size":       100000.0,   # 帳戶總值（USD）
     "risk_pct":           0.01,       # 單筆風險比例
     "atr_mult":           1.5,        # ATR 停損倍數
+    # ── Daily briefing ──
+    "briefing_enabled":   True,       # 每日 AI 晨報
+    "briefing_hour_et":   8.5,        # 觸發時間（ET 小數時，8.5 = 08:30）
+    # ── Multi-timeframe ──
+    "mtf_enabled":        True,       # 週線同向確認（軟性調整評分）
 }
 
 ET = ZoneInfo("America/New_York")
@@ -220,6 +227,7 @@ def _cmd_help() -> str:
         "`/set macd on|off` — MACD 訊號\n"
         "`/set bb on|off` — 布林通道訊號\n"
         "`/set atr on|off` — ATR 進出場提示\n"
+        "`/set mtf_enabled on|off` — 週線同向確認\n"
         "`/set vol_spike_ratio 2.0` — 爆量倍數\n"
         "`/set scan_market_only on|off` — 只在開盤時掃描\n\n"
         "🔕 *靜音控制*\n"
@@ -239,8 +247,12 @@ def _cmd_help() -> str:
         "`/top 5` — 今日漲跌幅前 5 名\n"
         "`/rank` — 綜合評分排名（-1~+1）\n"
         "`/fundamentals AAPL`（或 `/f`）— 公司基本面摘要\n"
+        "`/briefing` — 立即生成每日晨報\n"
         "`/scan` — 立即掃描（忽略靜音/冷卻）\n"
         "`/calibrate` — 回測校準訊號權重（自我優化）\n\n"
+        "☀️ *晨報*：每交易日 ET 08:30 自動推送\n"
+        "`/set briefing_enabled off` — 關閉晨報\n"
+        "`/set briefing_hour_et 9` — 改晨報時間（ET 小數時）\n\n"
         "`/help` — 顯示此說明"
     )
 
@@ -505,10 +517,10 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
             th = state["thresholds"]
             bool_keys = {"macd_enabled", "bb_enabled", "atr_enabled", "scan_market_only",
                          "cooldown_enabled", "regime_filter_enabled",
-                         "position_sizing_enabled"}
+                         "position_sizing_enabled", "briefing_enabled", "mtf_enabled"}
             float_keys = {"rsi_oversold", "rsi_overbought", "price_change_pct",
                           "vol_spike_ratio", "cooldown_hours",
-                          "account_size", "risk_pct", "atr_mult"}
+                          "account_size", "risk_pct", "atr_mult", "briefing_hour_et"}
             if key in bool_keys:
                 th[key] = val in ("on", "true", "1", "yes")
                 changed = True
@@ -597,6 +609,11 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                 _tg_send(token, src_chat or chat_id, reply)
                 reply = _cmd_fundamentals(state, tkr)
                 changed = True   # 可能更新快取
+
+        elif cmd == "/briefing":
+            reply = "☀️ 生成晨報中，約需 20-40 秒…"
+            _tg_send(token, src_chat or chat_id, reply)
+            reply = daily_briefing(state, force=True) or "晨報生成失敗"
 
         else:
             reply = f"❓ 未知指令：{cmd}\n輸入 /help 查看說明"
@@ -740,9 +757,33 @@ def _ma_trend(close: pd.Series) -> dict:
 
 # ── Composite scoring ─────────────────────────────────────────────────────────
 
+def _weekly_trend(close: pd.Series) -> int:
+    """
+    把日線 resample 成週線，回傳週線偏向 -2~+2：
+      週價 > 週MA10 +1 / 否則 -1；週MACD histogram > 0 +1 / 否則 -1。
+    資料不足或非時間索引回 0（中性，不影響）。
+    """
+    if not isinstance(close.index, pd.DatetimeIndex):
+        return 0
+    try:
+        wk = close.resample("W").last().dropna()
+        if len(wk) < 12:
+            return 0
+        price = float(wk.iloc[-1])
+        ma10 = float(wk.rolling(10).mean().iloc[-1])
+        ema12 = wk.ewm(span=12, adjust=False).mean()
+        ema26 = wk.ewm(span=26, adjust=False).mean()
+        macd_line = ema12 - ema26
+        hist = float((macd_line - macd_line.ewm(span=9, adjust=False).mean()).iloc[-1])
+        bias = (1 if price > ma10 else -1) + (1 if hist > 0 else -1)
+        return bias
+    except Exception:
+        return 0
+
+
 def _composite_score(close: pd.Series, high: pd.Series | None,
                      low: pd.Series | None, volume: pd.Series | None,
-                     edge_weights: dict | None = None) -> dict:
+                     edge_weights: dict | None = None, mtf: bool = False) -> dict:
     """
     Blend every indicator into a single -1 (極空) .. +1 (極多) score.
     Returns {"score", "rating", "emoji", "components"}.
@@ -838,6 +879,20 @@ def _composite_score(close: pd.Series, high: pd.Series | None,
                 score *= (1 + amp)
     score = max(-1.0, min(1.0, score))
 
+    # ── 多時間框架確認（軟性調整：日線分數 vs 週線偏向）────────────
+    mtf_note = None
+    if mtf:
+        wt = _weekly_trend(close)            # -2~+2
+        if score > 0.1 and wt >= 1:
+            score *= 1.1; mtf_note = "✅ 週線同向"
+        elif score < -0.1 and wt <= -1:
+            score *= 1.1; mtf_note = "✅ 週線同向(偏空)"
+        elif score > 0.1 and wt <= -1:
+            score *= 0.8; mtf_note = "⚠️ 週線背離"
+        elif score < -0.1 and wt >= 1:
+            score *= 0.8; mtf_note = "⚠️ 週線背離"
+        score = max(-1.0, min(1.0, score))
+
     # ── 評級 ─────────────────────────────────────────────────────
     if score >= 0.5:
         rating, emoji = "強力買進", "🟢🟢"
@@ -850,7 +905,8 @@ def _composite_score(close: pd.Series, high: pd.Series | None,
     else:
         rating, emoji = "強力賣出", "🔴🔴"
 
-    return {"score": round(score, 3), "rating": rating, "emoji": emoji, "components": comps}
+    return {"score": round(score, 3), "rating": rating, "emoji": emoji,
+            "components": comps, "mtf_note": mtf_note}
 
 
 # ── 回測校準：把歷史勝率回饋成元件權重 ────────────────────────────────────────
@@ -981,10 +1037,12 @@ def scan(tickers: list[str], thresholds: dict, calibration: dict | None = None) 
     bb_on   = thresholds.get("bb_enabled",    True)
     atr_on  = thresholds.get("atr_enabled",   True)
     vol_r   = thresholds.get("vol_spike_ratio", 2.0)
+    mtf_on  = thresholds.get("mtf_enabled",   True)
 
-    print(f"Batch-downloading {len(tickers)} tickers (6mo)…")
+    # 1y：週線指標（MACD 26週）需足夠歷史
+    print(f"Batch-downloading {len(tickers)} tickers (1y)…")
     try:
-        raw = yf.download(tickers, period="6mo", auto_adjust=True,
+        raw = yf.download(tickers, period="1y", auto_adjust=True,
                           progress=False, threads=True)
     except Exception as e:
         print(f"Batch download failed: {e}")
@@ -1060,9 +1118,10 @@ def scan(tickers: list[str], thresholds: dict, calibration: dict | None = None) 
                 if vs["signal"] == "vol_spike":
                     signals.append(vs.get("label", ""))
 
-            # ── Composite score (always computed; calibration-weighted) ──
+            # ── Composite score (calibration-weighted + MTF 確認) ──
             edge_w = (calibration or {}).get(ticker)
-            cs = _composite_score(close, high, low, volume, edge_weights=edge_w)
+            cs = _composite_score(close, high, low, volume,
+                                  edge_weights=edge_w, mtf=mtf_on)
 
             # ── Position sizing hint (ATR risk-based) ─────────────
             pos = None
@@ -1077,6 +1136,7 @@ def scan(tickers: list[str], thresholds: dict, calibration: dict | None = None) 
                 "score":   cs["score"],
                 "rating":  cs["rating"],
                 "emoji":   cs["emoji"],
+                "mtf_note": cs.get("mtf_note"),
                 "position": pos,
                 "signals": [s for s in signals if s],
             })
@@ -1182,6 +1242,157 @@ def market_regime() -> dict | None:
         return None
 
 
+# ── Daily AI briefing ─────────────────────────────────────────────────────────
+
+def _llm_complete(prompt: str, max_tokens: int = 900) -> str | None:
+    """
+    經 requests 呼叫 LLM（cron 環境無 openai SDK，故用 requests）。
+    自動辨識 OpenAI / Anthropic 相容端點。需環境變數 LLM_API_KEY；
+    可選 LLM_BASE_URL、LLM_MODEL。失敗回 None（晨報退回純數據版）。
+    """
+    key = os.environ.get("LLM_API_KEY", "")
+    if not key:
+        return None
+    base = os.environ.get("LLM_BASE_URL", "").rstrip("/")
+    model = os.environ.get("LLM_MODEL", "")
+    is_anthropic = ("anthropic" in base.lower()) or key.startswith("sk-ant") or model.startswith("claude")
+    if not model:
+        model = "claude-3-5-haiku-20241022" if is_anthropic else "gpt-4o-mini"
+    try:
+        if is_anthropic:
+            url = (base or "https://api.anthropic.com") + "/v1/messages"
+            r = requests.post(url, timeout=45,
+                              headers={"x-api-key": key, "anthropic-version": "2023-06-01",
+                                       "content-type": "application/json"},
+                              json={"model": model, "max_tokens": max_tokens,
+                                    "messages": [{"role": "user", "content": prompt}]})
+            if r.ok:
+                return r.json()["content"][0]["text"]
+        else:
+            url = (base or "https://api.openai.com/v1") + "/chat/completions"
+            r = requests.post(url, timeout=45,
+                              headers={"Authorization": f"Bearer {key}"},
+                              json={"model": model, "max_tokens": max_tokens, "temperature": 0.3,
+                                    "messages": [{"role": "user", "content": prompt}]})
+            if r.ok:
+                return r.json()["choices"][0]["message"]["content"]
+        print(f"LLM error {r.status_code}: {r.text[:200]}")
+    except Exception as e:
+        print(f"LLM exception: {e}")
+    return None
+
+
+def _index_snapshot() -> dict:
+    """抓主要指數的最新漲跌（晨報用）。回 {名稱: (價, 日變動)}。"""
+    idx_map = {"^GSPC": "S&P500", "^IXIC": "NASDAQ", "^DJI": "道瓊", "^VIX": "VIX"}
+    out = {}
+    for tk, name in idx_map.items():
+        try:
+            raw = yf.download(tk, period="5d", auto_adjust=True, progress=False)
+            if raw.empty:
+                continue
+            s = raw["Close"].squeeze().dropna()
+            if len(s) >= 2:
+                out[name] = (float(s.iloc[-1]), float(s.iloc[-1] / s.iloc[-2] - 1))
+        except Exception:
+            continue
+    return out
+
+
+def daily_briefing(state: dict, force: bool = False) -> str | None:
+    """組裝每日晨報（大盤 + 指數 + 觀察清單排名 + 訊號 + AI 解讀）。"""
+    now_et = datetime.now(ET)
+    date_str = now_et.strftime("%Y-%m-%d (%a)")
+
+    regime = market_regime()
+    indices = _index_snapshot()
+    results = scan(state["watchlist"], state["thresholds"],
+                   calibration=_calibration_weights(state)) if state["watchlist"] else []
+    ranked = sorted(results, key=lambda r: -r.get("score", 0))
+    top = ranked[:5]
+    bottom = [r for r in ranked if r.get("score", 0) < -0.1][-3:]
+    flagged = [r for r in results if r.get("signals")]
+
+    # 結構化數據（給 AI 與純數據版共用）
+    lines = [f"☀️ *RBS 每日晨報* — {date_str}"]
+    if regime:
+        lines.append(f"{regime['emoji']} 大盤風險：{regime['label']}")
+    if indices:
+        idx_str = "　".join(f"{n} {c:+.2%}" for n, (p, c) in indices.items())
+        lines.append(f"📈 {idx_str}")
+    lines.append("")
+
+    # AI 解讀（可選；force=手動 /briefing 即使關閉也產生）
+    if force or state["thresholds"].get("briefing_enabled", True):
+        ctx = [f"日期：{date_str}"]
+        if regime:
+            ctx.append(f"大盤風險：{regime['label']}")
+        if indices:
+            ctx.append("指數：" + ", ".join(f"{n} {c:+.2%}" for n, (p, c) in indices.items()))
+        if top:
+            ctx.append("觀察清單最強：" + ", ".join(
+                f"{r['ticker']}({r['score']:+.2f})" for r in top))
+        if bottom:
+            ctx.append("最弱：" + ", ".join(
+                f"{r['ticker']}({r['score']:+.2f})" for r in bottom))
+        if flagged:
+            ctx.append("觸發訊號：" + ", ".join(
+                f"{r['ticker']}" for r in flagged[:8]))
+        prompt = (
+            "你是專業晨間市場分析師。僅根據以下數據，用繁體中文寫一段 100-150 字的"
+            "開盤前晨報，點出今天該留意什麼、整體情緒、風險。不得編造未提供的事實。\n\n"
+            + "\n".join(ctx)
+        )
+        ai = _llm_complete(prompt)
+        if ai:
+            lines.append(ai.strip())
+            lines.append("")
+
+    # 排名（純數據，永遠附上）
+    if top:
+        lines.append("🏆 *觀察清單最強 Top 5*")
+        for r in top:
+            lines.append(f"   {r.get('emoji','')} {r['ticker']}  {r['score']:+.2f} ({r.get('rating','')})")
+        lines.append("")
+    if bottom:
+        lines.append("⚠️ *最弱*")
+        for r in reversed(bottom):
+            lines.append(f"   {r.get('emoji','')} {r['ticker']}  {r['score']:+.2f} ({r.get('rating','')})")
+        lines.append("")
+    if flagged:
+        lines.append(f"🚨 今日 {len(flagged)} 檔觸發訊號（詳見後續掃描）")
+
+    if not state["watchlist"]:
+        lines.append("_觀察清單為空，用 /add 新增標的_")
+    lines.append("_每日晨報 · /set briefing_enabled off 可關閉_")
+    return "\n".join(lines)
+
+
+def _should_send_briefing(state: dict) -> bool:
+    """判斷現在是否該發晨報：啟用 + 交易日 + 過了設定時間 + 今天還沒發 + 未靜音。"""
+    th = state["thresholds"]
+    if not th.get("briefing_enabled", True):
+        return False
+    if _is_muted(state):
+        return False
+    ms = market_status()
+    # 週末/假日不發（market_status 的 reason 會標明；用 open 與 reason 判斷）
+    now_et = datetime.now(ET)
+    if now_et.weekday() >= 5:
+        return False
+    if "假日" in ms.get("reason", ""):
+        return False
+    # 過了設定時間（ET 小數時）
+    now_dec = now_et.hour + now_et.minute / 60
+    if now_dec < float(th.get("briefing_hour_et", 8.5)):
+        return False
+    # 今天還沒發
+    today_et = now_et.strftime("%Y-%m-%d")
+    if state.get("last_briefing_date") == today_et:
+        return False
+    return True
+
+
 # ── Message builder ──────────────────────────────────────────────────────────
 
 def _build_message(results: list[dict], timestamp: str,
@@ -1201,9 +1412,11 @@ def _build_message(results: list[dict], timestamp: str,
         arrow = "🟢" if r["chg"] > 0 else ("🔴" if r["chg"] < 0 else "⚪")
         score = r.get("score", 0)
         rating = r.get("rating", "")
+        mtf = r.get("mtf_note")
+        mtf_str = f"  {mtf}" if mtf else ""
         lines.append(
             f"{arrow} *{r['ticker']}* ${r['price']}  ({r['chg']:+.1f}%)  "
-            f"RSI={r['rsi']}\n   📊 評分 *{score:+.2f}* ({rating})"
+            f"RSI={r['rsi']}\n   📊 評分 *{score:+.2f}* ({rating}){mtf_str}"
         )
         for s in r.get("signals", []):
             lines.append(f"   ↳ {s}")
@@ -1332,6 +1545,16 @@ def main() -> int:
     thresholds = state["thresholds"]
     ms = market_status()
     print(f"Market status: {ms['reason']}")
+
+    # Step 1.5: Daily AI briefing（盤前獨立推送，不受開盤掃描限制）
+    if _should_send_briefing(state):
+        print("── Sending daily briefing ──")
+        bmsg = daily_briefing(state)
+        if bmsg and TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
+            _tg_send(TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, bmsg)
+            print("Daily briefing sent.")
+        state["last_briefing_date"] = datetime.now(ET).strftime("%Y-%m-%d")
+        save_state(state)
 
     # Step 2: Check mute & market hours
     if _is_muted(state):

@@ -96,6 +96,16 @@ def main() -> int:
             if changed:
                 ss.save_state(state)
 
+            # 1.5 每日晨報（盤前獨立推送）
+            if ss._should_send_briefing(state):
+                from datetime import datetime as _dt
+                print("發送每日晨報…")
+                bmsg = ss.daily_briefing(state)
+                if bmsg:
+                    ss._tg_send(TOKEN, CHAT_ID, bmsg)
+                state["last_briefing_date"] = _dt.now(ss.ET).strftime("%Y-%m-%d")
+                ss.save_state(state)
+
             # 2. 定時自動掃描
             nowt = time.monotonic()
             if nowt - last_scan >= SCAN_INTERVAL:
