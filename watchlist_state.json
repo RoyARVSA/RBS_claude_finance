@@ -34,9 +34,12 @@
     "position_sizing_enabled": true,
     "account_size": 100000.0,
     "risk_pct": 0.01,
-    "atr_mult": 1.5
+    "atr_mult": 1.5,
+    "briefing_enabled": true,
+    "briefing_hour_et": 8.5,
+    "mtf_enabled": true
   },
-  "last_update_id": 280895069,
+  "last_update_id": 280895070,
   "last_scan_time": "2026-06-29 18:29 UTC",
   "signal_history": {
     "AAPL": {
