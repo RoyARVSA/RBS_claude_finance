@@ -24,6 +24,7 @@ Telegram 指令（傳給 Bot）：
   /risk [帳戶 風險%]       – 設定/查看部位風險（訊號附建議部位股數）
   /fundamentals TICKER    – 查公司基本面摘要（健康評分/ROE/估值，快取一天）（別名 /f）
   /briefing               – 立即生成每日 AI 晨報（每交易日 ET 08:30 自動推送）
+  /set mtf_enabled on/off – 週線同向確認（日線分數與週線同向加強、背離減弱）
   /scan                   – 立即掃描（忽略靜音與市場狀態）
   /clear                  – 清空觀察清單
   /help                   – 顯示此說明
@@ -80,6 +81,8 @@ DEFAULT_THRESHOLDS = {
     # ── Daily briefing ──
     "briefing_enabled":   True,       # 每日 AI 晨報
     "briefing_hour_et":   8.5,        # 觸發時間（ET 小數時，8.5 = 08:30）
+    # ── Multi-timeframe ──
+    "mtf_enabled":        True,       # 週線同向確認（軟性調整評分）
 }
 
 ET = ZoneInfo("America/New_York")
@@ -224,6 +227,7 @@ def _cmd_help() -> str:
         "`/set macd on|off` — MACD 訊號\n"
         "`/set bb on|off` — 布林通道訊號\n"
         "`/set atr on|off` — ATR 進出場提示\n"
+        "`/set mtf_enabled on|off` — 週線同向確認\n"
         "`/set vol_spike_ratio 2.0` — 爆量倍數\n"
         "`/set scan_market_only on|off` — 只在開盤時掃描\n\n"
         "🔕 *靜音控制*\n"
@@ -513,7 +517,7 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
             th = state["thresholds"]
             bool_keys = {"macd_enabled", "bb_enabled", "atr_enabled", "scan_market_only",
                          "cooldown_enabled", "regime_filter_enabled",
-                         "position_sizing_enabled", "briefing_enabled"}
+                         "position_sizing_enabled", "briefing_enabled", "mtf_enabled"}
             float_keys = {"rsi_oversold", "rsi_overbought", "price_change_pct",
                           "vol_spike_ratio", "cooldown_hours",
                           "account_size", "risk_pct", "atr_mult", "briefing_hour_et"}
@@ -753,9 +757,33 @@ def _ma_trend(close: pd.Series) -> dict:
 
 # ── Composite scoring ─────────────────────────────────────────────────────────
 
+def _weekly_trend(close: pd.Series) -> int:
+    """
+    把日線 resample 成週線，回傳週線偏向 -2~+2：
+      週價 > 週MA10 +1 / 否則 -1；週MACD histogram > 0 +1 / 否則 -1。
+    資料不足或非時間索引回 0（中性，不影響）。
+    """
+    if not isinstance(close.index, pd.DatetimeIndex):
+        return 0
+    try:
+        wk = close.resample("W").last().dropna()
+        if len(wk) < 12:
+            return 0
+        price = float(wk.iloc[-1])
+        ma10 = float(wk.rolling(10).mean().iloc[-1])
+        ema12 = wk.ewm(span=12, adjust=False).mean()
+        ema26 = wk.ewm(span=26, adjust=False).mean()
+        macd_line = ema12 - ema26
+        hist = float((macd_line - macd_line.ewm(span=9, adjust=False).mean()).iloc[-1])
+        bias = (1 if price > ma10 else -1) + (1 if hist > 0 else -1)
+        return bias
+    except Exception:
+        return 0
+
+
 def _composite_score(close: pd.Series, high: pd.Series | None,
                      low: pd.Series | None, volume: pd.Series | None,
-                     edge_weights: dict | None = None) -> dict:
+                     edge_weights: dict | None = None, mtf: bool = False) -> dict:
     """
     Blend every indicator into a single -1 (極空) .. +1 (極多) score.
     Returns {"score", "rating", "emoji", "components"}.
@@ -851,6 +879,20 @@ def _composite_score(close: pd.Series, high: pd.Series | None,
                 score *= (1 + amp)
     score = max(-1.0, min(1.0, score))
 
+    # ── 多時間框架確認（軟性調整：日線分數 vs 週線偏向）────────────
+    mtf_note = None
+    if mtf:
+        wt = _weekly_trend(close)            # -2~+2
+        if score > 0.1 and wt >= 1:
+            score *= 1.1; mtf_note = "✅ 週線同向"
+        elif score < -0.1 and wt <= -1:
+            score *= 1.1; mtf_note = "✅ 週線同向(偏空)"
+        elif score > 0.1 and wt <= -1:
+            score *= 0.8; mtf_note = "⚠️ 週線背離"
+        elif score < -0.1 and wt >= 1:
+            score *= 0.8; mtf_note = "⚠️ 週線背離"
+        score = max(-1.0, min(1.0, score))
+
     # ── 評級 ─────────────────────────────────────────────────────
     if score >= 0.5:
         rating, emoji = "強力買進", "🟢🟢"
@@ -863,7 +905,8 @@ def _composite_score(close: pd.Series, high: pd.Series | None,
     else:
         rating, emoji = "強力賣出", "🔴🔴"
 
-    return {"score": round(score, 3), "rating": rating, "emoji": emoji, "components": comps}
+    return {"score": round(score, 3), "rating": rating, "emoji": emoji,
+            "components": comps, "mtf_note": mtf_note}
 
 
 # ── 回測校準：把歷史勝率回饋成元件權重 ────────────────────────────────────────
@@ -994,10 +1037,12 @@ def scan(tickers: list[str], thresholds: dict, calibration: dict | None = None) 
     bb_on   = thresholds.get("bb_enabled",    True)
     atr_on  = thresholds.get("atr_enabled",   True)
     vol_r   = thresholds.get("vol_spike_ratio", 2.0)
+    mtf_on  = thresholds.get("mtf_enabled",   True)
 
-    print(f"Batch-downloading {len(tickers)} tickers (6mo)…")
+    # 1y：週線指標（MACD 26週）需足夠歷史
+    print(f"Batch-downloading {len(tickers)} tickers (1y)…")
     try:
-        raw = yf.download(tickers, period="6mo", auto_adjust=True,
+        raw = yf.download(tickers, period="1y", auto_adjust=True,
                           progress=False, threads=True)
     except Exception as e:
         print(f"Batch download failed: {e}")
@@ -1073,9 +1118,10 @@ def scan(tickers: list[str], thresholds: dict, calibration: dict | None = None) 
                 if vs["signal"] == "vol_spike":
                     signals.append(vs.get("label", ""))
 
-            # ── Composite score (always computed; calibration-weighted) ──
+            # ── Composite score (calibration-weighted + MTF 確認) ──
             edge_w = (calibration or {}).get(ticker)
-            cs = _composite_score(close, high, low, volume, edge_weights=edge_w)
+            cs = _composite_score(close, high, low, volume,
+                                  edge_weights=edge_w, mtf=mtf_on)
 
             # ── Position sizing hint (ATR risk-based) ─────────────
             pos = None
@@ -1090,6 +1136,7 @@ def scan(tickers: list[str], thresholds: dict, calibration: dict | None = None) 
                 "score":   cs["score"],
                 "rating":  cs["rating"],
                 "emoji":   cs["emoji"],
+                "mtf_note": cs.get("mtf_note"),
                 "position": pos,
                 "signals": [s for s in signals if s],
             })
@@ -1365,9 +1412,11 @@ def _build_message(results: list[dict], timestamp: str,
         arrow = "🟢" if r["chg"] > 0 else ("🔴" if r["chg"] < 0 else "⚪")
         score = r.get("score", 0)
         rating = r.get("rating", "")
+        mtf = r.get("mtf_note")
+        mtf_str = f"  {mtf}" if mtf else ""
         lines.append(
             f"{arrow} *{r['ticker']}* ${r['price']}  ({r['chg']:+.1f}%)  "
-            f"RSI={r['rsi']}\n   📊 評分 *{score:+.2f}* ({rating})"
+            f"RSI={r['rsi']}\n   📊 評分 *{score:+.2f}* ({rating}){mtf_str}"
         )
         for s in r.get("signals", []):
             lines.append(f"   ↳ {s}")
