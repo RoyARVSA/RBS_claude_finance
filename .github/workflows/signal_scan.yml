@@ -54,6 +54,11 @@ jobs:
           LLM_API_KEY:  ${{ secrets.LLM_API_KEY }}
           LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
           LLM_MODEL:    ${{ secrets.LLM_MODEL }}
+          # 每日晨報用的 FRED 總經（可選）
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+          # Alpaca 模擬交易（可選；未設則自動交易不執行）
+          ALPACA_KEY_ID:     ${{ secrets.ALPACA_KEY_ID }}
+          ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
         run: python scan_signals.py
 
       - name: Commit updated watchlist state

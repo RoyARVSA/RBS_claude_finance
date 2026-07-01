@@ -60,12 +60,17 @@ def _auto_scan(state: dict) -> None:
     print(f"[{now}] 執行自動掃描 {len(state['watchlist'])} 支…")
     # 與 main() 共用的掃描+防護流程（校準/大盤濾網/冷卻去重）
     msg, results = ss.scan_and_report(state, now)
-    ss.save_state(state)
     if msg and TOKEN and CHAT_ID:
         ss._tg_send(TOKEN, CHAT_ID, msg)
         print(f"[{now}] 已推送訊號通知")
     else:
         print(f"[{now}] 無訊號觸發（或全在冷卻中）")
+
+    # 自動交易（Alpaca 模擬；預設關閉）
+    at_msg = ss.run_autotrade(state, results)
+    if at_msg and TOKEN and CHAT_ID:
+        ss._tg_send(TOKEN, CHAT_ID, at_msg)
+    ss.save_state(state)
 
 
 def main() -> int:

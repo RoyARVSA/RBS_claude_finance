@@ -52,6 +52,7 @@ def decide_orders(scored: list[dict], positions: dict, equity: float,
     max_pct  = float(cfg["max_position_pct"])
     risk_pct = float(cfg["risk_pct"])
 
+    equity = float(equity)                    # 防呆：Alpaca JSON 可能是字串
     score_map = {s["ticker"]: s for s in scored}
     held = set(positions.keys())
     orders: list[dict] = []
@@ -59,12 +60,14 @@ def decide_orders(scored: list[dict], positions: dict, equity: float,
     # 1) 出場：持倉評分 ≤ 出場門檻 → 平倉
     for sym, pos in positions.items():
         s = score_map.get(sym)
-        if s is not None and float(s.get("score", 0)) <= exit_th:
-            qty = abs(float(pos.get("qty", 0)))
-            if qty > 0:
-                orders.append({"symbol": sym, "side": "sell", "qty": qty,
-                               "reason": f"評分 {s['score']:+.2f} ≤ 出場門檻 {exit_th}"})
-                held.discard(sym)   # 釋出一個名額
+        if s is not None:
+            sc = float(s.get("score", 0))
+            if sc <= exit_th:
+                qty = abs(float(pos.get("qty", 0)))
+                if qty > 0:
+                    orders.append({"symbol": sym, "side": "sell", "qty": qty,
+                                   "reason": f"評分 {sc:+.2f} ≤ 出場門檻 {exit_th}"})
+                    held.discard(sym)   # 釋出一個名額
 
     # 2) 進場：評分 ≥ 買進門檻且未持倉，依分數高→低分配
     slots = max_pos - len(held)
@@ -89,7 +92,7 @@ def decide_orders(scored: list[dict], positions: dict, equity: float,
             qty = int(min(qty_risk, qty_cap, qty_bp))
             if qty >= 1:
                 orders.append({"symbol": s["ticker"], "side": "buy", "qty": qty,
-                               "reason": f"評分 {s['score']:+.2f} ≥ 買進門檻 {buy_th}"})
+                               "reason": f"評分 {float(s['score']):+.2f} ≥ 買進門檻 {buy_th}"})
                 bp -= qty * price
                 slots -= 1
     return orders
