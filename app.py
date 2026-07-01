@@ -194,6 +194,10 @@ def section(title: str):
     st.markdown(f'<div class="section-header">{title}</div>', unsafe_allow_html=True)
 
 
+# pandas 3.0 移除了 "M"/"H"/"Q"/"Y" 舊別名；resample 時轉成新別名
+_RESAMPLE_ALIAS = {"M": "ME", "W": "W", "D": "D", "Q": "QE", "Y": "YE", "H": "h"}
+
+
 def _annualization(index: pd.DatetimeIndex, freq: str | None) -> int:
     if freq == "M":
         return 12
@@ -384,7 +388,7 @@ def page_portfolio_performance():
             if isinstance(data, pd.Series):
                 data = data.to_frame()
             if freq in ["W", "M"]:
-                data = data.resample(freq).last()
+                data = data.resample(_RESAMPLE_ALIAS[freq]).last()
             fx = data[fx_pair].dropna() if fx_pair in data.columns else pd.Series(index=data.index, data=30.0)
             bench_px = data[benchmark].dropna()
             prices = data[tickers].dropna(how="all")
@@ -406,7 +410,7 @@ def page_portfolio_performance():
         try:
             rf_raw = yf.download("^IRX", start=pd.to_datetime(start), progress=False)["Close"].ffill()
             if freq in ["W", "M"]:
-                rf_raw = rf_raw.resample(freq).last()
+                rf_raw = rf_raw.resample(_RESAMPLE_ALIAS[freq]).last()
             rf = (1 + rf_raw / 100) ** (1 / ppy) - 1
         except Exception:
             rf = pd.Series(index=port_ret.index, data=(1 + 0.05) ** (1 / ppy) - 1)
