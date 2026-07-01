@@ -37,10 +37,16 @@
     "atr_mult": 1.5,
     "briefing_enabled": true,
     "briefing_hour_et": 8.5,
-    "mtf_enabled": true
+    "mtf_enabled": true,
+    "earnings_alert_days": 5.0,
+    "autotrade_enabled": false,
+    "at_buy_threshold": 0.5,
+    "at_exit_threshold": -0.2,
+    "at_max_positions": 10.0,
+    "at_max_position_pct": 0.15
   },
   "last_update_id": 280895070,
-  "last_scan_time": "2026-07-01 16:58 UTC",
+  "last_scan_time": "2026-07-01 19:00 UTC",
   "signal_history": {
     "AAPL": {
       "macd": "2026-06-29T16:28:52.722604+00:00",
