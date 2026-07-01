@@ -23,6 +23,9 @@ Telegram 指令（傳給 Bot）：
   /protections            – 查看防護機制（訊號冷卻 / 大盤風險濾網）狀態
   /risk [帳戶 風險%]       – 設定/查看部位風險（訊號附建議部位股數）
   /fundamentals TICKER    – 查公司基本面摘要（健康評分/ROE/估值，快取一天）（別名 /f）
+  /earnings [天數]        – 觀察清單近期財報日（晨報也會自動提醒 N 天內財報）
+  /autotrade on|off       – Alpaca 模擬自動交易總開關（預設關）
+  /positions /pnl /closeall – 模擬持倉 / 帳戶報酬 / 一鍵平倉
   /briefing               – 立即生成每日 AI 晨報（每交易日 ET 08:30 自動推送）
   /set mtf_enabled on/off – 週線同向確認（日線分數與週線同向加強、背離減弱）
   /scan                   – 立即掃描（忽略靜音與市場狀態）
@@ -83,6 +86,14 @@ DEFAULT_THRESHOLDS = {
     "briefing_hour_et":   8.5,        # 觸發時間（ET 小數時，8.5 = 08:30）
     # ── Multi-timeframe ──
     "mtf_enabled":        True,       # 週線同向確認（軟性調整評分）
+    # ── Earnings ──
+    "earnings_alert_days": 5.0,       # 財報前 N 天提醒（晨報 + /earnings）
+    # ── Alpaca paper trading（預設關閉，須 /autotrade on）──
+    "autotrade_enabled":  False,      # 自動下模擬單總開關
+    "at_buy_threshold":   0.5,        # 評分 ≥ 此值 → 開多
+    "at_exit_threshold": -0.2,        # 評分 ≤ 此值 → 平倉
+    "at_max_positions":   10.0,       # 最多持倉檔數
+    "at_max_position_pct": 0.15,      # 每檔最多佔淨值
 }
 
 ET = ZoneInfo("America/New_York")
@@ -247,7 +258,13 @@ def _cmd_help() -> str:
         "`/top 5` — 今日漲跌幅前 5 名\n"
         "`/rank` — 綜合評分排名（-1~+1）\n"
         "`/fundamentals AAPL`（或 `/f`）— 公司基本面摘要\n"
-        "`/briefing` — 立即生成每日晨報\n"
+        "`/earnings [天數]` — 觀察清單近期財報日\n"
+        "`/briefing` — 立即生成每日晨報\n\n"
+        "🤖 *模擬交易（Alpaca paper）*\n"
+        "`/autotrade on|off` — 自動下模擬單（預設關）\n"
+        "`/positions` — 目前持倉 + 損益\n"
+        "`/pnl` — 帳戶淨值 + 報酬\n"
+        "`/closeall` — 一鍵平倉\n"
         "`/scan` — 立即掃描（忽略靜音/冷卻）\n"
         "`/calibrate` — 回測校準訊號權重（自我優化）\n\n"
         "☀️ *晨報*：每交易日 ET 08:30 自動推送\n"
@@ -396,6 +413,58 @@ def _cmd_fundamentals(state: dict, ticker: str) -> str:
     return text
 
 
+def _cmd_positions() -> str:
+    """Alpaca 目前持倉 + 未實現損益。"""
+    key, secret = _alpaca_keys()
+    if not key or not secret:
+        return "⚠️ 未設定 Alpaca key（ALPACA_KEY_ID / ALPACA_SECRET_KEY）"
+    try:
+        import alpaca_trader as at
+    except Exception:
+        return "❌ 找不到 alpaca_trader.py"
+    pos = at.get_positions(key, secret)
+    if not pos:
+        return "📭 目前無持倉"
+    lines = ["📊 *模擬持倉*\n"]
+    total_pl = 0.0
+    for sym, p in pos.items():
+        pl = p.get("unrealized_pl") or 0
+        plpc = p.get("unrealized_plpc")
+        total_pl += pl
+        icon = "🟢" if pl >= 0 else "🔴"
+        pct = f"（{plpc*100:+.1f}%）" if plpc is not None else ""
+        qty = p.get("qty") or 0
+        lines.append(f"{icon} *{sym}* x{qty:g}　損益 {pl:+.2f}{pct}")
+    lines.append(f"\n未實現損益合計：*{total_pl:+.2f}*")
+    return "\n".join(lines)
+
+
+def _cmd_pnl() -> str:
+    """Alpaca 帳戶淨值與報酬。"""
+    key, secret = _alpaca_keys()
+    if not key or not secret:
+        return "⚠️ 未設定 Alpaca key"
+    try:
+        import alpaca_trader as at
+    except Exception:
+        return "❌ 找不到 alpaca_trader.py"
+    acc = at.get_account(key, secret)
+    if not acc:
+        return "❌ 帳戶讀取失敗（確認 key 與網路）"
+    r = at.account_return(acc)
+    cash = at._f(acc.get("cash"))
+    lines = ["💰 *模擬帳戶*\n"]
+    if r["equity"] is not None:
+        lines.append(f"淨值：${r['equity']:,.2f}")
+    if r["day_change"] is not None:
+        icon = "🟢" if r["day_change"] >= 0 else "🔴"
+        pct = f"（{r['day_pct']*100:+.2f}%）" if r["day_pct"] is not None else ""
+        lines.append(f"{icon} 今日：{r['day_change']:+,.2f}{pct}")
+    if cash is not None:
+        lines.append(f"現金：${cash:,.2f}")
+    return "\n".join(lines)
+
+
 def _cmd_rank(state: dict) -> str:
     """Run a full composite-score scan and return the ranked board."""
     tickers = state["watchlist"]
@@ -517,10 +586,13 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
             th = state["thresholds"]
             bool_keys = {"macd_enabled", "bb_enabled", "atr_enabled", "scan_market_only",
                          "cooldown_enabled", "regime_filter_enabled",
-                         "position_sizing_enabled", "briefing_enabled", "mtf_enabled"}
+                         "position_sizing_enabled", "briefing_enabled", "mtf_enabled",
+                         "autotrade_enabled"}
             float_keys = {"rsi_oversold", "rsi_overbought", "price_change_pct",
                           "vol_spike_ratio", "cooldown_hours",
-                          "account_size", "risk_pct", "atr_mult", "briefing_hour_et"}
+                          "account_size", "risk_pct", "atr_mult", "briefing_hour_et",
+                          "earnings_alert_days", "at_buy_threshold", "at_exit_threshold",
+                          "at_max_positions", "at_max_position_pct"}
             if key in bool_keys:
                 th[key] = val in ("on", "true", "1", "yes")
                 changed = True
@@ -614,6 +686,58 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
             reply = "☀️ 生成晨報中，約需 20-40 秒…"
             _tg_send(token, src_chat or chat_id, reply)
             reply = daily_briefing(state, force=True) or "晨報生成失敗"
+
+        elif cmd == "/earnings":
+            days = int(args[0]) if args and args[0].isdigit() else 14
+            reply = "📅 查詢近期財報中…"
+            _tg_send(token, src_chat or chat_id, reply)
+            earn = _upcoming_earnings(state, max_days=days)
+            changed = True   # 更新快取
+            if earn:
+                lines = [f"📅 *{days} 天內財報*\n"]
+                for tk, ed, d in earn:
+                    when = "今天" if d == 0 else ("明天" if d == 1 else f"{d} 天後")
+                    lines.append(f"• *{tk}* — {ed.isoformat()}（{when}）")
+                reply = "\n".join(lines)
+            else:
+                reply = f"📅 觀察清單 {days} 天內無財報公布"
+
+        elif cmd == "/positions":
+            reply = "📊 查詢持倉中…"
+            _tg_send(token, src_chat or chat_id, reply)
+            reply = _cmd_positions()
+
+        elif cmd == "/pnl":
+            reply = _cmd_pnl()
+
+        elif cmd == "/autotrade":
+            th = state["thresholds"]
+            if args and args[0].lower() in ("on", "off"):
+                th["autotrade_enabled"] = (args[0].lower() == "on")
+                changed = True
+            on = th.get("autotrade_enabled", False)
+            key, secret = _alpaca_keys()
+            key_ok = "✅" if (key and secret) else "❌ 未設 key"
+            reply = (
+                f"🤖 *自動交易*：{'✅ 開啟' if on else '⏸ 關閉'}\n"
+                f"Alpaca key：{key_ok}\n"
+                f"買進門檻 ≥{th.get('at_buy_threshold',0.5)}　出場 ≤{th.get('at_exit_threshold',-0.2)}\n"
+                f"最多 {int(th.get('at_max_positions',10))} 檔，每檔 ≤{th.get('at_max_position_pct',0.15):.0%}\n\n"
+                "⚠️ 開啟後僅在美股開盤時，依掃描評分自動下*模擬*單\n"
+                "`/autotrade on`｜`/autotrade off`｜`/positions`｜`/pnl`｜`/closeall`"
+            )
+
+        elif cmd == "/closeall":
+            key, secret = _alpaca_keys()
+            if not key or not secret:
+                reply = "⚠️ 未設定 Alpaca key"
+            else:
+                try:
+                    import alpaca_trader as at
+                    ok, msg = at.close_all(key, secret)
+                    reply = "✅ 已送出全部平倉" if ok else f"❌ 平倉失敗：{msg}"
+                except Exception as e:
+                    reply = f"❌ {e}"
 
         else:
             reply = f"❓ 未知指令：{cmd}\n輸入 /help 查看說明"
@@ -1299,6 +1423,42 @@ def _index_snapshot() -> dict:
     return out
 
 
+def _upcoming_earnings(state: dict, max_days: int | None = None) -> list:
+    """
+    回傳 watchlist 中 max_days 天內要公布財報的標的：[(ticker, date, days_until), ...]。
+    每日快取（earnings_cache）避免重複慢呼叫。就地更新 state。
+    """
+    import datetime as _dt
+    if max_days is None:
+        max_days = int(state["thresholds"].get("earnings_alert_days", 5))
+    today = _dt.date.today()
+    today_s = today.isoformat()
+    cache = state.setdefault("earnings_cache", {})
+    try:
+        import fundamentals as fa
+    except Exception:
+        return []
+    out = []
+    for tk in state.get("watchlist", []):
+        c = cache.get(tk)
+        if c and c.get("checked") == today_s:
+            ed_s = c.get("earnings")
+        else:
+            ed = fa.next_earnings_date(tk)
+            ed_s = ed.isoformat() if ed else None
+            cache[tk] = {"checked": today_s, "earnings": ed_s}
+        if ed_s:
+            try:
+                ed = _dt.date.fromisoformat(ed_s)
+                days = (ed - today).days
+                if 0 <= days <= max_days:
+                    out.append((tk, ed, days))
+            except Exception:
+                continue
+    out.sort(key=lambda x: x[2])
+    return out
+
+
 def daily_briefing(state: dict, force: bool = False) -> str | None:
     """組裝每日晨報（大盤 + 指數 + 觀察清單排名 + 訊號 + AI 解讀）。"""
     now_et = datetime.now(ET)
@@ -1361,6 +1521,18 @@ def daily_briefing(state: dict, force: bool = False) -> str | None:
         lines.append("")
     if flagged:
         lines.append(f"🚨 今日 {len(flagged)} 檔觸發訊號（詳見後續掃描）")
+
+    # 近期財報提醒
+    try:
+        earn = _upcoming_earnings(state)
+        if earn:
+            lines.append("")
+            lines.append("📅 *近期財報*")
+            for tk, ed, days in earn:
+                when = "今天" if days == 0 else ("明天" if days == 1 else f"{days} 天後")
+                lines.append(f"   • {tk} — {ed.isoformat()}（{when}）")
+    except Exception:
+        pass
 
     if not state["watchlist"]:
         lines.append("_觀察清單為空，用 /add 新增標的_")
@@ -1520,6 +1692,71 @@ def scan_and_report(state: dict, timestamp: str) -> tuple[str | None, list[dict]
     return message, results
 
 
+# ── Alpaca 自動交易 ───────────────────────────────────────────────────────────
+
+def _alpaca_keys() -> tuple[str, str]:
+    return os.environ.get("ALPACA_KEY_ID", ""), os.environ.get("ALPACA_SECRET_KEY", "")
+
+
+def run_autotrade(state: dict, results: list[dict]) -> str | None:
+    """
+    依掃描評分自動下模擬單（僅在 autotrade 開啟 + 有 key + 市場開盤時）。
+    回傳執行摘要字串或 None。安全預設：autotrade_enabled 預設 False。
+    """
+    th = state["thresholds"]
+    if not th.get("autotrade_enabled", False):
+        return None
+    key, secret = _alpaca_keys()
+    if not key or not secret:
+        print("Autotrade: 未設定 Alpaca key，跳過")
+        return None
+    if not market_status().get("open", False):
+        print("Autotrade: 市場未開盤，跳過")
+        return None
+    try:
+        import alpaca_trader as at
+    except Exception as e:
+        print(f"Autotrade: alpaca_trader 不可用 {e}")
+        return None
+
+    account = at.get_account(key, secret)
+    if not account:
+        print("Autotrade: 帳戶讀取失敗")
+        return None
+    positions = at.get_positions(key, secret)
+    equity = at._f(account.get("equity")) or 0.0
+    bp = at._f(account.get("buying_power")) or 0.0
+
+    scored = []
+    for r in results:
+        pos = r.get("position") or {}
+        price = r.get("price")
+        rps = (price - pos["stop"]) if (pos.get("stop") and price) else None
+        scored.append({"ticker": r["ticker"], "score": r.get("score", 0),
+                       "price": price, "risk_per_share": rps})
+
+    config = {
+        "buy_threshold":    th.get("at_buy_threshold", 0.5),
+        "exit_threshold":   th.get("at_exit_threshold", -0.2),
+        "max_positions":    int(th.get("at_max_positions", 10)),
+        "max_position_pct": th.get("at_max_position_pct", 0.15),
+        "risk_pct":         th.get("risk_pct", 0.01),
+    }
+    orders = at.decide_orders(scored, positions, equity, bp, config)
+    if not orders:
+        print("Autotrade: 無符合下單條件")
+        return None
+
+    lines = ["🤖 *自動交易執行*（Alpaca 模擬）"]
+    for o in orders:
+        ok, msg = at.submit_order(key, secret, o["symbol"], o["qty"], o["side"])
+        icon = "✅" if ok else "❌"
+        tail = "" if ok else f"（{msg}）"
+        lines.append(f"{icon} {o['side'].upper()} {o['symbol']} x{int(o['qty'])} — {o['reason']}{tail}")
+    print(f"Autotrade: 送出 {len(orders)} 筆")
+    return "\n".join(lines)
+
+
 # ── Entrypoint ───────────────────────────────────────────────────────────────
 
 def main() -> int:
@@ -1588,6 +1825,11 @@ def main() -> int:
         if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
             ok = _tg_send(TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, message)
             print("Telegram sent." if ok else "Telegram send failed.")
+
+    # Step 4.5: Auto-trade (Alpaca paper; gated by autotrade_enabled + keys + open)
+    at_msg = run_autotrade(state, results)
+    if at_msg and TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
+        _tg_send(TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, at_msg)
 
     # Step 5: Save state
     save_state(state)

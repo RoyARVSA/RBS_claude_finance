@@ -16,3 +16,13 @@ streamlit.log
 # OS
 .DS_Store
 Thumbs.db
+
+# Secrets / local config — NEVER commit (public repo)
+.env
+*.env
+.env.*
+.streamlit/secrets.toml
+secrets.toml
+alerts_config.json          # 警報頁可能存 Telegram token / Email 密碼
+*.pem
+*.key

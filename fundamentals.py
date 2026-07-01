@@ -22,6 +22,39 @@ import pandas as pd
 
 # ── 純邏輯工具（可離線單元測試）────────────────────────────────────────────────
 
+def _earliest_future_date(dates, today):
+    """
+    從一堆日期中挑出「今天(含)之後最早的一個」，回 datetime.date 或 None。
+    dates 可為 list / 單一值 / None；元素可為 date / datetime / pd.Timestamp / str。
+    純邏輯，可離線測試。
+    """
+    import datetime as _dt
+    if dates is None:
+        return None
+    if not isinstance(dates, (list, tuple, set)):
+        dates = [dates]
+    out = []
+    for d in dates:
+        if d is None:
+            continue
+        try:
+            if isinstance(d, pd.Timestamp):
+                d = d.date()
+            elif isinstance(d, _dt.datetime):
+                d = d.date()
+            elif isinstance(d, str):
+                d = pd.to_datetime(d).date()
+            elif isinstance(d, _dt.date):
+                pass
+            else:
+                d = pd.to_datetime(d).date()
+            out.append(d)
+        except Exception:
+            continue
+    future = [d for d in out if d >= today]
+    return min(future) if future else None
+
+
 def _num(x):
     """安全轉 float，無效值回 None。"""
     try:
@@ -352,6 +385,49 @@ def fetch_fundamentals(ticker: str) -> dict:
     except Exception as e:
         out["error"] = str(e)
         return out
+
+
+def next_earnings_date(ticker: str):
+    """
+    取得下一次財報日（datetime.date）或 None。
+    先試 .calendar（快），再退回 .get_earnings_dates()。容錯不拋例外。
+    """
+    import datetime as _dt
+    try:
+        import yfinance as yf
+    except Exception:
+        return None
+    today = _dt.date.today()
+    try:
+        tk = yf.Ticker(ticker)
+        # 1) calendar：新版回 dict，舊版回 DataFrame
+        try:
+            cal = tk.calendar
+            ed = None
+            if isinstance(cal, dict):
+                ed = cal.get("Earnings Date")
+            elif isinstance(cal, pd.DataFrame) and not cal.empty:
+                for key in ("Earnings Date", "Earnings Date High", "Earnings Date Low"):
+                    if key in cal.index:
+                        ed = cal.loc[key].tolist(); break
+            cand = _earliest_future_date(ed, today)
+            if cand:
+                return cand
+        except Exception:
+            pass
+        # 2) get_earnings_dates：DataFrame，index 為財報時間
+        try:
+            df = tk.get_earnings_dates(limit=16)
+            if isinstance(df, pd.DataFrame) and not df.empty:
+                dates = [ts.date() if hasattr(ts, "date") else ts for ts in df.index]
+                cand = _earliest_future_date(dates, today)
+                if cand:
+                    return cand
+        except Exception:
+            pass
+    except Exception:
+        pass
+    return None
 
 
 # ── CLI 自我測試（純邏輯，不需網路）────────────────────────────────────────────

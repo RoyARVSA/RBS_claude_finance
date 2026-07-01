@@ -228,6 +228,7 @@ with st.sidebar:
             "🏢 公司分析",
             "🚨 即時警報",
             "🛠️ 交易工具",
+            "📉 模擬交易",
             "🏦 機構選股",
             "📰 新聞情報",
             "💳 信用模型",
@@ -1882,6 +1883,53 @@ def page_market_overview():
                 )
                 st.plotly_chart(fig, use_container_width=True)
 
+    # ── Macro (FRED) ───────────────────────────────────────────────
+    section("總經指標（FRED）")
+    import os as _os
+    fred_key = _os.environ.get("FRED_API_KEY", "")
+    try:
+        fred_key = fred_key or st.secrets.get("FRED_API_KEY", "")
+    except Exception:
+        pass
+    if not fred_key:
+        fred_key = st.text_input(
+            "FRED API Key（免費申請 fred.stlouisfed.org，或設 Secret FRED_API_KEY）",
+            type="password", key="fred_key", placeholder="填入後顯示總經數據",
+        )
+    st.session_state["macro_data"] = {}
+    if fred_key:
+        try:
+            import macro as _macro
+            with st.spinner("載入總經數據…"):
+                md = _macro.fetch_macro(fred_key)
+            st.session_state["macro_data"] = md
+            order = ["fed_funds", "y10", "y2", "curve", "cpi", "unemploy"]
+            items = ([(k, md[k]) for k in order if k in md and md[k].get("value") is not None]
+                     if md else [])
+            if items:
+                cols_m = st.columns(len(items))
+                for col, (k, d) in zip(cols_m, items):
+                    with col:
+                        chg = d.get("chg")
+                        color = "#9EA3B0" if chg is None else ("#4CAF50" if chg >= 0 else "#F44336")
+                        arrow = "" if chg is None else ("▲" if chg >= 0 else "▼")
+                        chg_s = "" if chg is None else f"{arrow} {chg:+.2f}"
+                        st.markdown(
+                            f"<div class='metric-card'><div class='metric-label'>{d['label']}</div>"
+                            f"<div class='metric-value' style='font-size:1.2rem'>{d['value']:.2f}%</div>"
+                            f"<div style='color:{color};font-size:0.8rem'>{chg_s}</div></div>",
+                            unsafe_allow_html=True,
+                        )
+                reg = _macro.macro_regime(md)
+                icon = {"caution": "🔴", "neutral": "🟡", "ok": "🟢"}.get(reg["risk"], "🟡")
+                st.markdown(f"{icon} " + "　".join(reg["signals"]))
+            else:
+                st.caption("無法載入總經數據，請確認 API key。")
+        except Exception as e:
+            st.caption(f"總經數據載入失敗：{e}")
+    else:
+        st.caption("設定 FRED API key 後可顯示 Fed 利率、殖利率曲線、CPI、失業率等總經指標。")
+
     # ── Quick news ─────────────────────────────────────────────────
     section("市場快訊")
     try:
@@ -1923,6 +1971,16 @@ def page_market_overview():
                             sorted_sec = sorted(sectors.items(), key=lambda x: -x[1]["chg"])
                             for name, data in sorted_sec:
                                 ctx_lines.append(f"{name}: {data['chg']:+.2%}  (近1月:{data['chg_1m']:+.2%})")
+                        # Macro (FRED) context
+                        _md = st.session_state.get("macro_data") or {}
+                        if _md:
+                            try:
+                                import macro as _macro
+                                ctx_lines.append("\n=== 總經指標（FRED）===")
+                                ctx_lines.append(_macro.macro_summary_text(_md))
+                                ctx_lines.extend(_macro.macro_regime(_md)["signals"])
+                            except Exception:
+                                pass
                         # Fetch top headlines for context
                         try:
                             import feedparser as _fp, re as _re
@@ -2664,6 +2722,9 @@ def page_stock_research():
         with bt_cc2:
             bt_cost = st.slider("來回交易成本 ‰（手續費+滑價）", 0, 30, 10, key="bt_cost") / 1000
 
+        bt_mtf = st.checkbox("加入週線確認（MTF）並對照效果", value=False, key="bt_mtf",
+                             help="只保留週線同向的進場，並對照有/無 MTF 的勝率變化")
+
         st.markdown(
             "<small style='color:#B8C0D0'>💡 停利/停損比建議 ≥ 1.5:1（如停利5%/停損3%）。"
             "已採用<b>下一根進場</b>（消除前視偏誤）+ <b>扣交易成本</b> + "
@@ -2688,7 +2749,8 @@ def page_stock_research():
                         else:
                             df_bt = _bt.normalize_ohlc(raw_bt, bt_ticker)
                             res = _bt.backtest_all(df_bt, tp=bt_tp, sl=bt_sl,
-                                                   horizon=bt_h, cost=bt_cost)
+                                                   horizon=bt_h, cost=bt_cost,
+                                                   mtf_filter=bt_mtf)
                             # 加上樣本外一致性（穩健度）欄
                             try:
                                 wf = _bt.walk_forward(df_bt, tp=bt_tp, sl=bt_sl,
@@ -2696,7 +2758,27 @@ def page_stock_research():
                                 res["穩健度"] = [wf.get(r, np.nan) for r in res.index]
                             except Exception:
                                 res["穩健度"] = np.nan
+                            # MTF 對照：另跑一次無 MTF，附上勝率/獲利因子變化
+                            mtf_cmp = None
+                            if bt_mtf:
+                                try:
+                                    base = _bt.backtest_all(df_bt, tp=bt_tp, sl=bt_sl,
+                                                            horizon=bt_h, cost=bt_cost,
+                                                            mtf_filter=False)
+                                    valid_b = base[base["trades"] >= 5]
+                                    valid_m = res[res["trades"] >= 5]
+                                    mtf_cmp = {
+                                        "base_wr": float(valid_b["win_rate"].mean()) if not valid_b.empty else np.nan,
+                                        "mtf_wr":  float(valid_m["win_rate"].mean()) if not valid_m.empty else np.nan,
+                                        "base_pf": float(valid_b["profit_factor"].replace(np.inf, np.nan).mean()) if not valid_b.empty else np.nan,
+                                        "mtf_pf":  float(valid_m["profit_factor"].replace(np.inf, np.nan).mean()) if not valid_m.empty else np.nan,
+                                        "base_trades": int(base["trades"].sum()),
+                                        "mtf_trades":  int(res["trades"].sum()),
+                                    }
+                                except Exception:
+                                    mtf_cmp = None
                             st.session_state["bt_result"] = res
+                            st.session_state["bt_mtf_cmp"] = mtf_cmp
                             st.session_state["bt_meta"] = (bt_ticker, bt_tp, bt_sl, bt_h)
                     except Exception as e:
                         st.error(f"回測失敗：{e}")
@@ -2705,6 +2787,20 @@ def page_stock_research():
             res = st.session_state["bt_result"]
             mtk, mtp, msl, mh = st.session_state.get("bt_meta", (bt_ticker, bt_tp, bt_sl, bt_h))
             st.markdown(f"#### {mtk} · 停利{mtp:.0%} / 停損{msl:.0%} / 持有≤{mh}日")
+
+            cmp = st.session_state.get("bt_mtf_cmp")
+            if cmp:
+                d_wr = (cmp["mtf_wr"] - cmp["base_wr"]) if (np.isfinite(cmp["mtf_wr"]) and np.isfinite(cmp["base_wr"])) else np.nan
+                d_pf = (cmp["mtf_pf"] - cmp["base_pf"]) if (np.isfinite(cmp["mtf_pf"]) and np.isfinite(cmp["base_pf"])) else np.nan
+                verdict = ("MTF 有幫助 ✅" if (np.isfinite(d_wr) and d_wr > 0.01) else
+                           "MTF 影響不大 ➖" if (np.isfinite(d_wr) and abs(d_wr) <= 0.01) else
+                           "MTF 反而變差 ⚠️")
+                st.info(
+                    f"**週線確認 (MTF) 對照**（僅計交易數≥5 的規則平均）\n\n"
+                    f"勝率：{cmp['base_wr']:.0%} → **{cmp['mtf_wr']:.0%}**（{d_wr:+.0%}）　"
+                    f"獲利因子：{cmp['base_pf']:.2f} → **{cmp['mtf_pf']:.2f}**（{d_pf:+.2f}）\n\n"
+                    f"交易數：{cmp['base_trades']} → {cmp['mtf_trades']}（過濾掉週線背離的進場）　→ **{verdict}**"
+                )
 
             disp = res.copy()
             disp_fmt = disp.rename(columns={
@@ -2921,6 +3017,10 @@ def page_company_analysis():
     if run_fa and fa_tkr:
         with st.spinner(f"抓取 {fa_tkr} 基本面資料…"):
             st.session_state["fa_data"] = fa.fetch_fundamentals(fa_tkr)
+            try:
+                st.session_state["fa_earnings"] = fa.next_earnings_date(fa_tkr)
+            except Exception:
+                st.session_state["fa_earnings"] = None
         st.session_state.pop("fa_ai_out", None)   # 換股時清掉舊的 AI 解讀
 
     data = st.session_state.get("fa_data")
@@ -2959,6 +3059,18 @@ def page_company_analysis():
     with o4:
         dy = data.get("dividend_yield")
         metric_card("股利率", f"{dy:.2f}%" if dy else "—")
+
+    # 下次財報日
+    ed = st.session_state.get("fa_earnings")
+    if ed is not None:
+        try:
+            import datetime as _dt
+            days_to = (ed - _dt.date.today()).days
+            when = ("已過" if days_to < 0 else "今天" if days_to == 0 else f"{days_to} 天後")
+            tag = "🔴" if 0 <= days_to <= 7 else "📅"
+            st.caption(f"{tag} 下次財報：**{ed.isoformat()}**（{when}）")
+        except Exception:
+            pass
 
     # ② 財務健康評分 ──────────────────────────────────────────
     hs = fa.health_score(data)
@@ -3416,6 +3528,143 @@ def page_alerts():
 
 
 # ════════════════════════════════════════════════════════════════════
+# PAGE: Paper Trading (Alpaca)
+# ════════════════════════════════════════════════════════════════════
+
+def page_paper_trading():
+    st.title("📉 模擬交易（Alpaca Paper）")
+    st.caption("追蹤訊號策略的模擬帳戶績效 · 純模擬不涉真錢")
+
+    try:
+        import alpaca_trader as at
+    except ImportError:
+        st.error("找不到 alpaca_trader.py，請確認已同步（Colab 需更新 Cell 2）。")
+        return
+
+    import os as _os
+    key = _os.environ.get("ALPACA_KEY_ID", "")
+    secret = _os.environ.get("ALPACA_SECRET_KEY", "")
+    try:
+        key = key or st.secrets.get("ALPACA_KEY_ID", "")
+        secret = secret or st.secrets.get("ALPACA_SECRET_KEY", "")
+    except Exception:
+        pass
+    if not key or not secret:
+        c1, c2 = st.columns(2)
+        with c1:
+            key = st.text_input("Alpaca Key ID", type="password", key="alp_key")
+        with c2:
+            secret = st.text_input("Alpaca Secret Key", type="password", key="alp_sec")
+        st.caption("免費申請 alpaca.markets → Paper Trading，或設 Secrets "
+                   "ALPACA_KEY_ID / ALPACA_SECRET_KEY。")
+    if not key or not secret:
+        st.info("填入 Alpaca paper API key 後顯示帳戶績效。")
+        return
+
+    if not st.button("🔄 載入帳戶", type="primary", key="alp_load") and \
+       not st.session_state.get("alp_loaded"):
+        st.info("按「載入帳戶」抓取模擬帳戶資料。")
+        return
+    st.session_state["alp_loaded"] = True
+
+    with st.spinner("讀取 Alpaca 帳戶…"):
+        acc = at.get_account(key, secret)
+        positions = at.get_positions(key, secret)
+        orders = at.get_orders(key, secret, limit=20)
+        hist = at.portfolio_history(key, secret, period="3M")
+
+    if not acc:
+        st.error("帳戶讀取失敗，請確認 key 是否為 paper trading key。")
+        return
+
+    # ── 帳戶摘要 ───────────────────────────────────────────────
+    r = at.account_return(acc)
+    section("帳戶摘要")
+    m1, m2, m3, m4 = st.columns(4)
+    with m1: metric_card("淨值", f"${r['equity']:,.0f}" if r["equity"] is not None else "—")
+    with m2:
+        dc = r["day_change"]
+        metric_card("今日損益", f"{dc:+,.0f}" if dc is not None else "—",
+                    positive=(dc or 0) >= 0)
+    with m3:
+        metric_card("今日%", f"{r['day_pct']*100:+.2f}%" if r["day_pct"] is not None else "—",
+                    positive=(r["day_pct"] or 0) >= 0)
+    with m4:
+        cash = at._f(acc.get("cash"))
+        metric_card("現金", f"${cash:,.0f}" if cash is not None else "—")
+
+    # ── 權益曲線 vs SPY ────────────────────────────────────────
+    if hist and hist.get("equity"):
+        section("權益曲線 vs SPY")
+        # 一起過濾 (timestamp, equity) 配對，避免濾掉中間的 None 造成軸錯位
+        ts_raw = hist.get("timestamp", [])
+        pairs = [(t, v) for t, v in zip(ts_raw, hist["equity"]) if v]
+        if len(pairs) >= 2:
+            import datetime as _dt
+            tvals, eq = zip(*pairs)
+            dates = [_dt.datetime.fromtimestamp(t).date() for t in tvals]
+            eq_pct = [(v / eq[0] - 1) * 100 for v in eq]
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=dates, y=eq_pct, name="模擬帳戶",
+                                     line=dict(color="#1E88E5", width=2)))
+            try:
+                import yfinance as yf
+                spy = yf.download("SPY", start=str(dates[0]), auto_adjust=True, progress=False)
+                sc = spy["Close"].squeeze().dropna()
+                if len(sc) >= 2:
+                    spy_pct = (sc / float(sc.iloc[0]) - 1) * 100
+                    fig.add_trace(go.Scatter(x=spy_pct.index, y=spy_pct.values, name="SPY",
+                                             line=dict(color="#888", width=1.5, dash="dot")))
+            except Exception:
+                pass
+            fig.update_layout(**PLOTLY_LAYOUT, height=360, yaxis_title="累積報酬 %",
+                              title="模擬帳戶 vs SPY（同期 %）")
+            st.plotly_chart(fig, use_container_width=True)
+
+    # ── 持倉 ───────────────────────────────────────────────────
+    section("目前持倉")
+    if positions:
+        def _nan(x): return x if isinstance(x, (int, float)) else np.nan  # None → NaN，避免 formatter 崩潰
+        rows = []
+        for sym, p in positions.items():
+            rows.append({
+                "代碼": sym, "股數": _nan(p.get("qty")),
+                "均價": _nan(p.get("avg_entry_price")), "市值": _nan(p.get("market_value")),
+                "未實現損益": _nan(p.get("unrealized_pl")),
+                "報酬%": (p.get("unrealized_plpc") or 0) * 100,
+            })
+        pdf = pd.DataFrame(rows).set_index("代碼")
+        def _pl(v):
+            if isinstance(v, (int, float)) and not np.isnan(v):
+                return "color:#4CAF50" if v > 0 else ("color:#F44336" if v < 0 else "")
+            return ""
+        st.dataframe(
+            pdf.style.format({"股數": "{:g}", "均價": "{:.2f}", "市值": "{:,.0f}",
+                              "未實現損益": "{:+,.2f}", "報酬%": "{:+.2f}%"}, na_rep="—")
+               .map(_pl, subset=["未實現損益", "報酬%"]),
+            use_container_width=True,
+        )
+    else:
+        st.info("目前無持倉。")
+
+    # ── 近期訂單 ───────────────────────────────────────────────
+    if orders:
+        section("近期訂單")
+        orows = []
+        for o in orders[:15]:
+            orows.append({
+                "時間": (o.get("submitted_at") or "")[:16].replace("T", " "),
+                "代碼": o.get("symbol"), "方向": o.get("side"),
+                "股數": o.get("qty"), "狀態": o.get("status"),
+                "成交價": o.get("filled_avg_price") or "—",
+            })
+        st.dataframe(pd.DataFrame(orows), use_container_width=True, hide_index=True)
+
+    st.caption("⚠️ Alpaca paper 為模擬環境，成交為理想化（無真實滑價/流動性）。"
+               "自動下單由 Bot 的 /autotrade 控制，此頁僅檢視。")
+
+
+# ════════════════════════════════════════════════════════════════════
 # PAGE: Trading Tools (Position Sizing / Kelly / R:R / Compound)
 # ════════════════════════════════════════════════════════════════════
 
@@ -3670,6 +3919,7 @@ PAGES = {
     "🏢 公司分析":  page_company_analysis,
     "🚨 即時警報":  page_alerts,
     "🛠️ 交易工具":  page_trading_tools,
+    "📉 模擬交易":  page_paper_trading,
     "🏦 機構選股":  page_stock_selector,
     "📰 新聞情報":  page_news_sentiment,
     "💳 信用模型":  page_credit,
