@@ -2664,6 +2664,9 @@ def page_stock_research():
         with bt_cc2:
             bt_cost = st.slider("來回交易成本 ‰（手續費+滑價）", 0, 30, 10, key="bt_cost") / 1000
 
+        bt_mtf = st.checkbox("加入週線確認（MTF）並對照效果", value=False, key="bt_mtf",
+                             help="只保留週線同向的進場，並對照有/無 MTF 的勝率變化")
+
         st.markdown(
             "<small style='color:#B8C0D0'>💡 停利/停損比建議 ≥ 1.5:1（如停利5%/停損3%）。"
             "已採用<b>下一根進場</b>（消除前視偏誤）+ <b>扣交易成本</b> + "
@@ -2688,7 +2691,8 @@ def page_stock_research():
                         else:
                             df_bt = _bt.normalize_ohlc(raw_bt, bt_ticker)
                             res = _bt.backtest_all(df_bt, tp=bt_tp, sl=bt_sl,
-                                                   horizon=bt_h, cost=bt_cost)
+                                                   horizon=bt_h, cost=bt_cost,
+                                                   mtf_filter=bt_mtf)
                             # 加上樣本外一致性（穩健度）欄
                             try:
                                 wf = _bt.walk_forward(df_bt, tp=bt_tp, sl=bt_sl,
@@ -2696,7 +2700,27 @@ def page_stock_research():
                                 res["穩健度"] = [wf.get(r, np.nan) for r in res.index]
                             except Exception:
                                 res["穩健度"] = np.nan
+                            # MTF 對照：另跑一次無 MTF，附上勝率/獲利因子變化
+                            mtf_cmp = None
+                            if bt_mtf:
+                                try:
+                                    base = _bt.backtest_all(df_bt, tp=bt_tp, sl=bt_sl,
+                                                            horizon=bt_h, cost=bt_cost,
+                                                            mtf_filter=False)
+                                    valid_b = base[base["trades"] >= 5]
+                                    valid_m = res[res["trades"] >= 5]
+                                    mtf_cmp = {
+                                        "base_wr": float(valid_b["win_rate"].mean()) if not valid_b.empty else np.nan,
+                                        "mtf_wr":  float(valid_m["win_rate"].mean()) if not valid_m.empty else np.nan,
+                                        "base_pf": float(valid_b["profit_factor"].replace(np.inf, np.nan).mean()) if not valid_b.empty else np.nan,
+                                        "mtf_pf":  float(valid_m["profit_factor"].replace(np.inf, np.nan).mean()) if not valid_m.empty else np.nan,
+                                        "base_trades": int(base["trades"].sum()),
+                                        "mtf_trades":  int(res["trades"].sum()),
+                                    }
+                                except Exception:
+                                    mtf_cmp = None
                             st.session_state["bt_result"] = res
+                            st.session_state["bt_mtf_cmp"] = mtf_cmp
                             st.session_state["bt_meta"] = (bt_ticker, bt_tp, bt_sl, bt_h)
                     except Exception as e:
                         st.error(f"回測失敗：{e}")
@@ -2705,6 +2729,20 @@ def page_stock_research():
             res = st.session_state["bt_result"]
             mtk, mtp, msl, mh = st.session_state.get("bt_meta", (bt_ticker, bt_tp, bt_sl, bt_h))
             st.markdown(f"#### {mtk} · 停利{mtp:.0%} / 停損{msl:.0%} / 持有≤{mh}日")
+
+            cmp = st.session_state.get("bt_mtf_cmp")
+            if cmp:
+                d_wr = (cmp["mtf_wr"] - cmp["base_wr"]) if (np.isfinite(cmp["mtf_wr"]) and np.isfinite(cmp["base_wr"])) else np.nan
+                d_pf = (cmp["mtf_pf"] - cmp["base_pf"]) if (np.isfinite(cmp["mtf_pf"]) and np.isfinite(cmp["base_pf"])) else np.nan
+                verdict = ("MTF 有幫助 ✅" if (np.isfinite(d_wr) and d_wr > 0.01) else
+                           "MTF 影響不大 ➖" if (np.isfinite(d_wr) and abs(d_wr) <= 0.01) else
+                           "MTF 反而變差 ⚠️")
+                st.info(
+                    f"**週線確認 (MTF) 對照**（僅計交易數≥5 的規則平均）\n\n"
+                    f"勝率：{cmp['base_wr']:.0%} → **{cmp['mtf_wr']:.0%}**（{d_wr:+.0%}）　"
+                    f"獲利因子：{cmp['base_pf']:.2f} → **{cmp['mtf_pf']:.2f}**（{d_pf:+.2f}）\n\n"
+                    f"交易數：{cmp['base_trades']} → {cmp['mtf_trades']}（過濾掉週線背離的進場）　→ **{verdict}**"
+                )
 
             disp = res.copy()
             disp_fmt = disp.rename(columns={

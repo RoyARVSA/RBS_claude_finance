@@ -69,6 +69,30 @@ def bollinger(close: pd.Series, period: int = 20, k: float = 2.0):
     return ma + k * sd, ma, ma - k * sd
 
 
+def weekly_bias_daily(close: pd.Series) -> pd.Series:
+    """
+    週線偏向（-2~+2）映射回每日索引，供回測 MTF 過濾用。
+
+    無前視保證：週線用 resample("W")（週日結尾標記），每日以 ffill 對齊時
+    只會取到「上一個已收完的週」——當週的週日標籤在未來，不會被選到；
+    再 shift(1) 多一層保險，確保進場當日只用到已完成週的資訊。
+    回傳與 close 對齊、值為 {-2,-1,0,1,2} 的 Series（資料不足回全 0）。
+    """
+    if not isinstance(close.index, pd.DatetimeIndex):
+        return pd.Series(0, index=close.index)
+    wk = close.resample("W").last().dropna()
+    if len(wk) < 12:
+        return pd.Series(0, index=close.index)
+    ma10 = wk.rolling(10).mean()
+    ema12 = wk.ewm(span=12, adjust=False).mean()
+    ema26 = wk.ewm(span=26, adjust=False).mean()
+    hist = (ema12 - ema26) - (ema12 - ema26).ewm(span=9, adjust=False).mean()
+    bias = np.sign(wk - ma10).fillna(0) + np.sign(hist).fillna(0)   # -2~+2（週）
+    bias = bias.shift(1)                                            # 只用已完成週
+    daily = bias.reindex(close.index, method="ffill").fillna(0)
+    return daily.astype(float)
+
+
 # ── 訊號規則（回傳布林 Series，True = 該日觸發進場）──────────────────────────────
 
 def _cross_up(a: pd.Series, b: pd.Series) -> pd.Series:
@@ -227,18 +251,26 @@ def backtest_all(
     sl: float = 0.03,
     horizon: int = 10,
     cost: float = 0.001,
+    mtf_filter: bool = False,
 ) -> pd.DataFrame:
     """
     對所有訊號規則跑回測，回傳排序後的績效比較表。
     名稱含「(空)」的規則自動以做空方向評估。
     cost：來回交易成本（預設 0.1%）。
+    mtf_filter=True：只保留「週線同向」的進場（做多→週偏多、做空→週偏空），
+                     用來檢驗多時間框架確認是否提升績效（無前視，見 weekly_bias_daily）。
     """
     close = df["Close"].dropna()
     rules = signal_rules(df)
+    wbias = weekly_bias_daily(close) if mtf_filter else None
     rows = []
     for name, entries in rules.items():
         is_short = "(空)" in name
-        trades = triple_barrier(close, entries.reindex(close.index),
+        ent = entries.reindex(close.index).fillna(False).astype(bool)
+        if mtf_filter and wbias is not None:
+            aligned = (wbias < 0) if is_short else (wbias > 0)   # 週線同向
+            ent = ent & aligned.reindex(ent.index).fillna(False).astype(bool)
+        trades = triple_barrier(close, ent,
                                 tp=tp, sl=sl, horizon=horizon, short=is_short, cost=cost)
         m = evaluate(trades)
         m["rule"] = name
