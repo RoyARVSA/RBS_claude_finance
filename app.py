@@ -1543,7 +1543,7 @@ def page_stock_selector():
             styled = (
                 tbl.style
                 .format(fmt, na_rep="—")
-                .applymap(color_ret, subset=["1日%", "1月%", "3月%"])
+                .map(color_ret, subset=["1日%", "1月%", "3月%"])
             )
             st.dataframe(styled, use_container_width=True)
 
@@ -2611,8 +2611,8 @@ def page_stock_research():
             }
             st.dataframe(
                 fdf.style.format(fmt_sc, na_rep="—")
-                   .applymap(_cr,   subset=["1日%","1月%","3月%","區間%"])
-                   .applymap(_crsi, subset=["RSI(14)"]),
+                   .map(_cr,   subset=["1日%","1月%","3月%","區間%"])
+                   .map(_crsi, subset=["RSI(14)"]),
                 use_container_width=True,
             )
 
@@ -2734,10 +2734,10 @@ def page_stock_research():
             if "穩健度" in disp_fmt.columns:
                 _fmt["穩健度"] = "{:.0%}"
             _styler = _styler.format(_fmt, na_rep="—") \
-                             .applymap(_pf_color, subset=["獲利因子"]) \
-                             .applymap(_wr_color, subset=["勝率"])
+                             .map(_pf_color, subset=["獲利因子"]) \
+                             .map(_wr_color, subset=["勝率"])
             if "穩健度" in disp_fmt.columns:
-                _styler = _styler.applymap(_rob_color, subset=["穩健度"])
+                _styler = _styler.map(_rob_color, subset=["穩健度"])
             st.dataframe(_styler, use_container_width=True)
 
             # Best rule callout
@@ -3172,7 +3172,7 @@ def page_alerts():
                         st.dataframe(
                             snap_df.style
                                 .format({"現價": "{:.2f}", "1日%": "{:.2%}", "5日%": "{:.2%}"})
-                                .applymap(_color, subset=["1日%", "5日%"]),
+                                .map(_color, subset=["1日%", "5日%"]),
                             use_container_width=True,
                         )
                         gainers = sum(1 for r in rows if r["1日%"] > 0)
