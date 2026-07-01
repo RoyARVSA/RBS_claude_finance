@@ -20,6 +20,7 @@ Streamlit 網頁應用 + 獨立的訊號掃描 Bot（GitHub Actions 排程版 / 
 | 🏢 公司分析 | **基本面體質：財務健康評分、估值旗標、三表趨勢、AI 解讀** |
 | 🚨 即時警報 | 監控清單、盤中走勢、訊號掃描、Telegram/Email 推播 |
 | 🛠️ 交易工具 | 部位大小、**波動率目標部位**、Kelly、風險報酬比、複利 |
+| 📉 模擬交易 | **Alpaca 紙上交易：帳戶績效、持倉、權益曲線 vs SPY** |
 | 🏦 機構選股 | 6 步驟系統化選股（市場→策略→宏觀→資產類型→產業→標的）|
 | 📰 新聞情報 | 多來源 RSS 聚合、LLM 情緒分析、金融報告生成 |
 | 💳 信用模型 | WoE/IV、邏輯回歸、KS/AUC、評分卡 |
@@ -34,7 +35,8 @@ Streamlit 網頁應用 + 獨立的訊號掃描 Bot（GitHub Actions 排程版 / 
 - **自我優化迴圈**：回測各訊號歷史勝率 → 動態調整評分權重（每週校準）
 - **防護機制**（freqtrade 式）：訊號冷卻去重、大盤風險濾網
 - **部位建議**：每個訊號附 ATR 風險基準的建議股數
-- **Telegram 指令**：`/add`、`/rank`、`/calibrate`、`/risk`、`/protections`、`/fundamentals` 等
+- **Alpaca 模擬交易**：訊號自動下模擬單驗證策略實效（預設關閉，`/autotrade on` 啟用）
+- **Telegram 指令**：`/add`、`/rank`、`/calibrate`、`/risk`、`/autotrade`、`/positions`、`/fundamentals` 等
 
 ### 🧪 回測引擎（`backtest.py`）
 
@@ -76,6 +78,7 @@ backtest.py             Triple-Barrier 回測 + walk-forward + 參數最佳化
 quant_tools.py          部位配置與風險管理（部位/Kelly/風險平價）
 fundamentals.py         公司基本面：抓取 + 財務健康評分 + 估值旗標 + 財報日
 macro.py                總經數據（FRED）：Fed利率/殖利率曲線/CPI/失業率 + 判讀
+alpaca_trader.py        Alpaca 紙上交易：下單決策(decide_orders) + REST client
 stock_db.py             選股資料庫（5 市場、30+ 產業、200+ 標的）
 rbs_lib.py              風險計算函式庫（VaR/CVaR/共變異數/情境）
 streamlit_app.py        雲端部署進入點

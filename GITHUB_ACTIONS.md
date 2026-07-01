@@ -37,6 +37,13 @@
 | `LLM_API_KEY` | 選填 | 每日 AI 晨報用的 LLM key（Claude 或 OpenAI）。**不設則晨報走純數據版** |
 | `LLM_BASE_URL` | 選填 | 自訂 API 端點（留空自動判斷 Anthropic/OpenAI） |
 | `LLM_MODEL` | 選填 | 模型名（預設 Claude 用 `claude-3-5-haiku`，OpenAI 用 `gpt-4o-mini`） |
+| `FRED_API_KEY` | 選填 | 晨報總經數據（免費申請 fred.stlouisfed.org） |
+| `ALPACA_KEY_ID` | 選填 | Alpaca **paper** trading key（模擬自動交易；**不設則不下單**） |
+| `ALPACA_SECRET_KEY` | 選填 | Alpaca paper secret |
+
+> 🤖 **Alpaca 模擬交易**：預設**關閉**，須 Telegram 傳 `/autotrade on` 才會下單，
+> 且僅在美股開盤時、依掃描評分自動下*模擬*單。用 `/positions`、`/pnl` 查績效，
+> `/closeall` 一鍵平倉。純模擬不涉真錢。
 
 > ☀️ **每日 AI 晨報**：每交易日 ET 08:30 自動推送大盤+觀察清單評分+訊號。
 > 設了 `LLM_API_KEY` 會多一段 AI 白話解讀；沒設則只推數據排名（仍可用）。

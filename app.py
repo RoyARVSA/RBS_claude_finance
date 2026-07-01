@@ -228,6 +228,7 @@ with st.sidebar:
             "🏢 公司分析",
             "🚨 即時警報",
             "🛠️ 交易工具",
+            "📉 模擬交易",
             "🏦 機構選股",
             "📰 新聞情報",
             "💳 信用模型",
@@ -3527,6 +3528,140 @@ def page_alerts():
 
 
 # ════════════════════════════════════════════════════════════════════
+# PAGE: Paper Trading (Alpaca)
+# ════════════════════════════════════════════════════════════════════
+
+def page_paper_trading():
+    st.title("📉 模擬交易（Alpaca Paper）")
+    st.caption("追蹤訊號策略的模擬帳戶績效 · 純模擬不涉真錢")
+
+    try:
+        import alpaca_trader as at
+    except ImportError:
+        st.error("找不到 alpaca_trader.py，請確認已同步（Colab 需更新 Cell 2）。")
+        return
+
+    import os as _os
+    key = _os.environ.get("ALPACA_KEY_ID", "")
+    secret = _os.environ.get("ALPACA_SECRET_KEY", "")
+    try:
+        key = key or st.secrets.get("ALPACA_KEY_ID", "")
+        secret = secret or st.secrets.get("ALPACA_SECRET_KEY", "")
+    except Exception:
+        pass
+    if not key or not secret:
+        c1, c2 = st.columns(2)
+        with c1:
+            key = st.text_input("Alpaca Key ID", type="password", key="alp_key")
+        with c2:
+            secret = st.text_input("Alpaca Secret Key", type="password", key="alp_sec")
+        st.caption("免費申請 alpaca.markets → Paper Trading，或設 Secrets "
+                   "ALPACA_KEY_ID / ALPACA_SECRET_KEY。")
+    if not key or not secret:
+        st.info("填入 Alpaca paper API key 後顯示帳戶績效。")
+        return
+
+    if not st.button("🔄 載入帳戶", type="primary", key="alp_load") and \
+       not st.session_state.get("alp_loaded"):
+        st.info("按「載入帳戶」抓取模擬帳戶資料。")
+        return
+    st.session_state["alp_loaded"] = True
+
+    with st.spinner("讀取 Alpaca 帳戶…"):
+        acc = at.get_account(key, secret)
+        positions = at.get_positions(key, secret)
+        orders = at.get_orders(key, secret, limit=20)
+        hist = at.portfolio_history(key, secret, period="3M")
+
+    if not acc:
+        st.error("帳戶讀取失敗，請確認 key 是否為 paper trading key。")
+        return
+
+    # ── 帳戶摘要 ───────────────────────────────────────────────
+    r = at.account_return(acc)
+    section("帳戶摘要")
+    m1, m2, m3, m4 = st.columns(4)
+    with m1: metric_card("淨值", f"${r['equity']:,.0f}" if r["equity"] is not None else "—")
+    with m2:
+        dc = r["day_change"]
+        metric_card("今日損益", f"{dc:+,.0f}" if dc is not None else "—",
+                    positive=(dc or 0) >= 0)
+    with m3:
+        metric_card("今日%", f"{r['day_pct']*100:+.2f}%" if r["day_pct"] is not None else "—",
+                    positive=(r["day_pct"] or 0) >= 0)
+    with m4:
+        cash = at._f(acc.get("cash"))
+        metric_card("現金", f"${cash:,.0f}" if cash is not None else "—")
+
+    # ── 權益曲線 vs SPY ────────────────────────────────────────
+    if hist and hist.get("equity"):
+        section("權益曲線 vs SPY")
+        eq = [v for v in hist["equity"] if v]
+        ts = hist.get("timestamp", [])
+        if len(eq) >= 2:
+            import datetime as _dt
+            dates = [_dt.datetime.fromtimestamp(t).date() for t in ts[:len(eq)]]
+            eq_pct = [(v / eq[0] - 1) * 100 for v in eq]
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=dates, y=eq_pct, name="模擬帳戶",
+                                     line=dict(color="#1E88E5", width=2)))
+            try:
+                import yfinance as yf
+                spy = yf.download("SPY", start=str(dates[0]), auto_adjust=True, progress=False)
+                sc = spy["Close"].squeeze().dropna()
+                if len(sc) >= 2:
+                    spy_pct = (sc / float(sc.iloc[0]) - 1) * 100
+                    fig.add_trace(go.Scatter(x=spy_pct.index, y=spy_pct.values, name="SPY",
+                                             line=dict(color="#888", width=1.5, dash="dot")))
+            except Exception:
+                pass
+            fig.update_layout(**PLOTLY_LAYOUT, height=360, yaxis_title="累積報酬 %",
+                              title="模擬帳戶 vs SPY（同期 %）")
+            st.plotly_chart(fig, use_container_width=True)
+
+    # ── 持倉 ───────────────────────────────────────────────────
+    section("目前持倉")
+    if positions:
+        rows = []
+        for sym, p in positions.items():
+            rows.append({
+                "代碼": sym, "股數": p.get("qty"),
+                "均價": p.get("avg_entry_price"), "市值": p.get("market_value"),
+                "未實現損益": p.get("unrealized_pl"),
+                "報酬%": (p.get("unrealized_plpc") or 0) * 100,
+            })
+        pdf = pd.DataFrame(rows).set_index("代碼")
+        def _pl(v):
+            if isinstance(v, (int, float)) and not np.isnan(v):
+                return "color:#4CAF50" if v > 0 else ("color:#F44336" if v < 0 else "")
+            return ""
+        st.dataframe(
+            pdf.style.format({"股數": "{:g}", "均價": "{:.2f}", "市值": "{:,.0f}",
+                              "未實現損益": "{:+,.2f}", "報酬%": "{:+.2f}%"})
+               .map(_pl, subset=["未實現損益", "報酬%"]),
+            use_container_width=True,
+        )
+    else:
+        st.info("目前無持倉。")
+
+    # ── 近期訂單 ───────────────────────────────────────────────
+    if orders:
+        section("近期訂單")
+        orows = []
+        for o in orders[:15]:
+            orows.append({
+                "時間": (o.get("submitted_at") or "")[:16].replace("T", " "),
+                "代碼": o.get("symbol"), "方向": o.get("side"),
+                "股數": o.get("qty"), "狀態": o.get("status"),
+                "成交價": o.get("filled_avg_price") or "—",
+            })
+        st.dataframe(pd.DataFrame(orows), use_container_width=True, hide_index=True)
+
+    st.caption("⚠️ Alpaca paper 為模擬環境，成交為理想化（無真實滑價/流動性）。"
+               "自動下單由 Bot 的 /autotrade 控制，此頁僅檢視。")
+
+
+# ════════════════════════════════════════════════════════════════════
 # PAGE: Trading Tools (Position Sizing / Kelly / R:R / Compound)
 # ════════════════════════════════════════════════════════════════════
 
@@ -3781,6 +3916,7 @@ PAGES = {
     "🏢 公司分析":  page_company_analysis,
     "🚨 即時警報":  page_alerts,
     "🛠️ 交易工具":  page_trading_tools,
+    "📉 模擬交易":  page_paper_trading,
     "🏦 機構選股":  page_stock_selector,
     "📰 新聞情報":  page_news_sentiment,
     "💳 信用模型":  page_credit,
