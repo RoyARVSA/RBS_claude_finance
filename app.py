@@ -2959,6 +2959,10 @@ def page_company_analysis():
     if run_fa and fa_tkr:
         with st.spinner(f"抓取 {fa_tkr} 基本面資料…"):
             st.session_state["fa_data"] = fa.fetch_fundamentals(fa_tkr)
+            try:
+                st.session_state["fa_earnings"] = fa.next_earnings_date(fa_tkr)
+            except Exception:
+                st.session_state["fa_earnings"] = None
         st.session_state.pop("fa_ai_out", None)   # 換股時清掉舊的 AI 解讀
 
     data = st.session_state.get("fa_data")
@@ -2997,6 +3001,18 @@ def page_company_analysis():
     with o4:
         dy = data.get("dividend_yield")
         metric_card("股利率", f"{dy:.2f}%" if dy else "—")
+
+    # 下次財報日
+    ed = st.session_state.get("fa_earnings")
+    if ed is not None:
+        try:
+            import datetime as _dt
+            days_to = (ed - _dt.date.today()).days
+            when = ("已過" if days_to < 0 else "今天" if days_to == 0 else f"{days_to} 天後")
+            tag = "🔴" if 0 <= days_to <= 7 else "📅"
+            st.caption(f"{tag} 下次財報：**{ed.isoformat()}**（{when}）")
+        except Exception:
+            pass
 
     # ② 財務健康評分 ──────────────────────────────────────────
     hs = fa.health_score(data)

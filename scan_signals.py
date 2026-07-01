@@ -23,6 +23,7 @@ Telegram 指令（傳給 Bot）：
   /protections            – 查看防護機制（訊號冷卻 / 大盤風險濾網）狀態
   /risk [帳戶 風險%]       – 設定/查看部位風險（訊號附建議部位股數）
   /fundamentals TICKER    – 查公司基本面摘要（健康評分/ROE/估值，快取一天）（別名 /f）
+  /earnings [天數]        – 觀察清單近期財報日（晨報也會自動提醒 N 天內財報）
   /briefing               – 立即生成每日 AI 晨報（每交易日 ET 08:30 自動推送）
   /set mtf_enabled on/off – 週線同向確認（日線分數與週線同向加強、背離減弱）
   /scan                   – 立即掃描（忽略靜音與市場狀態）
@@ -83,6 +84,8 @@ DEFAULT_THRESHOLDS = {
     "briefing_hour_et":   8.5,        # 觸發時間（ET 小數時，8.5 = 08:30）
     # ── Multi-timeframe ──
     "mtf_enabled":        True,       # 週線同向確認（軟性調整評分）
+    # ── Earnings ──
+    "earnings_alert_days": 5.0,       # 財報前 N 天提醒（晨報 + /earnings）
 }
 
 ET = ZoneInfo("America/New_York")
@@ -247,6 +250,7 @@ def _cmd_help() -> str:
         "`/top 5` — 今日漲跌幅前 5 名\n"
         "`/rank` — 綜合評分排名（-1~+1）\n"
         "`/fundamentals AAPL`（或 `/f`）— 公司基本面摘要\n"
+        "`/earnings [天數]` — 觀察清單近期財報日\n"
         "`/briefing` — 立即生成每日晨報\n"
         "`/scan` — 立即掃描（忽略靜音/冷卻）\n"
         "`/calibrate` — 回測校準訊號權重（自我優化）\n\n"
@@ -520,7 +524,8 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                          "position_sizing_enabled", "briefing_enabled", "mtf_enabled"}
             float_keys = {"rsi_oversold", "rsi_overbought", "price_change_pct",
                           "vol_spike_ratio", "cooldown_hours",
-                          "account_size", "risk_pct", "atr_mult", "briefing_hour_et"}
+                          "account_size", "risk_pct", "atr_mult", "briefing_hour_et",
+                          "earnings_alert_days"}
             if key in bool_keys:
                 th[key] = val in ("on", "true", "1", "yes")
                 changed = True
@@ -614,6 +619,21 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
             reply = "☀️ 生成晨報中，約需 20-40 秒…"
             _tg_send(token, src_chat or chat_id, reply)
             reply = daily_briefing(state, force=True) or "晨報生成失敗"
+
+        elif cmd == "/earnings":
+            days = int(args[0]) if args and args[0].isdigit() else 14
+            reply = "📅 查詢近期財報中…"
+            _tg_send(token, src_chat or chat_id, reply)
+            earn = _upcoming_earnings(state, max_days=days)
+            changed = True   # 更新快取
+            if earn:
+                lines = [f"📅 *{days} 天內財報*\n"]
+                for tk, ed, d in earn:
+                    when = "今天" if d == 0 else ("明天" if d == 1 else f"{d} 天後")
+                    lines.append(f"• *{tk}* — {ed.isoformat()}（{when}）")
+                reply = "\n".join(lines)
+            else:
+                reply = f"📅 觀察清單 {days} 天內無財報公布"
 
         else:
             reply = f"❓ 未知指令：{cmd}\n輸入 /help 查看說明"
@@ -1299,6 +1319,42 @@ def _index_snapshot() -> dict:
     return out
 
 
+def _upcoming_earnings(state: dict, max_days: int | None = None) -> list:
+    """
+    回傳 watchlist 中 max_days 天內要公布財報的標的：[(ticker, date, days_until), ...]。
+    每日快取（earnings_cache）避免重複慢呼叫。就地更新 state。
+    """
+    import datetime as _dt
+    if max_days is None:
+        max_days = int(state["thresholds"].get("earnings_alert_days", 5))
+    today = _dt.date.today()
+    today_s = today.isoformat()
+    cache = state.setdefault("earnings_cache", {})
+    try:
+        import fundamentals as fa
+    except Exception:
+        return []
+    out = []
+    for tk in state.get("watchlist", []):
+        c = cache.get(tk)
+        if c and c.get("checked") == today_s:
+            ed_s = c.get("earnings")
+        else:
+            ed = fa.next_earnings_date(tk)
+            ed_s = ed.isoformat() if ed else None
+            cache[tk] = {"checked": today_s, "earnings": ed_s}
+        if ed_s:
+            try:
+                ed = _dt.date.fromisoformat(ed_s)
+                days = (ed - today).days
+                if 0 <= days <= max_days:
+                    out.append((tk, ed, days))
+            except Exception:
+                continue
+    out.sort(key=lambda x: x[2])
+    return out
+
+
 def daily_briefing(state: dict, force: bool = False) -> str | None:
     """組裝每日晨報（大盤 + 指數 + 觀察清單排名 + 訊號 + AI 解讀）。"""
     now_et = datetime.now(ET)
@@ -1361,6 +1417,18 @@ def daily_briefing(state: dict, force: bool = False) -> str | None:
         lines.append("")
     if flagged:
         lines.append(f"🚨 今日 {len(flagged)} 檔觸發訊號（詳見後續掃描）")
+
+    # 近期財報提醒
+    try:
+        earn = _upcoming_earnings(state)
+        if earn:
+            lines.append("")
+            lines.append("📅 *近期財報*")
+            for tk, ed, days in earn:
+                when = "今天" if days == 0 else ("明天" if days == 1 else f"{days} 天後")
+                lines.append(f"   • {tk} — {ed.isoformat()}（{when}）")
+    except Exception:
+        pass
 
     if not state["watchlist"]:
         lines.append("_觀察清單為空，用 /add 新增標的_")
