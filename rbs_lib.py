@@ -147,11 +147,11 @@ def portfolio_var(
     w = weights.values.reshape(-1, 1)
     mu = agg.mean().values.reshape(-1, 1)
     cov_h = cov * hold_days
-    port_mu = float((w.T @ mu).ravel())
-    port_sigma = float(np.sqrt(w.T @ cov_h.values @ w))
+    port_mu = float((w.T @ mu).item())
+    port_sigma = float(np.sqrt(w.T @ cov_h.values @ w).item())
     z = norm.ppf(1 - alpha)
     var_dn = port_mu + z * port_sigma
-    vol_ann = float(np.sqrt(w.T @ (ret.cov().values * 252) @ w))
+    vol_ann = float(np.sqrt(w.T @ (ret.cov().values * 252) @ w).item())
 
     port_ret_hist = (agg @ weights).dropna()
     if use_historical_cvar and not port_ret_hist.empty:
@@ -270,7 +270,7 @@ def rolling_portfolio_var(
             cov = sub.cov().values
         w = weights.values.reshape(-1, 1)
         mu = float(sub.mean().values @ weights.values)
-        sigma = float(np.sqrt(w.T @ cov @ w))
+        sigma = float(np.sqrt(w.T @ cov @ w).item())
         z = norm.ppf(1 - alpha)
         vs.append(mu + z * sigma)
         idx.append(ret.index[i])

@@ -194,6 +194,10 @@ def section(title: str):
     st.markdown(f'<div class="section-header">{title}</div>', unsafe_allow_html=True)
 
 
+# pandas 3.0 移除了 "M"/"H"/"Q"/"Y" 舊別名；resample 時轉成新別名
+_RESAMPLE_ALIAS = {"M": "ME", "W": "W", "D": "D", "Q": "QE", "Y": "YE", "H": "h"}
+
+
 def _annualization(index: pd.DatetimeIndex, freq: str | None) -> int:
     if freq == "M":
         return 12
@@ -384,7 +388,7 @@ def page_portfolio_performance():
             if isinstance(data, pd.Series):
                 data = data.to_frame()
             if freq in ["W", "M"]:
-                data = data.resample(freq).last()
+                data = data.resample(_RESAMPLE_ALIAS[freq]).last()
             fx = data[fx_pair].dropna() if fx_pair in data.columns else pd.Series(index=data.index, data=30.0)
             bench_px = data[benchmark].dropna()
             prices = data[tickers].dropna(how="all")
@@ -406,7 +410,7 @@ def page_portfolio_performance():
         try:
             rf_raw = yf.download("^IRX", start=pd.to_datetime(start), progress=False)["Close"].ffill()
             if freq in ["W", "M"]:
-                rf_raw = rf_raw.resample(freq).last()
+                rf_raw = rf_raw.resample(_RESAMPLE_ALIAS[freq]).last()
             rf = (1 + rf_raw / 100) ** (1 / ppy) - 1
         except Exception:
             rf = pd.Series(index=port_ret.index, data=(1 + 0.05) ** (1 / ppy) - 1)
@@ -1543,7 +1547,7 @@ def page_stock_selector():
             styled = (
                 tbl.style
                 .format(fmt, na_rep="—")
-                .applymap(color_ret, subset=["1日%", "1月%", "3月%"])
+                .map(color_ret, subset=["1日%", "1月%", "3月%"])
             )
             st.dataframe(styled, use_container_width=True)
 
@@ -2611,8 +2615,8 @@ def page_stock_research():
             }
             st.dataframe(
                 fdf.style.format(fmt_sc, na_rep="—")
-                   .applymap(_cr,   subset=["1日%","1月%","3月%","區間%"])
-                   .applymap(_crsi, subset=["RSI(14)"]),
+                   .map(_cr,   subset=["1日%","1月%","3月%","區間%"])
+                   .map(_crsi, subset=["RSI(14)"]),
                 use_container_width=True,
             )
 
@@ -2734,10 +2738,10 @@ def page_stock_research():
             if "穩健度" in disp_fmt.columns:
                 _fmt["穩健度"] = "{:.0%}"
             _styler = _styler.format(_fmt, na_rep="—") \
-                             .applymap(_pf_color, subset=["獲利因子"]) \
-                             .applymap(_wr_color, subset=["勝率"])
+                             .map(_pf_color, subset=["獲利因子"]) \
+                             .map(_wr_color, subset=["勝率"])
             if "穩健度" in disp_fmt.columns:
-                _styler = _styler.applymap(_rob_color, subset=["穩健度"])
+                _styler = _styler.map(_rob_color, subset=["穩健度"])
             st.dataframe(_styler, use_container_width=True)
 
             # Best rule callout
@@ -3172,7 +3176,7 @@ def page_alerts():
                         st.dataframe(
                             snap_df.style
                                 .format({"現價": "{:.2f}", "1日%": "{:.2%}", "5日%": "{:.2%}"})
-                                .applymap(_color, subset=["1日%", "5日%"]),
+                                .map(_color, subset=["1日%", "5日%"]),
                             use_container_width=True,
                         )
                         gainers = sum(1 for r in rows if r["1日%"] > 0)
