@@ -3596,11 +3596,13 @@ def page_paper_trading():
     # ── 權益曲線 vs SPY ────────────────────────────────────────
     if hist and hist.get("equity"):
         section("權益曲線 vs SPY")
-        eq = [v for v in hist["equity"] if v]
-        ts = hist.get("timestamp", [])
-        if len(eq) >= 2:
+        # 一起過濾 (timestamp, equity) 配對，避免濾掉中間的 None 造成軸錯位
+        ts_raw = hist.get("timestamp", [])
+        pairs = [(t, v) for t, v in zip(ts_raw, hist["equity"]) if v]
+        if len(pairs) >= 2:
             import datetime as _dt
-            dates = [_dt.datetime.fromtimestamp(t).date() for t in ts[:len(eq)]]
+            tvals, eq = zip(*pairs)
+            dates = [_dt.datetime.fromtimestamp(t).date() for t in tvals]
             eq_pct = [(v / eq[0] - 1) * 100 for v in eq]
             fig = go.Figure()
             fig.add_trace(go.Scatter(x=dates, y=eq_pct, name="模擬帳戶",
@@ -3622,12 +3624,13 @@ def page_paper_trading():
     # ── 持倉 ───────────────────────────────────────────────────
     section("目前持倉")
     if positions:
+        def _nan(x): return x if isinstance(x, (int, float)) else np.nan  # None → NaN，避免 formatter 崩潰
         rows = []
         for sym, p in positions.items():
             rows.append({
-                "代碼": sym, "股數": p.get("qty"),
-                "均價": p.get("avg_entry_price"), "市值": p.get("market_value"),
-                "未實現損益": p.get("unrealized_pl"),
+                "代碼": sym, "股數": _nan(p.get("qty")),
+                "均價": _nan(p.get("avg_entry_price")), "市值": _nan(p.get("market_value")),
+                "未實現損益": _nan(p.get("unrealized_pl")),
                 "報酬%": (p.get("unrealized_plpc") or 0) * 100,
             })
         pdf = pd.DataFrame(rows).set_index("代碼")
@@ -3637,7 +3640,7 @@ def page_paper_trading():
             return ""
         st.dataframe(
             pdf.style.format({"股數": "{:g}", "均價": "{:.2f}", "市值": "{:,.0f}",
-                              "未實現損益": "{:+,.2f}", "報酬%": "{:+.2f}%"})
+                              "未實現損益": "{:+,.2f}", "報酬%": "{:+.2f}%"}, na_rep="—")
                .map(_pl, subset=["未實現損益", "報酬%"]),
             use_container_width=True,
         )
