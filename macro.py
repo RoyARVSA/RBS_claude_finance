@@ -146,7 +146,7 @@ def fetch_macro(api_key: str) -> dict:
     # CPI 年增率
     cpi_series = _fred_get(CPI_SERIES[0], api_key, limit=15)
     cpi_info = _cpi_yoy(cpi_series)
-    if cpi_info:
+    if cpi_info and cpi_info.get("value") is not None:
         cpi_info["label"] = CPI_SERIES[1]
         cpi_info["unit"] = CPI_SERIES[2]
         out["cpi"] = cpi_info

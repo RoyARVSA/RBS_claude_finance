@@ -1902,9 +1902,10 @@ def page_market_overview():
             with st.spinner("載入總經數據…"):
                 md = _macro.fetch_macro(fred_key)
             st.session_state["macro_data"] = md
-            if md:
-                order = ["fed_funds", "y10", "y2", "curve", "cpi", "unemploy"]
-                items = [(k, md[k]) for k in order if k in md]
+            order = ["fed_funds", "y10", "y2", "curve", "cpi", "unemploy"]
+            items = ([(k, md[k]) for k in order if k in md and md[k].get("value") is not None]
+                     if md else [])
+            if items:
                 cols_m = st.columns(len(items))
                 for col, (k, d) in zip(cols_m, items):
                     with col:
