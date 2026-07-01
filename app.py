@@ -1775,26 +1775,52 @@ def _fetch_market_snapshot():
         "XLI": "工業", "XLU": "公用事業", "XLRE": "房地產",
         "XLB": "原物料", "XLC": "通訊",
     }
-    def _fetch_close(tkr: str, period: str = "5d") -> pd.Series | None:
+    def _batch_closes(tickers: list[str], period: str) -> dict:
+        """一次批次下載多檔的收盤序列，穩健處理 MultiIndex 兩種版面。"""
         try:
-            raw = yf.download(tkr, period=period, auto_adjust=True, progress=False)
-            if raw.empty:
-                return None
-            col = raw["Close"].squeeze()
-            return col.dropna() if not col.empty else None
+            raw = yf.download(tickers, period=period, auto_adjust=True,
+                              progress=False, threads=True)
         except Exception:
-            return None
+            return {}
+        if raw is None or raw.empty:
+            return {}
+        out = {}
+        is_multi = isinstance(raw.columns, pd.MultiIndex)
+        for tkr in tickers:
+            try:
+                if is_multi:
+                    if ("Close", tkr) in raw.columns:
+                        s = raw[("Close", tkr)].dropna()
+                    elif (tkr, "Close") in raw.columns:
+                        s = raw[(tkr, "Close")].dropna()
+                    else:
+                        continue
+                else:                              # 單檔 → 平面欄位
+                    s = raw["Close"].squeeze().dropna()
+                if len(s) >= 2:
+                    out[tkr] = s
+            except Exception:
+                continue
+        return out
+
+    # 指數與板塊兩批並行下載（22 次序列 → 2 次批次，快 3-5 倍）
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        f_idx = ex.submit(_batch_closes, list(INDICES.keys()), "5d")
+        f_sec = ex.submit(_batch_closes, list(SECTORS.keys()), "2mo")
+        idx_closes = f_idx.result()
+        sec_closes = f_sec.result()
 
     snapshot: dict = {}
     for tkr, (name, cat) in INDICES.items():
-        s = _fetch_close(tkr, "5d")
+        s = idx_closes.get(tkr)
         if s is not None and len(s) >= 2:
             last, prev = float(s.iloc[-1]), float(s.iloc[-2])
             snapshot[name] = {"price": last, "chg": last / prev - 1, "cat": cat}
 
     sectors: dict = {}
     for tkr, name in SECTORS.items():
-        s = _fetch_close(tkr, "2mo")
+        s = sec_closes.get(tkr)
         if s is not None and len(s) >= 2:
             chg = float(s.iloc[-1] / s.iloc[-2] - 1)
             chg_1m = float(s.iloc[-1] / s.iloc[max(0, len(s) - 22)] - 1) if len(s) >= 22 else chg
