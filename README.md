@@ -13,7 +13,7 @@ Streamlit 網頁應用 + 獨立的訊號掃描 Bot（GitHub Actions 排程版 / 
 
 | 頁面 | 功能 |
 |------|------|
-| 🏠 市場總覽 | 即時指數/板塊/宏觀指標、市場快訊、**AI 自主市場分析** |
+| 🏠 市場總覽 | 即時指數/板塊/宏觀指標、**總經數據(FRED)**、市場快訊、**AI 自主市場分析** |
 | 📈 持倉分析 | 多資產組合：權益曲線、回撤、Sharpe、IR、Beta |
 | ⚠️ 風險管理 | VaR/CVaR、蒙地卡羅、Kupiec 回測、壓力測試、**風險平價配置** |
 | 🔍 股票研究 | K 線+RSI、AI 深度報告、市場篩選器、**訊號回測 + 參數最佳化** |
@@ -74,7 +74,8 @@ scan_signals.py         Bot 核心：訊號/評分/校準/防護/指令（排程
 bot_daemon.py           常駐版 Bot（重用 scan_signals 全部邏輯）
 backtest.py             Triple-Barrier 回測 + walk-forward + 參數最佳化
 quant_tools.py          部位配置與風險管理（部位/Kelly/風險平價）
-fundamentals.py         公司基本面：抓取 + 財務健康評分 + 估值旗標
+fundamentals.py         公司基本面：抓取 + 財務健康評分 + 估值旗標 + 財報日
+macro.py                總經數據（FRED）：Fed利率/殖利率曲線/CPI/失業率 + 判讀
 stock_db.py             選股資料庫（5 市場、30+ 產業、200+ 標的）
 rbs_lib.py              風險計算函式庫（VaR/CVaR/共變異數/情境）
 streamlit_app.py        雲端部署進入點

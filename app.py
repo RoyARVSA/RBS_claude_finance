@@ -1882,6 +1882,52 @@ def page_market_overview():
                 )
                 st.plotly_chart(fig, use_container_width=True)
 
+    # ── Macro (FRED) ───────────────────────────────────────────────
+    section("總經指標（FRED）")
+    import os as _os
+    fred_key = _os.environ.get("FRED_API_KEY", "")
+    try:
+        fred_key = fred_key or st.secrets.get("FRED_API_KEY", "")
+    except Exception:
+        pass
+    if not fred_key:
+        fred_key = st.text_input(
+            "FRED API Key（免費申請 fred.stlouisfed.org，或設 Secret FRED_API_KEY）",
+            type="password", key="fred_key", placeholder="填入後顯示總經數據",
+        )
+    st.session_state["macro_data"] = {}
+    if fred_key:
+        try:
+            import macro as _macro
+            with st.spinner("載入總經數據…"):
+                md = _macro.fetch_macro(fred_key)
+            st.session_state["macro_data"] = md
+            if md:
+                order = ["fed_funds", "y10", "y2", "curve", "cpi", "unemploy"]
+                items = [(k, md[k]) for k in order if k in md]
+                cols_m = st.columns(len(items))
+                for col, (k, d) in zip(cols_m, items):
+                    with col:
+                        chg = d.get("chg")
+                        color = "#9EA3B0" if chg is None else ("#4CAF50" if chg >= 0 else "#F44336")
+                        arrow = "" if chg is None else ("▲" if chg >= 0 else "▼")
+                        chg_s = "" if chg is None else f"{arrow} {chg:+.2f}"
+                        st.markdown(
+                            f"<div class='metric-card'><div class='metric-label'>{d['label']}</div>"
+                            f"<div class='metric-value' style='font-size:1.2rem'>{d['value']:.2f}%</div>"
+                            f"<div style='color:{color};font-size:0.8rem'>{chg_s}</div></div>",
+                            unsafe_allow_html=True,
+                        )
+                reg = _macro.macro_regime(md)
+                icon = {"caution": "🔴", "neutral": "🟡", "ok": "🟢"}.get(reg["risk"], "🟡")
+                st.markdown(f"{icon} " + "　".join(reg["signals"]))
+            else:
+                st.caption("無法載入總經數據，請確認 API key。")
+        except Exception as e:
+            st.caption(f"總經數據載入失敗：{e}")
+    else:
+        st.caption("設定 FRED API key 後可顯示 Fed 利率、殖利率曲線、CPI、失業率等總經指標。")
+
     # ── Quick news ─────────────────────────────────────────────────
     section("市場快訊")
     try:
@@ -1923,6 +1969,16 @@ def page_market_overview():
                             sorted_sec = sorted(sectors.items(), key=lambda x: -x[1]["chg"])
                             for name, data in sorted_sec:
                                 ctx_lines.append(f"{name}: {data['chg']:+.2%}  (近1月:{data['chg_1m']:+.2%})")
+                        # Macro (FRED) context
+                        _md = st.session_state.get("macro_data") or {}
+                        if _md:
+                            try:
+                                import macro as _macro
+                                ctx_lines.append("\n=== 總經指標（FRED）===")
+                                ctx_lines.append(_macro.macro_summary_text(_md))
+                                ctx_lines.extend(_macro.macro_regime(_md)["signals"])
+                            except Exception:
+                                pass
                         # Fetch top headlines for context
                         try:
                             import feedparser as _fp, re as _re
