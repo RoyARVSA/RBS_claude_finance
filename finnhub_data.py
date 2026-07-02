@@ -30,7 +30,7 @@ def _normalize(profile: dict, quote: dict, metric: dict) -> dict:
     """把 Finnhub 三個端點的原始 JSON 正規化成本專案欄位（純函數）。"""
     profile = profile or {}
     quote = quote or {}
-    m = (metric or {}).get("metric", {}) if metric else {}
+    m = ((metric or {}).get("metric") or {}) if metric else {}
 
     mc = _f(profile.get("marketCapitalization"))      # 單位：百萬
     return {

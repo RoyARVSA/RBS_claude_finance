@@ -2039,15 +2039,16 @@ def _cached_ticker_data(ticker: str, period: str):
             import finnhub_data as _fh
             fh = _fh.fetch(ticker, _fh_key)
             if fh:
-                info.setdefault("marketCap", fh.get("market_cap"))
-                info.setdefault("trailingPE", fh.get("pe"))
-                info.setdefault("trailingEps", fh.get("eps"))
-                info.setdefault("beta", fh.get("beta"))
-                info.setdefault("fiftyTwoWeekHigh", fh.get("high_52w"))
-                info.setdefault("fiftyTwoWeekLow", fh.get("low_52w"))
+                # 用「present-but-None 也補」的寫法（setdefault 只認 key 缺席，
+                # 部份限流時 key 常存在但值為 None，會漏補）
+                for _ik, _fk in (("marketCap", "market_cap"), ("trailingPE", "pe"),
+                                 ("trailingEps", "eps"), ("beta", "beta"),
+                                 ("fiftyTwoWeekHigh", "high_52w"),
+                                 ("fiftyTwoWeekLow", "low_52w"), ("longName", "name")):
+                    if info.get(_ik) is None and fh.get(_fk) is not None:
+                        info[_ik] = fh[_fk]
                 if fh.get("dividend_yield_pct") is not None and not info.get("dividendYield"):
                     info["dividendYield"] = fh["dividend_yield_pct"] / 100  # 存成小數（yfinance 慣例）
-                info.setdefault("longName", fh.get("name"))
         except Exception:
             pass
     try:
