@@ -218,19 +218,25 @@ with st.sidebar:
         use_container_width=True,
     )
     st.markdown("---")
+    # 依功能邏輯分組排序（相鄰即分組）：市場 → 選股研究 → 組合風險 → 交易監控 → 工具
     page = st.radio(
         "Navigation",
         [
+            # 市場面
             "🏠 市場總覽",
-            "📈 持倉分析",
-            "⚠️ 風險管理",
+            "📰 新聞情報",
+            # 選股與研究
             "🔍 股票研究",
             "🏢 公司分析",
-            "🚨 即時警報",
-            "🛠️ 交易工具",
-            "📉 模擬交易",
             "🏦 機構選股",
-            "📰 新聞情報",
+            # 組合與風險
+            "📈 持倉分析",
+            "⚠️ 風險管理",
+            "🛠️ 交易工具",
+            # 交易與監控
+            "🚨 即時警報",
+            "📉 模擬交易",
+            # 工具
             "📦 匯出報告",
         ],
         label_visibility="collapsed",
@@ -1814,6 +1820,22 @@ def page_risk_management():
 # PAGE: Stock Research (Screener + Individual AI Deep Dive)
 # ════════════════════════════════════════════════════════════════════
 
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_ticker_data(ticker: str, period: str):
+    """快取個股 info + 歷史（5 分鐘），避免每次改滑桿都重抓。"""
+    import yfinance as yf
+    tk = yf.Ticker(ticker)
+    try:
+        info = tk.info or {}
+    except Exception:
+        info = {}
+    try:
+        hist = tk.history(period=period, auto_adjust=True)
+    except Exception:
+        hist = pd.DataFrame()
+    return info, hist
+
+
 def page_stock_research():
     import yfinance as yf
 
@@ -1878,15 +1900,10 @@ def page_stock_research():
         else:
             with st.spinner(f"載入 {ticker_r} …"):
                 try:
-                    tkr_obj = yf.Ticker(ticker_r)
-                    try:
-                        info = tkr_obj.info or {}
-                    except Exception:
-                        info = {}
-                    hist = tkr_obj.history(period=period_r, auto_adjust=True)
+                    info, hist = _cached_ticker_data(ticker_r, period_r)
                 except Exception as e:
                     st.error(f"資料載入失敗：{e}")
-                    hist = pd.DataFrame()
+                    info, hist = {}, pd.DataFrame()
 
             if hist.empty:
                 st.error(f"找不到 {ticker_r} 的歷史資料，請確認代碼。")
@@ -2521,6 +2538,17 @@ def _send_email(smtp_host: str, port: int, user: str, pwd: str,
 # PAGE: Company Fundamental Analysis
 # ════════════════════════════════════════════════════════════════════
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def _cached_fundamentals(ticker: str):
+    """快取基本面 + 下次財報日（1 小時；基本面本就低頻）。"""
+    import fundamentals as fa
+    try:
+        ed = fa.next_earnings_date(ticker)
+    except Exception:
+        ed = None
+    return fa.fetch_fundamentals(ticker), ed
+
+
 def page_company_analysis():
     st.title("🏢 公司分析")
     st.caption("基本面體質分析 · 財務健康評分 · 估值 · 三表趨勢 · AI 解讀（資料來源 yfinance）")
@@ -2540,11 +2568,9 @@ def page_company_analysis():
 
     if run_fa and fa_tkr:
         with st.spinner(f"抓取 {fa_tkr} 基本面資料…"):
-            st.session_state["fa_data"] = fa.fetch_fundamentals(fa_tkr)
-            try:
-                st.session_state["fa_earnings"] = fa.next_earnings_date(fa_tkr)
-            except Exception:
-                st.session_state["fa_earnings"] = None
+            d, ed = _cached_fundamentals(fa_tkr)
+            st.session_state["fa_data"] = d
+            st.session_state["fa_earnings"] = ed
         st.session_state.pop("fa_ai_out", None)   # 換股時清掉舊的 AI 解讀
 
     data = st.session_state.get("fa_data")
