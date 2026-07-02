@@ -1,0 +1,22 @@
+[
+  {
+    "time": "2026-07-02T14:28:17Z",
+    "symbol": "ARKK",
+    "side": "buy",
+    "qty": 182,
+    "score": 0.665,
+    "reason": "評分 +0.67 ≥ 買進門檻 0.5",
+    "submitted": true,
+    "error": null
+  },
+  {
+    "time": "2026-07-02T14:28:17Z",
+    "symbol": "JPM",
+    "side": "buy",
+    "qty": 45,
+    "score": 0.621,
+    "reason": "評分 +0.62 ≥ 買進門檻 0.5",
+    "submitted": true,
+    "error": null
+  }
+]
