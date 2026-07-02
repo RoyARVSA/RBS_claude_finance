@@ -297,6 +297,23 @@ def fetch_fundamentals(ticker: str) -> dict:
         out["high_52w"] = _num(info.get("fiftyTwoWeekHigh"))
         out["low_52w"] = _num(info.get("fiftyTwoWeekLow"))
 
+        # .info 雲端常被限流 → 用較穩的 fast_info 補價格/市值/52週
+        try:
+            fi = tk.fast_info
+
+            def _fi(k):
+                try:
+                    v = fi[k]
+                    return float(v) if v is not None else None
+                except Exception:
+                    return None
+            out["price"] = out["price"] or _fi("last_price")
+            out["market_cap"] = out["market_cap"] or _fi("market_cap")
+            out["high_52w"] = out["high_52w"] or _fi("year_high")
+            out["low_52w"] = out["low_52w"] or _fi("year_low")
+        except Exception:
+            pass
+
         # ETF / 指數 / 基金：無基本面，提早回
         if out["quote_type"] in ("ETF", "INDEX", "MUTUALFUND", "CURRENCY", "CRYPTOCURRENCY"):
             out["ok"] = False

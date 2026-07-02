@@ -1992,9 +1992,33 @@ def _cached_ticker_data(ticker: str, period: str):
     import yfinance as yf
     tk = yf.Ticker(ticker)
     try:
-        info = tk.info or {}
+        info = dict(tk.info) if tk.info else {}
     except Exception:
         info = {}
+    # .info 在雲端常被 Yahoo 限流 → 用較穩的 fast_info 補市值/52週高低
+    try:
+        fi = tk.fast_info
+
+        def _fi(k):
+            try:
+                v = fi[k]
+                return float(v) if v is not None else None
+            except Exception:
+                return None
+        if not info.get("marketCap"):
+            v = _fi("market_cap")
+            if v:
+                info["marketCap"] = v
+        if not info.get("fiftyTwoWeekHigh"):
+            v = _fi("year_high")
+            if v:
+                info["fiftyTwoWeekHigh"] = v
+        if not info.get("fiftyTwoWeekLow"):
+            v = _fi("year_low")
+            if v:
+                info["fiftyTwoWeekLow"] = v
+    except Exception:
+        pass
     try:
         hist = tk.history(period=period, auto_adjust=True)
     except Exception:
