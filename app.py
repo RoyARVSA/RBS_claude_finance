@@ -1260,7 +1260,9 @@ def _fetch_market_snapshot():
                         s = raw[(tkr, "Close")].dropna()
                     else:
                         continue
-                else:                              # 單檔 → 平面欄位
+                else:                              # 平面欄位只在單檔時才對應該 ticker
+                    if len(tickers) != 1:
+                        continue
                     s = raw["Close"].squeeze().dropna()
                 if len(s) >= 2:
                     out[tkr] = s
@@ -3358,6 +3360,79 @@ def page_paper_trading():
             })
         st.dataframe(pd.DataFrame(jrows), use_container_width=True, hide_index=True)
         st.caption("每筆自動交易的決策評分與觸發原因（由 Bot 記錄，與上方 Alpaca 實際成交對照）。")
+
+        # ── 訊號實際表現（回算前進報酬，對照回測）──────────────
+        section("訊號實際表現（前進報酬）")
+        st.caption("把 Bot 實際發出的買訊，用「進場價 → 最新價」回算實測勝率——"
+                   "這是真實的向前測試（非歷史回測），驗證訊號到底有沒有用。")
+        if st.button("📈 計算訊號實測勝率", key="jstats_run"):
+            buys = [e for e in journal if e.get("side") == "buy" and e.get("submitted")]
+            syms = sorted({e["symbol"] for e in buys if e.get("symbol")})
+            if not syms:
+                st.info("尚無已成交的買進訊號可統計。")
+            else:
+                with st.spinner(f"抓取 {len(syms)} 檔價格回算…"):
+                    try:
+                        import yfinance as yf, datetime as _dt
+                        raw = yf.download(syms, period="1y", auto_adjust=True,
+                                          progress=False, threads=True)
+                        # 建每檔的收盤序列（穩健處理 MultiIndex）
+                        cser = {}
+                        multi = isinstance(raw.columns, pd.MultiIndex)
+                        for s in syms:
+                            try:
+                                if multi:
+                                    ser = raw[("Close", s)].dropna() if ("Close", s) in raw.columns else None
+                                else:
+                                    ser = raw["Close"].squeeze().dropna() if len(syms) == 1 else None
+                                if ser is not None and len(ser):
+                                    cser[s] = ser
+                            except Exception:
+                                continue
+
+                        def _price_at(sym, tiso):
+                            ser = cser.get(sym)
+                            if ser is None:
+                                return None
+                            try:
+                                d = _dt.datetime.fromisoformat(tiso.replace("Z", "+00:00")).date()
+                                sub = ser[ser.index.date >= d]
+                                return float(sub.iloc[0]) if len(sub) else None
+                            except Exception:
+                                return None
+
+                        def _price_now(sym):
+                            ser = cser.get(sym)
+                            return float(ser.iloc[-1]) if ser is not None and len(ser) else None
+
+                        stats = at.journal_win_stats(journal, _price_at, _price_now)
+                        st.session_state["jstats"] = stats
+                    except Exception as e:
+                        st.error(f"計算失敗：{e}")
+
+        js = st.session_state.get("jstats")
+        if js and js.get("trades"):
+            m1, m2, m3 = st.columns(3)
+            with m1: metric_card("訊號筆數", f"{js['trades']}")
+            with m2: metric_card("實測勝率", f"{js['win_rate']:.0%}",
+                                 positive=js['win_rate'] >= 0.5)
+            with m3: metric_card("平均前進報酬", f"{js['avg_return']:+.1%}",
+                                 positive=js['avg_return'] >= 0)
+            if js.get("best") and js.get("worst"):
+                st.caption(f"最佳：{js['best']['symbol']} {js['best']['return']:+.1%}　"
+                           f"最差：{js['worst']['symbol']} {js['worst']['return']:+.1%}")
+            pt = pd.DataFrame(js["per_trade"])
+            if not pt.empty:
+                pt = pt[["symbol", "time", "entry", "now", "return", "score", "win"]]
+                pt["time"] = pt["time"].str[:10]
+                st.dataframe(
+                    pt.rename(columns={"symbol": "代碼", "time": "進場日", "entry": "進場價",
+                                       "now": "最新價", "return": "報酬", "score": "評分", "win": "獲利"})
+                      .style.format({"進場價": "{:.2f}", "最新價": "{:.2f}",
+                                     "報酬": "{:+.1%}", "評分": "{:+.2f}"}),
+                    use_container_width=True, hide_index=True)
+            st.caption("⚠️ 為訊號發出後的 mark-to-market（未配對賣出、未計費用），"
+                       "與「回測」的差異即真實 vs 歷史模擬的落差。")
     else:
         st.info("尚無自動交易紀錄。開啟 Bot 的 `/autotrade on` 後，每筆自動交易的評分與原因會記在這裡。")
 

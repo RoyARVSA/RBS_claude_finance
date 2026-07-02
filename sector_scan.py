@@ -58,7 +58,8 @@ def aggregate_by_industry(rows: list[dict]) -> list[dict]:
         groups[r.get("industry", "?")].append(r)
 
     def _mean(items, key):
-        vals = [i[key] for i in items if i.get(key) is not None]
+        vals = [i[key] for i in items
+                if i.get(key) is not None and not (isinstance(i[key], float) and np.isnan(i[key]))]
         return sum(vals) / len(vals) if vals else None
 
     out = []
@@ -99,6 +100,8 @@ def _batch_closes(tickers: list[str], period: str) -> dict:
                 else:
                     continue
             else:
+                if len(tickers) != 1:   # 平面欄位只在單檔時才對應該 ticker
+                    continue
                 s = raw["Close"].squeeze().dropna()
             if len(s) >= 20:
                 out[tkr] = s
