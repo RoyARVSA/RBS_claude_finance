@@ -3686,6 +3686,26 @@ def page_paper_trading():
             })
         st.dataframe(pd.DataFrame(orows), use_container_width=True, hide_index=True)
 
+    # ── 交易日誌（含下單原因/評分）─────────────────────────────
+    section("交易日誌（為什麼交易）")
+    journal = at.load_journal(BASE_DIR / "trade_journal.json")
+    if journal:
+        jrows = []
+        for e in journal[-30:][::-1]:
+            sc = e.get("score")
+            jrows.append({
+                "時間": (e.get("time") or "")[:16].replace("T", " "),
+                "代碼": e.get("symbol"), "方向": e.get("side"),
+                "股數": e.get("qty"),
+                "評分": (round(sc, 2) if isinstance(sc, (int, float)) else None),
+                "原因": e.get("reason"),
+                "送出": "✅" if e.get("submitted") else "❌",
+            })
+        st.dataframe(pd.DataFrame(jrows), use_container_width=True, hide_index=True)
+        st.caption("每筆自動交易的決策評分與觸發原因（由 Bot 記錄，與上方 Alpaca 實際成交對照）。")
+    else:
+        st.info("尚無自動交易紀錄。開啟 Bot 的 `/autotrade on` 後，每筆自動交易的評分與原因會記在這裡。")
+
     st.caption("⚠️ Alpaca paper 為模擬環境，成交為理想化（無真實滑價/流動性）。"
                "自動下單由 Bot 的 /autotrade 控制，此頁僅檢視。")
 

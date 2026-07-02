@@ -26,6 +26,7 @@ Telegram 指令（傳給 Bot）：
   /earnings [天數]        – 觀察清單近期財報日（晨報也會自動提醒 N 天內財報）
   /autotrade on|off       – Alpaca 模擬自動交易總開關（預設關）
   /positions /pnl /closeall – 模擬持倉 / 帳戶報酬 / 一鍵平倉
+  /journal [N]            – 交易日誌（每筆自動交易的評分與原因）
   /briefing               – 立即生成每日 AI 晨報（每交易日 ET 08:30 自動推送）
   /set mtf_enabled on/off – 週線同向確認（日線分數與週線同向加強、背離減弱）
   /scan                   – 立即掃描（忽略靜音與市場狀態）
@@ -56,6 +57,7 @@ import yfinance as yf
 # ── Config ──────────────────────────────────────────────────────────────────
 
 STATE_FILE = Path(__file__).parent / "watchlist_state.json"
+JOURNAL_FILE = Path(__file__).parent / "trade_journal.json"
 
 DEFAULT_WATCHLIST = [
     "AAPL", "MSFT", "NVDA", "GOOGL", "AMZN",
@@ -264,6 +266,7 @@ def _cmd_help() -> str:
         "`/autotrade on|off` — 自動下模擬單（預設關）\n"
         "`/positions` — 目前持倉 + 損益\n"
         "`/pnl` — 帳戶淨值 + 報酬\n"
+        "`/journal [N]` — 交易日誌（含評分/原因）\n"
         "`/closeall` — 一鍵平倉\n"
         "`/scan` — 立即掃描（忽略靜音/冷卻）\n"
         "`/calibrate` — 回測校準訊號權重（自我優化）\n\n"
@@ -738,6 +741,26 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                     reply = "✅ 已送出全部平倉" if ok else f"❌ 平倉失敗：{msg}"
                 except Exception as e:
                     reply = f"❌ {e}"
+
+        elif cmd == "/journal":
+            n = max(1, int(args[0])) if args and args[0].isdigit() else 10  # 避免 /journal 0 顯示全部
+            try:
+                import alpaca_trader as at
+                log = at.load_journal(JOURNAL_FILE)
+            except Exception:
+                log = []
+            if not log:
+                reply = "📒 尚無自動交易紀錄（開 /autotrade on 後才會記錄）"
+            else:
+                lines = [f"📒 *交易日誌*（最近 {min(n, len(log))} 筆）\n"]
+                for e in log[-n:][::-1]:
+                    sc = e.get("score")
+                    sc_s = f"{sc:+.2f}" if isinstance(sc, (int, float)) else "—"
+                    icon = "✅" if e.get("submitted") else "❌"
+                    t = (e.get("time") or "")[:16].replace("T", " ")
+                    lines.append(f"{icon} {t}　{e.get('side','').upper()} {e.get('symbol')} "
+                                 f"x{e.get('qty')}　評分 {sc_s}")
+                reply = "\n".join(lines)
 
         else:
             reply = f"❓ 未知指令：{cmd}\n輸入 /help 查看說明"
@@ -1747,12 +1770,23 @@ def run_autotrade(state: dict, results: list[dict]) -> str | None:
         print("Autotrade: 無符合下單條件")
         return None
 
+    score_by_sym = {s["ticker"]: s.get("score") for s in scored}
+    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     lines = ["🤖 *自動交易執行*（Alpaca 模擬）"]
+    journal_entries = []
     for o in orders:
         ok, msg = at.submit_order(key, secret, o["symbol"], o["qty"], o["side"])
         icon = "✅" if ok else "❌"
         tail = "" if ok else f"（{msg}）"
         lines.append(f"{icon} {o['side'].upper()} {o['symbol']} x{int(o['qty'])} — {o['reason']}{tail}")
+        journal_entries.append({
+            "time": now_iso, "symbol": o["symbol"], "side": o["side"],
+            "qty": int(o["qty"]), "score": score_by_sym.get(o["symbol"]),
+            "reason": o["reason"], "submitted": ok,
+            "error": None if ok else msg,
+        })
+    if journal_entries:
+        at.append_journal(JOURNAL_FILE, journal_entries)
     print(f"Autotrade: 送出 {len(orders)} 筆")
     return "\n".join(lines)
 

@@ -27,6 +27,38 @@ ALPACA_DEFAULTS = {
     "risk_pct":          0.01,   # ATR 部位單筆風險
 }
 
+JOURNAL_CAP = 500   # 交易日誌保留最近筆數
+
+
+# ── 交易日誌（純檔案 I/O，離線可測；bot 寫、網頁讀）─────────────────────────────
+
+def load_journal(path) -> list:
+    """讀取交易日誌（list of dict）。不存在或壞檔回 []。"""
+    import json
+    from pathlib import Path
+    p = Path(path)
+    if not p.exists():
+        return []
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def append_journal(path, entries: list[dict], cap: int = JOURNAL_CAP) -> None:
+    """把新紀錄附加到日誌，保留最近 cap 筆後寫回。entries 為 dict list。"""
+    import json
+    from pathlib import Path
+    log = load_journal(path)
+    log.extend(entries)
+    if len(log) > cap:
+        log = log[-cap:]
+    try:
+        Path(path).write_text(json.dumps(log, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception as e:
+        print(f"journal write error: {e}")
+
 
 # ── 純決策邏輯（離線可測）──────────────────────────────────────────────────────
 
