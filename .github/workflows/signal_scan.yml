@@ -61,13 +61,13 @@ jobs:
           ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
         run: python scan_signals.py
 
-      - name: Commit updated watchlist state
+      - name: Commit updated state + trade journal
         run: |
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git config user.name  "github-actions[bot]"
-          git add watchlist_state.json 2>/dev/null || true
+          git add watchlist_state.json trade_journal.json 2>/dev/null || true
           git diff --staged --quiet && echo "No state changes." || \
-            git commit -m "chore: update watchlist_state.json [skip ci]"
+            git commit -m "chore: update bot state + trade journal [skip ci]"
 
       - name: Push state changes
         run: |
