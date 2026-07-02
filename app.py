@@ -1822,7 +1822,7 @@ def page_risk_management():
 
 @st.cache_data(ttl=300, show_spinner=False)
 def _cached_ticker_data(ticker: str, period: str):
-    """快取個股 info + 歷史（5 分鐘），避免每次改滑桿都重抓。"""
+    """快取個股 info + 歷史 + 新聞（5 分鐘），避免每次改滑桿都重抓。"""
     import yfinance as yf
     tk = yf.Ticker(ticker)
     try:
@@ -1833,7 +1833,11 @@ def _cached_ticker_data(ticker: str, period: str):
         hist = tk.history(period=period, auto_adjust=True)
     except Exception:
         hist = pd.DataFrame()
-    return info, hist
+    try:
+        news = tk.news or []
+    except Exception:
+        news = []
+    return info, hist, news
 
 
 def page_stock_research():
@@ -1900,10 +1904,10 @@ def page_stock_research():
         else:
             with st.spinner(f"載入 {ticker_r} …"):
                 try:
-                    info, hist = _cached_ticker_data(ticker_r, period_r)
+                    info, hist, news_data = _cached_ticker_data(ticker_r, period_r)
                 except Exception as e:
                     st.error(f"資料載入失敗：{e}")
-                    info, hist = {}, pd.DataFrame()
+                    info, hist, news_data = {}, pd.DataFrame(), []
 
             if hist.empty:
                 st.error(f"找不到 {ticker_r} 的歷史資料，請確認代碼。")
@@ -2001,7 +2005,7 @@ def page_stock_research():
                 # News
                 section("近期新聞")
                 try:
-                    news_items = tkr_obj.news or []
+                    news_items = news_data or []
                     for item in news_items[:6]:
                         from datetime import datetime as _dt
                         pub_t   = item.get("providerPublishTime", 0)
@@ -2035,7 +2039,7 @@ def page_stock_research():
                             metrics_ctx = "\n".join(f"- {l}: {v}" for l, v in metrics_r)
                             news_ctx = ""
                             try:
-                                for ni in (tkr_obj.news or [])[:5]:
+                                for ni in (news_data or [])[:5]:
                                     news_ctx += f"- {ni.get('title','')}\n"
                             except Exception:
                                 pass
