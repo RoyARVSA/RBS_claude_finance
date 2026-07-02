@@ -9,7 +9,7 @@ Streamlit 網頁應用 + 獨立的訊號掃描 Bot（GitHub Actions 排程版 / 
 
 ## 功能總覽
 
-### 📊 網頁儀表板（`app.py`，11 個頁面）
+### 📊 網頁儀表板（`app.py`，12 個頁面）
 
 | 頁面 | 功能 |
 |------|------|
@@ -18,6 +18,7 @@ Streamlit 網頁應用 + 獨立的訊號掃描 Bot（GitHub Actions 排程版 / 
 | ⚠️ 風險管理 | VaR/CVaR、蒙地卡羅、Kupiec 回測、壓力測試、**風險平價配置** |
 | 🔍 股票研究 | K 線+RSI、AI 深度報告、市場篩選器、**訊號回測 + 參數最佳化** |
 | 🏢 公司分析 | **基本面體質：財務健康評分、估值旗標、三表趨勢、AI 解讀** |
+| 🗂️ 產業總覽 | **一次掃描整個市場：產業強弱 vs 風險散佈、鑽取個股（可加基本面）** |
 | 🚨 即時警報 | 監控清單、盤中走勢、訊號掃描、Telegram/Email 推播 |
 | 🛠️ 交易工具 | 部位大小、**波動率目標部位**、Kelly、風險報酬比、複利 |
 | 📉 模擬交易 | **Alpaca 紙上交易：帳戶績效、持倉、權益曲線 vs SPY** |
@@ -92,13 +93,14 @@ streamlit run app.py
 ## 檔案結構
 
 ```
-app.py                  Streamlit 主程式（11 頁）
+app.py                  Streamlit 主程式（12 頁）
 scan_signals.py         Bot 核心：訊號/評分/校準/防護/指令（排程版進入點）
 bot_daemon.py           常駐版 Bot（重用 scan_signals 全部邏輯）
 backtest.py             Triple-Barrier 回測 + walk-forward + 參數最佳化
 quant_tools.py          部位配置與風險管理（部位/Kelly/風險平價）
 fundamentals.py         公司基本面：抓取 + 財務健康評分 + 估值旗標 + 財報日
 macro.py                總經數據（FRED）：Fed利率/殖利率曲線/CPI/失業率 + 判讀
+sector_scan.py          產業總覽：批次掃描 stock_db 全市場 + 產業風險彙總
 alpaca_trader.py        Alpaca 紙上交易：下單決策(decide_orders) + REST client
 stock_db.py             選股資料庫（5 市場、30+ 產業、200+ 標的）
 rbs_lib.py              風險計算函式庫（VaR/CVaR/共變異數/情境）

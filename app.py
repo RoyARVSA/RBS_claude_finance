@@ -228,6 +228,7 @@ with st.sidebar:
             # 選股與研究
             "🔍 股票研究",
             "🏢 公司分析",
+            "🗂️ 產業總覽",
             "🏦 機構選股",
             # 組合與風險
             "📈 持倉分析",
@@ -2539,6 +2540,132 @@ def _send_email(smtp_host: str, port: int, user: str, pwd: str,
 
 
 # ════════════════════════════════════════════════════════════════════
+# PAGE: Sector / Category Overview
+# ════════════════════════════════════════════════════════════════════
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _cached_sector_scan(market: str, industries: tuple, period: str, with_fund: bool):
+    """快取產業掃描結果（10 分鐘）。industries 用 tuple 以利快取雜湊。"""
+    import sector_scan as ss
+    from stock_db import ADB
+    mkt = ADB.get(market, {})
+    industry_map = {ind: mkt[ind]["tickers"] for ind in industries if ind in mkt}
+    return ss.scan_universe(industry_map, period=period, with_fundamentals=with_fund)
+
+
+def page_sector_overview():
+    st.title("🗂️ 產業總覽")
+    st.caption("一次掃描整個市場/產業的標的 · 產業強弱輪動 + 風險分佈 · 可鑽取個股")
+
+    try:
+        from stock_db import ADB, MKTS
+    except Exception:
+        st.error("找不到 stock_db.py，請確認已同步（Colab 需更新 Cell 2）。")
+        return
+
+    c1, c2, c3 = st.columns([1.2, 2, 1])
+    with c1:
+        mkt_label = st.selectbox("市場", list(MKTS.keys()), key="so_mkt")
+        market = MKTS[mkt_label]
+    all_inds = list(ADB.get(market, {}).keys())
+    with c2:
+        industries = st.multiselect("產業（可多選；預設全選）", all_inds,
+                                    default=all_inds, key="so_inds")
+    with c3:
+        period = st.selectbox("期間", ["3mo", "6mo", "1y"], index=1, key="so_period")
+
+    n_tkr = sum(len(ADB[market][i]["tickers"]) for i in industries if i in ADB.get(market, {}))
+    with_fund = st.checkbox(f"加入基本面 P/E、ROE（並行抓取，較慢；目前約 {n_tkr} 檔）",
+                            value=False, key="so_fund")
+    if with_fund and n_tkr > 80:
+        st.warning(f"⚠️ {n_tkr} 檔 + 基本面可能需 1-2 分鐘，建議先縮小產業範圍。")
+
+    if not industries:
+        st.info("請至少選一個產業。")
+        return
+
+    if st.button("🔍 開始掃描", type="primary", key="so_run"):
+        with st.spinner(f"掃描 {n_tkr} 檔（{len(industries)} 產業）…"):
+            try:
+                rows, ind_rows = _cached_sector_scan(market, tuple(industries), period, with_fund)
+                st.session_state["so_result"] = (rows, ind_rows, with_fund)
+            except Exception as e:
+                st.error(f"掃描失敗：{e}")
+
+    res = st.session_state.get("so_result")
+    if not res:
+        st.info("選好市場與產業後按「開始掃描」。")
+        return
+    rows, ind_rows, had_fund = res
+    if not rows:
+        st.warning("無法取得資料，請確認代碼或稍後再試。")
+        return
+    st.caption(f"成功分析 {len(rows)} 檔 / {len(ind_rows)} 產業")
+
+    # ── 產業：報酬 vs 風險 散佈 ────────────────────────────────
+    section("產業強弱 vs 風險")
+    idf = pd.DataFrame(ind_rows)
+    plot_df = idf.dropna(subset=["return_3m", "ann_vol"])
+    if not plot_df.empty:
+        fig = px.scatter(
+            plot_df, x="ann_vol", y="return_3m", size="count", text="industry",
+            color="sharpe", color_continuous_scale="RdYlGn", color_continuous_midpoint=0,
+        )
+        fig.update_traces(textposition="top center", textfont_size=9)
+        fig.add_hline(y=0, line_dash="dot", line_color="#888")
+        fig.update_layout(**PLOTLY_LAYOUT, height=460,
+                          xaxis_title="平均年化波動（風險）", yaxis_title="平均近3月報酬",
+                          xaxis_tickformat=".0%", yaxis_tickformat=".0%",
+                          title="右上=高報酬高風險，左上=高報酬低風險（最佳）")
+        st.plotly_chart(fig, use_container_width=True)
+
+    # ── 產業彙總表 ─────────────────────────────────────────────
+    section("產業排名（依近3月報酬）")
+    idisp = idf.rename(columns={"industry": "產業", "count": "檔數",
+                                "return_1m": "近1月", "return_3m": "近3月",
+                                "ann_vol": "年化波動", "sharpe": "Sharpe"}).set_index("產業")
+    def _c(v):
+        if isinstance(v, (int, float)) and not (isinstance(v, float) and np.isnan(v)):
+            return "color:#4CAF50" if v > 0 else ("color:#F44336" if v < 0 else "")
+        return ""
+    st.dataframe(
+        idisp.style.format({"近1月": "{:+.1%}", "近3月": "{:+.1%}",
+                            "年化波動": "{:.1%}", "Sharpe": "{:.2f}"}, na_rep="—")
+             .map(_c, subset=["近1月", "近3月"]),
+        use_container_width=True,
+    )
+
+    # ── 鑽取：個股明細 ─────────────────────────────────────────
+    section("個股明細（可鑽取產業）")
+    ind_names = ["（全部）"] + [r["industry"] for r in ind_rows]
+    pick = st.selectbox("選產業檢視個股", ind_names, key="so_drill")
+    sdf = pd.DataFrame(rows)
+    if pick != "（全部）":
+        sdf = sdf[sdf["industry"] == pick]
+    cols = ["ticker", "industry", "price", "return_1m", "return_3m",
+            "ann_vol", "sharpe", "max_dd", "rsi"]
+    if had_fund:
+        cols += ["pe", "roe"]
+    sdf = sdf[[c for c in cols if c in sdf.columns]].sort_values("return_3m", ascending=False)
+    ren = {"ticker": "代碼", "industry": "產業", "price": "現價", "return_1m": "近1月",
+           "return_3m": "近3月", "ann_vol": "年化波動", "sharpe": "Sharpe",
+           "max_dd": "最大回撤", "rsi": "RSI", "pe": "P/E", "roe": "ROE"}
+    fmt = {"現價": "{:.2f}", "近1月": "{:+.1%}", "近3月": "{:+.1%}", "年化波動": "{:.1%}",
+           "Sharpe": "{:.2f}", "最大回撤": "{:.1%}", "RSI": "{:.0f}", "P/E": "{:.1f}", "ROE": "{:.1%}"}
+    sdisp = sdf.rename(columns=ren).set_index("代碼")
+    st.dataframe(
+        sdisp.style.format({k: v for k, v in fmt.items() if k in sdisp.columns}, na_rep="—")
+             .map(_c, subset=[c for c in ["近1月", "近3月"] if c in sdisp.columns]),
+        use_container_width=True,
+    )
+    st.download_button("⬇ 下載明細 CSV",
+                       data=sdf.rename(columns=ren).to_csv(index=False).encode("utf-8"),
+                       file_name=f"sector_scan_{market}_{date.today()}.csv", mime="text/csv")
+    st.caption("指標為價格衍生（報酬/波動/Sharpe/回撤/RSI）"
+               + ("＋基本面 P/E、ROE" if had_fund else "") + "，資料 yfinance，僅供參考。")
+
+
+# ════════════════════════════════════════════════════════════════════
 # PAGE: Company Fundamental Analysis
 # ════════════════════════════════════════════════════════════════════
 
@@ -3491,6 +3618,7 @@ PAGES = {
     "⚠️ 風險管理":  page_risk_management,
     "🔍 股票研究":  page_stock_research,
     "🏢 公司分析":  page_company_analysis,
+    "🗂️ 產業總覽":  page_sector_overview,
     "🚨 即時警報":  page_alerts,
     "🛠️ 交易工具":  page_trading_tools,
     "📉 模擬交易":  page_paper_trading,
