@@ -3499,7 +3499,11 @@ def page_paper_trading():
 
     # ── 交易日誌（含下單原因/評分）─────────────────────────────
     section("交易日誌（為什麼交易）")
-    journal = at.load_journal(BASE_DIR / "trade_journal.json")
+    if not hasattr(at, "load_journal"):
+        st.info("交易日誌需要較新版 alpaca_trader.py。請重新啟動 App（Streamlit Cloud → Manage app → Reboot）以載入最新程式碼。")
+        journal = []
+    else:
+        journal = at.load_journal(BASE_DIR / "trade_journal.json")
     if journal:
         jrows = []
         for e in journal[-30:][::-1]:
