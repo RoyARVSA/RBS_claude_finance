@@ -9,7 +9,7 @@ Streamlit 網頁應用 + 獨立的訊號掃描 Bot（GitHub Actions 排程版 / 
 
 ## 功能總覽
 
-### 📊 網頁儀表板（`app.py`，12 個頁面）
+### 📊 網頁儀表板（`app.py`，11 個頁面）
 
 | 頁面 | 功能 |
 |------|------|
@@ -23,7 +23,6 @@ Streamlit 網頁應用 + 獨立的訊號掃描 Bot（GitHub Actions 排程版 / 
 | 📉 模擬交易 | **Alpaca 紙上交易：帳戶績效、持倉、權益曲線 vs SPY** |
 | 🏦 機構選股 | 6 步驟系統化選股（市場→策略→宏觀→資產類型→產業→標的）|
 | 📰 新聞情報 | 多來源 RSS 聚合、LLM 情緒分析、金融報告生成 |
-| 💳 信用模型 | WoE/IV、邏輯回歸、KS/AUC、評分卡 |
 | 📦 匯出報告 | 圖表 + KPI 表打包下載 |
 
 ### 🤖 訊號掃描 Bot（`scan_signals.py` / `bot_daemon.py`）
@@ -93,7 +92,7 @@ streamlit run app.py
 ## 檔案結構
 
 ```
-app.py                  Streamlit 主程式（12 頁）
+app.py                  Streamlit 主程式（11 頁）
 scan_signals.py         Bot 核心：訊號/評分/校準/防護/指令（排程版進入點）
 bot_daemon.py           常駐版 Bot（重用 scan_signals 全部邏輯）
 backtest.py             Triple-Barrier 回測 + walk-forward + 參數最佳化
