@@ -222,6 +222,8 @@ with st.sidebar:
     page = st.radio(
         "Navigation",
         [
+            # 助理
+            "💬 AI 助理",
             # 市場面
             "🏠 市場總覽",
             "📰 新聞情報",
@@ -1211,6 +1213,155 @@ def page_export():
             mime="application/zip",
         )
         st.success("Report generated!")
+
+
+# ════════════════════════════════════════════════════════════════════
+# PAGE: Conversational AI Assistant (Phase 1 — grounded context injection)
+# ════════════════════════════════════════════════════════════════════
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _universe_tickers() -> set:
+    """stock_db 全部代碼（供助理驗證代碼用）。"""
+    try:
+        from stock_db import ADB
+        out = set()
+        for mkt in ADB.values():
+            for ind in mkt.values():
+                out.update(ind.get("tickers", []))
+        return out
+    except Exception:
+        return set()
+
+
+def _assistant_fetch(tickers, intents, fred_key):
+    """依意圖抓取各標的與總經/大盤資料（重用快取 helper）。"""
+    import sector_scan as ssc
+    import fundamentals as fa
+    ticker_data = {}
+    for t in tickers:
+        d = {}
+        if intents & {"technical", "compare", "earnings"}:
+            try:
+                _info, hist, _news = _cached_ticker_data(t, "6mo")
+                if hist is not None and not hist.empty:
+                    d["tech"] = ssc.price_metrics(hist["Close"])
+            except Exception:
+                pass
+        if intents & {"fundamental", "compare"}:
+            try:
+                fund, ed = _cached_fundamentals(t)
+                if fund and fund.get("ok"):
+                    hs = fa.health_score(fund)
+                    d["fund"] = {"health": hs.get("score"), "pe": fund.get("pe"),
+                                 "roe": fund.get("roe"), "net_margin": fund.get("net_margin"),
+                                 "revenue_growth": fund.get("revenue_growth")}
+                if "earnings" in intents:
+                    d["earnings"] = ed.isoformat() if ed else None
+            except Exception:
+                pass
+        ticker_data[t] = d
+
+    macro_data = None
+    if "macro" in intents and fred_key:
+        try:
+            import macro as _m
+            md = _m.fetch_macro(fred_key)
+            if md:
+                macro_data = {"summary": _m.macro_summary_text(md),
+                              "signals": _m.macro_regime(md)["signals"]}
+        except Exception:
+            pass
+
+    market_data = None
+    if "market" in intents:
+        try:
+            snap, _sec = _fetch_market_snapshot()
+            market_data = {n: (v["price"], v["chg"]) for n, v in snap.items()
+                           if v["cat"] in ("index", "fear")}
+        except Exception:
+            pass
+    return ticker_data, macro_data, market_data
+
+
+def page_ai_assistant():
+    st.title("💬 AI 助理")
+    st.caption("財金研究副駕：用自然語言問個股/總經/大盤，AI 綜合技術+基本面回答（有據可查、風險優先）")
+
+    try:
+        import assistant as asst
+    except ImportError:
+        st.error("找不到 assistant.py，請確認已同步（Colab 需更新 Cell 2）。")
+        return
+
+    # API key（沿用其他 AI 頁的取得方式）
+    import os as _os
+    with st.expander("⚙️ 設定（API Key）", expanded=False):
+        ai_key = st.text_input("LLM API Key", type="password", key="asst_key",
+                               placeholder="sk-… 或 Anthropic key")
+        ai_model = st.selectbox("模型", ["claude-3-5-haiku-20241022",
+                                         "claude-3-5-sonnet-20241022",
+                                         "gpt-4o-mini", "gpt-4o"], key="asst_model")
+        ai_base = st.text_input("API Base URL（留空自動判斷）", "", key="asst_base")
+        fred_key = _os.environ.get("FRED_API_KEY", "")
+        try:
+            fred_key = fred_key or st.secrets.get("FRED_API_KEY", "")
+        except Exception:
+            pass
+        st.caption("問總經時若有 FRED key 會帶入利率/CPI 等數據。")
+
+    st.caption("範例：「比較 AAPL 和 MSFT 的財務體質」「台積電技術面如何」「現在總經環境對科技股有利嗎」")
+
+    if "asst_chat" not in st.session_state:
+        st.session_state["asst_chat"] = []
+
+    for m in st.session_state["asst_chat"]:
+        with st.chat_message(m["role"]):
+            st.markdown(m["content"])
+
+    q = st.chat_input("問我關於個股、總經或大盤…")
+    if q:
+        st.session_state["asst_chat"].append({"role": "user", "content": q})
+        with st.chat_message("user"):
+            st.markdown(q)
+
+        if not ai_key:
+            ans = "請先在上方「⚙️ 設定」填入 LLM API Key。"
+            with st.chat_message("assistant"):
+                st.markdown(ans)
+            st.session_state["asst_chat"].append({"role": "assistant", "content": ans})
+            return
+
+        universe = _universe_tickers()
+        tickers = asst.extract_tickers(q, universe)
+        intents = asst.detect_intents(q, bool(tickers))
+        with st.chat_message("assistant"):
+            with st.spinner(f"分析中…（{', '.join(tickers) if tickers else '總經/大盤'}）"):
+                try:
+                    td, macd, mkd = _assistant_fetch(tickers, intents, fred_key)
+                    ts = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M")
+                    context = asst.build_context(q, ts, intents, td, macd, mkd)
+                    # 帶入近期對話（純文字）+ 當前資料
+                    history = [{"role": m["role"], "content": m["content"]}
+                               for m in st.session_state["asst_chat"][:-1][-6:]]
+                    messages = ([{"role": "system", "content": asst.SYSTEM_PROMPT}]
+                                + history
+                                + [{"role": "user", "content": f"{context}\n\n問題：{q}"}])
+                    client = _llm_client(ai_key, ai_base, ai_model)
+                    resp = client.chat.completions.create(
+                        model=ai_model, messages=messages, temperature=0.3, max_tokens=1100)
+                    ans = resp.choices[0].message.content
+                except Exception as e:
+                    ans = f"分析失敗：{e}"
+                st.markdown(ans)
+                if tickers or intents:
+                    st.caption(f"🔎 已納入：{', '.join(tickers) if tickers else '—'}"
+                               f"　意圖：{', '.join(sorted(intents))}")
+        st.session_state["asst_chat"].append({"role": "assistant", "content": ans})
+
+    if st.session_state["asst_chat"]:
+        if st.button("🗑 清除對話", key="asst_clear"):
+            st.session_state["asst_chat"] = []
+            st.rerun()
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -3688,6 +3839,7 @@ def page_trading_tools():
 # ════════════════════════════════════════════════════════════════════
 
 PAGES = {
+    "💬 AI 助理":   page_ai_assistant,
     "🏠 市場總覽":  page_market_overview,
     "📈 持倉分析":  page_portfolio_performance,
     "⚠️ 風險管理":  page_risk_management,
