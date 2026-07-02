@@ -1820,7 +1820,47 @@ def page_stock_research():
     st.title("🔍 股票研究")
     st.caption("個股深度分析 · K 線 · RSI · AI 研究報告 · 市場篩選器")
 
-    tab1, tab2, tab3 = st.tabs(["📊 個股深度分析", "🔎 市場篩選器", "🧪 訊號回測"])
+    tab1, tab2, tab3, tab4 = st.tabs(
+        ["📊 個股深度分析", "🔎 市場篩選器", "🧪 訊號回測", "📺 TradingView"])
+
+    # ── Tab 4: TradingView 互動圖表（免費嵌入 widget，無需 key）──────
+    with tab4:
+        section("TradingView 專業互動圖表")
+        st.caption("縮放、畫線、數百種指標；直接嵌入 TradingView 免費 widget。")
+        tv_in = st.text_input("代碼（美股直接打 AAPL；台股 2330.TW；港股 0700.HK）",
+                              "AAPL", key="tv_sym").upper().strip()
+
+        def _tv_symbol(t: str) -> str:
+            if t.endswith(".TW"):
+                return "TWSE:" + t[:-3]
+            if t.endswith(".TWO"):
+                return "TPEX:" + t[:-4]
+            if t.endswith(".HK"):
+                return "HKEX:" + t[:-3].lstrip("0")
+            if t.endswith(".T"):
+                return "TSE:" + t[:-2]
+            return t   # 美股 TradingView 會自動解析
+
+        tv_sym = _tv_symbol(tv_in) if tv_in else "AAPL"
+        html = """
+        <div class="tradingview-widget-container">
+          <div id="tv_chart"></div>
+          <script src="https://s3.tradingview.com/tv.js"></script>
+          <script>
+          new TradingView.widget({
+            "autosize": true, "symbol": "%s", "interval": "D",
+            "timezone": "Asia/Taipei", "theme": "dark", "style": "1",
+            "locale": "zh_TW", "toolbar_bg": "#0F1117",
+            "enable_publishing": false, "allow_symbol_change": true,
+            "hide_side_toolbar": false, "studies": ["RSI@tv-basicstudies","MASimple@tv-basicstudies"],
+            "container_id": "tv_chart"
+          });
+          </script>
+        </div>
+        """ % tv_sym
+        import streamlit.components.v1 as _components
+        _components.html(html, height=600)
+        st.caption(f"目前顯示：{tv_sym}　·　圖內可直接改代碼/週期/指標。資料由 TradingView 提供。")
 
     # ── Tab 1: Individual deep dive ────────────────────────────────
     with tab1:
