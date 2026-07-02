@@ -60,6 +60,49 @@ def append_journal(path, entries: list[dict], cap: int = JOURNAL_CAP) -> None:
         print(f"journal write error: {e}")
 
 
+# ── 交易日誌績效統計（純邏輯，離線可測）────────────────────────────────────────
+
+def journal_win_stats(journal: list[dict], price_at, price_now) -> dict:
+    """
+    從交易日誌的「買進」訊號回算實際前進報酬（mark-to-market），對照回測。
+
+    journal:   [{time, symbol, side, qty, score, submitted, ...}]
+    price_at(symbol, time_iso) -> 進場價 or None（呼叫端提供，通常取當日/次日收盤）
+    price_now(symbol) -> 最新價 or None
+
+    只計 side=='buy' 且 submitted==True 的訊號。回:
+      {trades, win_rate, avg_return, best, worst, per_trade:[...]}
+    win = 前進報酬 > 0。這是「訊號發出後有沒有上漲」的實測，非精確已實現損益
+    （未配對賣出、未計費用），但可直接與回測期望對照。
+    """
+    per = []
+    for e in journal:
+        if e.get("side") != "buy" or not e.get("submitted"):
+            continue
+        sym, t = e.get("symbol"), e.get("time")
+        entry = price_at(sym, t) if sym and t else None
+        now = price_now(sym) if sym else None
+        if entry and now and entry > 0:
+            ret = now / entry - 1
+            per.append({"symbol": sym, "time": t, "entry": round(entry, 2),
+                        "now": round(now, 2), "return": ret,
+                        "score": e.get("score"), "win": ret > 0})
+    n = len(per)
+    if n == 0:
+        return {"trades": 0, "win_rate": None, "avg_return": None,
+                "best": None, "worst": None, "per_trade": []}
+    rets = [p["return"] for p in per]
+    wins = sum(1 for r in rets if r > 0)
+    return {
+        "trades": n,
+        "win_rate": wins / n,
+        "avg_return": sum(rets) / n,
+        "best": max(per, key=lambda p: p["return"]),
+        "worst": min(per, key=lambda p: p["return"]),
+        "per_trade": per,
+    }
+
+
 # ── 純決策邏輯（離線可測）──────────────────────────────────────────────────────
 
 def decide_orders(scored: list[dict], positions: dict, equity: float,
