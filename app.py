@@ -1309,7 +1309,11 @@ def page_ai_assistant():
             pass
         st.caption("問總經時若有 FRED key 會帶入利率/CPI 等數據。")
 
-    st.caption("範例：「比較 AAPL 和 MSFT 的財務體質」「台積電技術面如何」「現在總經環境對科技股有利嗎」")
+    force_syms = st.text_input(
+        "指定股票代碼（選填，逗號分隔）— 冷門/新標的抓不到時用這個強制納入",
+        "", key="asst_force", placeholder="VRT, PLTR, 2454.TW")
+    st.caption("範例：「比較 AAPL 和 MSFT 的財務體質」「台積電技術面如何」「現在總經環境對科技股有利嗎」"
+               "　·　代碼前加 `$`（如 `$VRT`）也能強制辨識。")
 
     if "asst_chat" not in st.session_state:
         st.session_state["asst_chat"] = []
@@ -1333,6 +1337,11 @@ def page_ai_assistant():
 
         universe = _universe_tickers()
         tickers = asst.extract_tickers(q, universe)
+        # 併入使用者手動指定的代碼（強制納入，去重保序）
+        for t in [x.strip().upper() for x in force_syms.split(",") if x.strip()]:
+            if t not in tickers:
+                tickers.append(t)
+        tickers = tickers[:5]
         intents = asst.detect_intents(q, bool(tickers))
         with st.chat_message("assistant"):
             with st.spinner(f"分析中…（{', '.join(tickers) if tickers else '總經/大盤'}）"):

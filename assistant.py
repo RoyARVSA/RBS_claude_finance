@@ -87,8 +87,14 @@ def extract_tickers(question: str, universe: set | None = None,
         if cand in universe:
             _add(cand)
 
-    # 4. 美股大寫（含 BRK-B 這類帶連字號）
-    for m in re.findall(r"\b[A-Z]{2,5}(?:-[A-Z])?\b", question):
+    # 4. Cashtag（$VRT / $vrt / $2330.TW）—— 明確指定，忽略大小寫、不受停用字限制
+    for m in re.findall(r"\$([A-Za-z]{1,5}(?:\.[A-Za-z]{1,3})?|\d{3,5}\.[A-Za-z]{1,3})",
+                        question):
+        _add(m.upper())
+
+    # 5. 美股大寫（含 BRK-B 帶連字號）；用 ASCII 前後界避免緊接中文時失效
+    #    (?<![A-Za-z]) / (?![A-Za-z])：中文、空白、標點都算邊界，只排除英文字母相連
+    for m in re.findall(r"(?<![A-Za-z])[A-Z]{2,5}(?:-[A-Z])?(?![A-Za-z])", question):
         base = m.split("-")[0]
         if base in STOPWORDS or m in STOPWORDS:
             continue
