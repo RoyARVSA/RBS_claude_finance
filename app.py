@@ -218,20 +218,26 @@ with st.sidebar:
         use_container_width=True,
     )
     st.markdown("---")
+    # 依功能邏輯分組排序（相鄰即分組）：市場 → 選股研究 → 組合風險 → 交易監控 → 工具
     page = st.radio(
         "Navigation",
         [
+            # 市場面
             "🏠 市場總覽",
-            "📈 持倉分析",
-            "⚠️ 風險管理",
+            "📰 新聞情報",
+            # 選股與研究
             "🔍 股票研究",
             "🏢 公司分析",
-            "🚨 即時警報",
-            "🛠️ 交易工具",
-            "📉 模擬交易",
+            "🗂️ 產業總覽",
             "🏦 機構選股",
-            "📰 新聞情報",
-            "💳 信用模型",
+            # 組合與風險
+            "📈 持倉分析",
+            "⚠️ 風險管理",
+            "🛠️ 交易工具",
+            # 交易與監控
+            "🚨 即時警報",
+            "📉 模擬交易",
+            # 工具
             "📦 匯出報告",
         ],
         label_visibility="collapsed",
@@ -241,106 +247,12 @@ with st.sidebar:
 
 
 # ════════════════════════════════════════════════════════════════════
-# PAGE: Overview / Risk Dashboard
-# ════════════════════════════════════════════════════════════════════
-
-def page_overview():
-    st.title("📊 Integrated Risk Dashboard")
-    st.caption("Single-asset VaR / CVaR, volatility, and correlation overview")
-
-    with st.sidebar:
-        st.markdown("### Settings")
-        tickers = st.multiselect(
-            "Assets",
-            ["AAPL", "MSFT", "GOOGL", "AMZN", "^GSPC", "SMH", "SOXX", "^VIX", "XSD", "SPY", "QQQ", "GLD"],
-            default=["AAPL", "MSFT", "^GSPC"],
-        )
-        start_date = st.date_input("Start Date", value=date(2020, 1, 1))
-        alpha = st.slider("Confidence Level", 0.80, 0.99, 0.95, 0.01)
-        vol_window = st.number_input("Vol Window (days)", 10, 252, 20)
-
-    if not tickers:
-        st.info("Select at least one asset from the sidebar.")
-        return
-
-    with st.spinner("Loading market data…"):
-        try:
-            px_df = load_price_data(tickers, start=str(start_date))
-        except Exception as e:
-            st.error(f"Data load error: {e}")
-            return
-
-    rets = px_df.pct_change().dropna()
-
-    # ── Summary table ──────────────────────────────────────────────
-    section("Risk Summary")
-    rows = []
-    for t in px_df.columns:
-        r = rets[t].dropna()
-        if len(r) < 30:
-            continue
-        rows.append(
-            {
-                "Ticker": t,
-                "Hist VaR": historical_var(r, alpha),
-                "CVaR": conditional_var(r, alpha),
-                "Δ-Normal VaR": delta_normal_var(r, alpha),
-                "Ann. Vol": r.std(ddof=1) * np.sqrt(252),
-                "Sharpe (ann.)": (r.mean() / r.std(ddof=1)) * np.sqrt(252) if r.std() else np.nan,
-                "Max DD": (r.add(1).cumprod() / r.add(1).cumprod().cummax() - 1).min(),
-            }
-        )
-    if rows:
-        summary = pd.DataFrame(rows).set_index("Ticker")
-        fmt = {c: "{:.2%}" for c in summary.columns}
-        st.dataframe(summary.style.format(fmt).background_gradient(cmap="RdYlGn", subset=["Sharpe (ann.)"]), use_container_width=True)
-
-    # ── Distribution charts ────────────────────────────────────────
-    section("Return Distributions")
-    cols = st.columns(min(len(px_df.columns), 3))
-    for i, t in enumerate(px_df.columns):
-        r = rets[t].dropna()
-        if len(r) < 30:
-            continue
-        var_h = historical_var(r, alpha)
-        cvar_h = conditional_var(r, alpha)
-        fig = go.Figure()
-        fig.add_trace(go.Histogram(x=r.values, nbinsx=60, name=t, marker_color="#1E88E5", opacity=0.75))
-        fig.add_vline(x=var_h, line_color="#F44336", line_dash="dash", annotation_text=f"VaR {var_h:.2%}")
-        fig.add_vline(x=cvar_h, line_color="#FF9800", line_dash="dot", annotation_text=f"CVaR {cvar_h:.2%}")
-        fig.update_layout(**PLOTLY_LAYOUT, title=f"{t} Returns", height=300, showlegend=False)
-        cols[i % 3].plotly_chart(fig, use_container_width=True)
-
-    # ── Rolling volatility ─────────────────────────────────────────
-    section("Rolling Volatility (Annualised)")
-    fig = go.Figure()
-    for t in px_df.columns:
-        rv = calculate_volatility(rets[t].dropna(), window=int(vol_window))
-        fig.add_trace(go.Scatter(x=rv.index, y=rv.values, name=t, mode="lines"))
-    fig.update_layout(**PLOTLY_LAYOUT, title=f"Rolling {vol_window}d Volatility", height=350)
-    st.plotly_chart(fig, use_container_width=True)
-
-    # ── Correlation heatmap ────────────────────────────────────────
-    section("Correlation Matrix")
-    corr = rets.corr()
-    fig = px.imshow(
-        corr,
-        text_auto=".2f",
-        color_continuous_scale="RdBu_r",
-        zmin=-1, zmax=1,
-        aspect="auto",
-    )
-    fig.update_layout(**PLOTLY_LAYOUT, title="Return Correlations", height=400)
-    st.plotly_chart(fig, use_container_width=True)
-
-
-# ════════════════════════════════════════════════════════════════════
 # PAGE: Portfolio Performance
 # ════════════════════════════════════════════════════════════════════
 
 def page_portfolio_performance():
-    st.title("📈 Portfolio Performance")
-    st.caption("Multi-asset portfolio analytics: equity curve, drawdown, Sharpe, IR, Beta")
+    st.title("📈 持倉分析")
+    st.caption("多資產組合分析：權益曲線、回撤、Sharpe、資訊比率、Beta")
 
     import yfinance as yf
 
@@ -506,446 +418,6 @@ def page_portfolio_performance():
 
 
 # ════════════════════════════════════════════════════════════════════
-# PAGE: Portfolio Risk
-# ════════════════════════════════════════════════════════════════════
-
-def page_portfolio_risk():
-    st.title("⚠️ Portfolio Risk")
-    st.caption("Delta-Normal & Historical VaR/CVaR, EWMA/LW covariance, Monte Carlo simulation")
-
-    with st.sidebar:
-        st.markdown("### Settings")
-        raw_tickers = st.text_input("Tickers (comma-separated)", "AAPL,MSFT,GOOGL,AMZN")
-        tickers = [t.strip().upper() for t in raw_tickers.split(",") if t.strip()]
-        if tickers:
-            raw_w = st.text_input("Weights (comma-separated, will normalise)", ",".join([f"{1/len(tickers):.4f}"] * len(tickers)))
-        start = st.date_input("Start Date", value=date(2020, 1, 1))
-        alpha = st.slider("Confidence Level", 0.80, 0.99, 0.95, 0.01)
-        hold_days = st.number_input("Holding Days", 1, 60, 1)
-        window = st.number_input("Lookback Window", 60, 2000, 252)
-        cov_method = st.selectbox("Covariance Method", ["hist", "ewma", "lw"], format_func=lambda x: {"hist": "Historical", "ewma": "EWMA (RiskMetrics)", "lw": "Ledoit-Wolf"}[x])
-        lam = st.slider("λ (EWMA)", 0.80, 0.99, 0.94, 0.01)
-        do_mc = st.checkbox("Monte Carlo simulation", value=True)
-        n_mc = st.select_slider("MC Paths", options=[1000, 5000, 10000, 50000], value=10000)
-
-    if not tickers:
-        st.info("Enter tickers in the sidebar.")
-        return
-
-    try:
-        ws = np.array([float(x.strip()) for x in raw_w.split(",") if x.strip()])
-        ws = ws / ws.sum()
-        if len(ws) != len(tickers):
-            raise ValueError
-    except Exception:
-        ws = np.repeat(1 / len(tickers), len(tickers))
-
-    with st.spinner("Loading data…"):
-        try:
-            px_df = load_price_data(tickers, start=str(start))
-        except Exception as e:
-            st.error(f"Data error: {e}")
-            return
-
-    w_series = pd.Series(ws, index=px_df.columns)
-    with st.spinner("Computing risk metrics…"):
-        res = portfolio_var(
-            px_df, w_series, alpha=alpha, hold_days=int(hold_days),
-            window=int(window), cov_method=cov_method, lam=lam,
-            as_of_value=float((px_df.iloc[-1] * w_series).sum()),
-        )
-
-    section("Portfolio Risk Metrics")
-    c1, c2, c3, c4, c5 = st.columns(5)
-    with c1: metric_card("VaR (%)", f"{res.var_pct:.3%}", positive=False)
-    with c2: metric_card("CVaR (%)", f"{res.cvar_pct:.3%}", positive=False)
-    with c3: metric_card("Ann. Vol", f"{res.vol_ann:.3%}")
-    with c4: metric_card("VaR (USD)", f"${res.value_var:,.0f}", positive=False)
-    with c5: metric_card("CVaR (USD)", f"${res.value_cvar:,.0f}", positive=False)
-
-    tab1, tab2 = st.tabs(["Covariance", "Monte Carlo P&L"])
-
-    with tab1:
-        section("Covariance Matrix")
-        fig = px.imshow(res.cov, text_auto=".4f", color_continuous_scale="Blues", aspect="auto")
-        fig.update_layout(**PLOTLY_LAYOUT, title="Covariance Matrix", height=400)
-        st.plotly_chart(fig, use_container_width=True)
-
-    with tab2:
-        if do_mc:
-            with st.spinner(f"Running {n_mc:,} MC paths…"):
-                pnl = mc_portfolio_pnl(px_df, w_series, days=int(hold_days), n=int(n_mc), cov_method=cov_method, lam=lam, window=int(window))
-            mc_var = np.percentile(pnl, (1 - alpha) * 100)
-            mc_cvar = pnl[pnl <= mc_var].mean()
-            c1, c2 = st.columns(2)
-            with c1: metric_card("MC VaR (USD)", f"${-mc_var:,.0f}", positive=False)
-            with c2: metric_card("MC CVaR (USD)", f"${-mc_cvar:,.0f}", positive=False)
-            fig = go.Figure()
-            fig.add_trace(go.Histogram(x=pnl, nbinsx=80, marker_color="#1E88E5", opacity=0.8, name="P&L"))
-            fig.add_vline(x=mc_var, line_color="#F44336", line_dash="dash", annotation_text=f"VaR {mc_var:,.0f}")
-            fig.add_vline(x=mc_cvar, line_color="#FF9800", line_dash="dot", annotation_text=f"CVaR {mc_cvar:,.0f}")
-            fig.update_layout(**PLOTLY_LAYOUT, title=f"Monte Carlo P&L Distribution ({n_mc:,} paths)", height=420)
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("Enable Monte Carlo in the sidebar.")
-
-
-# ════════════════════════════════════════════════════════════════════
-# PAGE: VaR Backtest
-# ════════════════════════════════════════════════════════════════════
-
-def page_var_backtest():
-    st.title("🔁 VaR Backtesting")
-    st.caption("Kupiec POF test with rolling VaR vs realised returns")
-
-    with st.sidebar:
-        st.markdown("### Settings")
-        raw_tickers = st.text_input("Tickers (comma-separated)", "AAPL,MSFT,GOOGL,AMZN")
-        tickers = [t.strip().upper() for t in raw_tickers.split(",") if t.strip()]
-        if tickers:
-            raw_w = st.text_input("Weights", ",".join([f"{1/len(tickers):.4f}"] * len(tickers)))
-        start = st.date_input("Start Date", value=date(2018, 1, 1))
-        alpha = st.slider("Confidence Level", 0.80, 0.99, 0.95, 0.01)
-        window = st.number_input("Rolling Window", 60, 2000, 250)
-        cov_method = st.selectbox("Covariance", ["hist", "ewma", "lw"], format_func=lambda x: {"hist": "Historical", "ewma": "EWMA", "lw": "Ledoit-Wolf"}[x])
-        lam = st.slider("λ (EWMA)", 0.80, 0.99, 0.94, 0.01)
-        run = st.button("Run Backtest", use_container_width=True, type="primary")
-
-    if not run:
-        st.info("Configure parameters and click **Run Backtest**.")
-        return
-
-    try:
-        ws = np.array([float(x.strip()) for x in raw_w.split(",") if x.strip()])
-        ws = ws / ws.sum()
-        if len(ws) != len(tickers):
-            raise ValueError
-    except Exception:
-        ws = np.repeat(1 / len(tickers), len(tickers))
-
-    with st.spinner("Loading data and computing rolling VaR…"):
-        try:
-            px_df = load_price_data(tickers, start=str(start))
-            w = pd.Series(ws, index=px_df.columns)
-            var_series = rolling_portfolio_var(px_df, w, alpha=alpha, window=int(window), cov_method=cov_method, lam=lam)
-            port_ret = (px_df.pct_change().dropna() @ w).reindex(var_series.index)
-            kup = kupiec_pof_test(port_ret, var_series, alpha)
-        except Exception as e:
-            st.error(f"Error: {e}")
-            return
-
-    section("Kupiec POF Test")
-    c1, c2, c3, c4 = st.columns(4)
-    p_ok = kup.p_value > 0.05 if pd.notna(kup.p_value) else None
-    with c1: metric_card("Exceptions", str(kup.exceptions))
-    with c2: metric_card("Expected", f"{kup.expected:.1f}")
-    with c3: metric_card("Exc. Ratio", f"{kup.ratio:.4f}")
-    with c4: metric_card("p-value", f"{kup.p_value:.4f}" if pd.notna(kup.p_value) else "N/A", positive=p_ok)
-
-    if pd.notna(kup.p_value):
-        if kup.p_value > 0.05:
-            st.success("✅ Model not rejected at 5% significance (p > 0.05)")
-        else:
-            st.warning("⚠️ Model rejected at 5% significance (p ≤ 0.05) — consider recalibrating")
-
-    section("Rolling VaR vs Realised Returns")
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=port_ret.index, y=port_ret.values, name="Portfolio Return", line=dict(color="#1E88E5", width=1), opacity=0.7))
-    fig.add_trace(go.Scatter(x=var_series.index, y=var_series.values, name=f"VaR ({alpha:.0%})", line=dict(color="#F44336", width=2)))
-
-    exceptions = port_ret[port_ret < var_series.reindex(port_ret.index)]
-    fig.add_trace(go.Scatter(x=exceptions.index, y=exceptions.values, mode="markers", name="Exceptions", marker=dict(color="#FF9800", size=8, symbol="x")))
-    fig.update_layout(**PLOTLY_LAYOUT, title="Rolling VaR Backtest", height=450, yaxis_title="Daily Return")
-    st.plotly_chart(fig, use_container_width=True)
-
-
-# ════════════════════════════════════════════════════════════════════
-# PAGE: Scenarios & Stress
-# ════════════════════════════════════════════════════════════════════
-
-def page_scenarios():
-    st.title("💥 Scenarios & Stress Testing")
-    st.caption("Custom per-asset shocks and historical scenario replay")
-
-    with st.sidebar:
-        st.markdown("### Settings")
-        raw_tickers = st.text_input("Tickers (comma-separated)", "AAPL,MSFT,GOOGL,AMZN")
-        tickers = [t.strip().upper() for t in raw_tickers.split(",") if t.strip()]
-        if tickers:
-            raw_w = st.text_input("Weights", ",".join([f"{1/len(tickers):.4f}"] * len(tickers)))
-        start_dl = st.date_input("Data Start", value=date(2020, 1, 1))
-        notional = st.number_input("Portfolio Notional (USD)", min_value=1000.0, value=100_000.0, step=1000.0)
-
-    if not tickers:
-        st.info("Enter tickers in the sidebar.")
-        return
-
-    try:
-        ws = np.array([float(x.strip()) for x in raw_w.split(",") if x.strip()])
-        ws = ws / ws.sum()
-        if len(ws) != len(tickers):
-            raise ValueError
-    except Exception:
-        ws = np.repeat(1 / len(tickers), len(tickers))
-
-    with st.spinner("Loading data…"):
-        try:
-            px_df = load_price_data(tickers, start=str(start_dl))
-        except Exception as e:
-            st.error(f"Data error: {e}")
-            return
-
-    w = pd.Series(ws, index=px_df.columns, dtype=float)
-    data_min = px_df.index.min().date()
-    data_max = px_df.index.max().date()
-    st.caption(f"Data available: **{data_min}** → **{data_max}** ({len(px_df):,} rows)")
-
-    tab1, tab2, tab3 = st.tabs(["Custom Scenario", "Historical Replay", "Predefined Scenarios"])
-
-    # ── A: Custom shocks ───────────────────────────────────────────
-    with tab1:
-        section("Per-Asset Shock Inputs")
-        shock_df = pd.DataFrame({"Ticker": list(w.index), "Shock (%)": [0.0] * len(w)})
-        edited = st.data_editor(shock_df, use_container_width=True, key="shock_edit")
-        shocks = {row["Ticker"]: float(row.get("Shock (%)", 0.0)) / 100.0 for _, row in edited.iterrows()}
-
-        if st.button("Run Scenario", type="primary", key="run_scn"):
-            shocks_vec = np.array([shocks.get(t, 0.0) for t in w.index], dtype=float)
-            pnl = scenario_pnl_value(w, shocks, notional)
-            port_ret_val = float(np.dot(w.values, shocks_vec))
-            new_val = notional * (1 + port_ret_val)
-
-            c1, c2, c3 = st.columns(3)
-            with c1: metric_card("Portfolio Return", f"{port_ret_val:.2%}", positive=port_ret_val >= 0)
-            with c2: metric_card("P&L (USD)", f"${pnl:,.0f}", positive=pnl >= 0)
-            with c3: metric_card("New Value (USD)", f"${new_val:,.0f}", positive=new_val >= notional)
-
-            section("Asset Contribution (basis points)")
-            contrib = pd.DataFrame({
-                "Weight (%)": w.values * 100,
-                "Shock (%)": shocks_vec * 100,
-                "Contribution (bp)": w.values * shocks_vec * 10_000,
-            }, index=w.index)
-            fig = px.bar(
-                contrib.reset_index(), x="index", y="Contribution (bp)",
-                color="Contribution (bp)", color_continuous_scale="RdYlGn",
-                template="plotly_dark", text_auto=".1f",
-            )
-            fig.update_layout(**PLOTLY_LAYOUT, title="Contribution per Asset", height=350, xaxis_title="Ticker")
-            st.plotly_chart(fig, use_container_width=True)
-            st.dataframe(contrib.style.format({"Weight (%)": "{:.2f}", "Shock (%)": "{:.2f}", "Contribution (bp)": "{:.1f}"}), use_container_width=True)
-
-    # ── B: Historical replay ───────────────────────────────────────
-    with tab2:
-        section("Historical Replay (Real Returns)")
-        c1, c2 = st.columns(2)
-        with c1:
-            sdate = st.date_input("Start", value=max(data_min, date(2020, 1, 1)), min_value=data_min, max_value=data_max, key="rep_s")
-        with c2:
-            edate = st.date_input("End", value=data_max, min_value=data_min, max_value=data_max, key="rep_e")
-
-        if st.button("Run Replay", type="primary", key="run_rep"):
-            if sdate > edate:
-                st.error("Start must be before End.")
-            else:
-                res = historical_replay(px_df, w, str(sdate), str(edate), notional=notional)
-                rows_used = int(res.get("Rows", 0) or 0)
-                c1, c2, c3, c4 = st.columns(4)
-                with c1: metric_card("Return", f"{res.get('Return', 0):.2%}", positive=res.get("Return", 0) >= 0)
-                with c2: metric_card("P&L (USD)", f"${res.get('PnL', 0):,.0f}", positive=res.get("PnL", 0) >= 0)
-                with c3: metric_card("Max Drawdown", f"{res.get('MaxDD', 0):.2%}", positive=False)
-                with c4: metric_card("Rows Used", str(rows_used))
-
-                if rows_used < 2:
-                    st.warning(f"Insufficient data for selected period (rows = {rows_used}). Available: {data_min} ~ {data_max}")
-
-    # ── C: Predefined scenarios ────────────────────────────────────
-    with tab3:
-        section("Predefined Stress Scenarios")
-        SCENARIOS = {
-            "COVID Crash (Mar 2020)": {t: -0.35 for t in tickers},
-            "GFC 2008 Peak (-40%)": {t: -0.40 for t in tickers},
-            "Tech Selloff (-20%)": {t: -0.20 for t in ["AAPL", "MSFT", "GOOGL", "AMZN"] if t in tickers},
-            "Rate Shock (+200bp) – bonds -10%": {t: -0.10 for t in ["AGG", "BND", "MBB", "SHY"] if t in tickers},
-            "Mild Rally (+10%)": {t: 0.10 for t in tickers},
-        }
-        results = []
-        for name, shock in SCENARIOS.items():
-            s_vec = np.array([shock.get(t, 0.0) for t in w.index])
-            r = float(np.dot(w.values, s_vec))
-            pnl = notional * r
-            results.append({"Scenario": name, "Return": r, "P&L (USD)": pnl})
-
-        scn_df = pd.DataFrame(results)
-        fig = px.bar(scn_df, x="Scenario", y="P&L (USD)", color="P&L (USD)",
-                     color_continuous_scale="RdYlGn", template="plotly_dark", text_auto=",.0f")
-        fig.update_layout(**PLOTLY_LAYOUT, title="Scenario P&L Summary", height=380)
-        st.plotly_chart(fig, use_container_width=True)
-        st.dataframe(
-            scn_df.style.format({"Return": "{:.2%}", "P&L (USD)": "${:,.0f}"}),
-            use_container_width=True,
-        )
-
-
-# ════════════════════════════════════════════════════════════════════
-# PAGE: Correlation & Rolling Beta
-# ════════════════════════════════════════════════════════════════════
-
-def page_corr_beta():
-    st.title("🔗 Correlation & Rolling Beta")
-
-    with st.sidebar:
-        st.markdown("### Settings")
-        raw_tickers = st.text_input("Tickers (comma-separated)", "AAPL,MSFT,GOOGL,AMZN,^GSPC")
-        tickers = [t.strip().upper() for t in raw_tickers.split(",") if t.strip()]
-        start = st.date_input("Start Date", value=date(2020, 1, 1))
-        roll_w = st.number_input("Rolling Window (days)", 30, 1000, 126)
-        bench = st.text_input("Benchmark", "^GSPC")
-
-    if not tickers:
-        st.info("Enter tickers.")
-        return
-
-    with st.spinner("Loading data…"):
-        try:
-            px_df = load_price_data(tickers, start=str(start))
-        except Exception as e:
-            st.error(f"Data error: {e}")
-            return
-
-    r = px_df.pct_change().dropna()
-
-    tab1, tab2, tab3 = st.tabs(["Correlation Heatmap", "Rolling Beta", "Return Scatter"])
-
-    with tab1:
-        section("Correlation Matrix")
-        corr = r.corr()
-        fig = px.imshow(corr, text_auto=".2f", color_continuous_scale="RdBu_r", zmin=-1, zmax=1, aspect="auto")
-        fig.update_layout(**PLOTLY_LAYOUT, title="Pairwise Correlation", height=450)
-        st.plotly_chart(fig, use_container_width=True)
-
-    with tab2:
-        if bench in r.columns:
-            section(f"Rolling {roll_w}d Beta vs {bench}")
-            fig = go.Figure()
-            for t in [x for x in r.columns if x != bench]:
-                df_b = pd.concat([r[t], r[bench]], axis=1).dropna()
-                beta_roll = (
-                    df_b[t].rolling(int(roll_w)).cov(df_b[bench])
-                    / df_b[bench].rolling(int(roll_w)).var()
-                )
-                fig.add_trace(go.Scatter(x=beta_roll.index, y=beta_roll.values, name=t, mode="lines"))
-            fig.add_hline(y=1, line_dash="dot", line_color="gray", annotation_text="Beta=1")
-            fig.update_layout(**PLOTLY_LAYOUT, title=f"Rolling Beta vs {bench}", height=420)
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.warning(f"Benchmark '{bench}' not in loaded tickers. Add it to the tickers list.")
-
-    with tab3:
-        section("Return Scatter Matrix")
-        if len(r.columns) <= 6:
-            fig = px.scatter_matrix(r, dimensions=r.columns.tolist(), template="plotly_dark")
-            fig.update_layout(**PLOTLY_LAYOUT, height=600, title="Pairwise Return Scatter")
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("Showing top 6 assets for readability.")
-            fig = px.scatter_matrix(r.iloc[:, :6], dimensions=r.columns[:6].tolist(), template="plotly_dark")
-            fig.update_layout(**PLOTLY_LAYOUT, height=600)
-            st.plotly_chart(fig, use_container_width=True)
-
-
-# ════════════════════════════════════════════════════════════════════
-# PAGE: Credit Model
-# ════════════════════════════════════════════════════════════════════
-
-def page_credit():
-    st.title("💳 Credit Risk – Scorecard Pipeline")
-    st.caption("WoE / IV feature analysis, Logistic Regression, KS / AUC, Score Transform")
-
-    file = st.file_uploader("Upload CSV with a `default` (0/1) column", type=["csv"])
-    if not file:
-        st.info("Upload a credit dataset to get started. The file must include a `default` column (0 = good, 1 = default).")
-        return
-
-    df = pd.read_csv(file)
-    if "default" not in df.columns:
-        st.error("The file must contain a column named `default` (0/1).")
-        return
-
-    st.success(f"Loaded {len(df):,} rows × {len(df.columns)} columns")
-    st.dataframe(df.head(5), use_container_width=True)
-
-    numeric_cols = [c for c in df.columns if c != "default" and pd.api.types.is_numeric_dtype(df[c])]
-    feats = st.multiselect("Select features for modelling", numeric_cols, default=numeric_cols[:min(5, len(numeric_cols))])
-    bins = st.slider("WoE Bins", 4, 20, 10)
-
-    if not feats:
-        st.info("Select at least one feature.")
-        return
-
-    if st.button("Run WoE/IV + Train LR", type="primary"):
-        from sklearn.linear_model import LogisticRegression
-        from sklearn.metrics import roc_auc_score
-
-        # ── WoE / IV ────────────────────────────────────────────────
-        section("Information Value (IV) Ranking")
-        iv_list = []
-        for f in feats:
-            woe_df, iv = calculate_woe_iv(df[[*feats, "default"]], f, "default", bins=bins)
-            iv_list.append({"Feature": f, "IV": iv, "Predictive Power": "Strong" if iv > 0.3 else "Medium" if iv > 0.1 else "Weak"})
-        iv_df = pd.DataFrame(iv_list).sort_values("IV", ascending=False)
-        fig = px.bar(iv_df, x="Feature", y="IV", color="Predictive Power",
-                     color_discrete_map={"Strong": "#4CAF50", "Medium": "#FF9800", "Weak": "#F44336"},
-                     template="plotly_dark", text_auto=".3f")
-        fig.update_layout(**PLOTLY_LAYOUT, height=350, title="IV per Feature")
-        st.plotly_chart(fig, use_container_width=True)
-        st.dataframe(iv_df, use_container_width=True)
-
-        # ── Logistic Regression ──────────────────────────────────────
-        section("Logistic Regression")
-        X = df[feats].fillna(df[feats].median())
-        y = df["default"].astype(int)
-        model = LogisticRegression(max_iter=1000).fit(X, y)
-        proba = model.predict_proba(X)[:, 1]
-        auc = roc_auc_score(y, proba)
-
-        s = pd.DataFrame({"y": y, "score": proba}).sort_values("score")
-        s["cum_pos"] = (s["y"] == 1).cumsum() / max((s["y"] == 1).sum(), 1)
-        s["cum_neg"] = (s["y"] == 0).cumsum() / max((s["y"] == 0).sum(), 1)
-        ks = (s["cum_pos"] - s["cum_neg"]).abs().max()
-
-        c1, c2 = st.columns(2)
-        with c1: metric_card("AUC (in-sample)", f"{auc:.3f}", positive=auc > 0.7)
-        with c2: metric_card("KS Statistic", f"{ks:.3f}", positive=ks > 0.3)
-
-        # ── ROC Curve ───────────────────────────────────────────────
-        from sklearn.metrics import roc_curve
-        fpr, tpr, _ = roc_curve(y, proba)
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=fpr, y=tpr, fill="tozeroy", name=f"ROC (AUC={auc:.3f})", line=dict(color="#1E88E5")))
-        fig.add_trace(go.Scatter(x=[0, 1], y=[0, 1], line=dict(dash="dash", color="gray"), name="Random"))
-        fig.update_layout(**PLOTLY_LAYOUT, title="ROC Curve", height=380, xaxis_title="FPR", yaxis_title="TPR")
-        st.plotly_chart(fig, use_container_width=True)
-
-        # ── Score Transform ──────────────────────────────────────────
-        section("Score Distribution")
-        scores = scorecard_transform(proba)
-        result_df = pd.DataFrame({"PD": proba, "Score": scores, "Default": y})
-        fig = px.histogram(result_df, x="Score", color="Default", nbins=50,
-                           color_discrete_map={0: "#1E88E5", 1: "#F44336"},
-                           template="plotly_dark", barmode="overlay", opacity=0.7)
-        fig.update_layout(**PLOTLY_LAYOUT, title="Score Distribution by Outcome", height=380)
-        st.plotly_chart(fig, use_container_width=True)
-
-        st.download_button(
-            "⬇ Download Scores CSV",
-            data=result_df.to_csv(index=False).encode("utf-8"),
-            file_name="credit_scores.csv",
-            mime="text/csv",
-        )
-
-
-# ════════════════════════════════════════════════════════════════════
 # PAGE: News & Sentiment
 # ════════════════════════════════════════════════════════════════════
 
@@ -971,8 +443,8 @@ def _llm_client(api_key: str, api_base: str, model: str):
 
 
 def page_news_sentiment():
-    st.title("📰 News & Sentiment Analysis")
-    st.caption("Fetch financial news and score sentiment via LLM API")
+    st.title("📰 新聞情報")
+    st.caption("多來源財經新聞聚合、LLM 情緒分析、金融報告生成")
 
     tab1, tab2, tab3 = st.tabs(["Live News Feed", "Sentiment Analysis", "Financial Report"])
 
@@ -1686,7 +1158,7 @@ def page_stock_selector():
 # ════════════════════════════════════════════════════════════════════
 
 def page_export():
-    st.title("📦 Export Report")
+    st.title("📦 匯出報告")
     st.caption("Generate and download a summary zip of charts and KPI tables")
 
     st.markdown(
@@ -1727,15 +1199,8 @@ def page_export():
                 "Files:\n"
                 "  metadata.csv       – Report metadata\n"
                 "  session_data.csv   – Session data (if enabled)\n\n"
-                "Pages available:\n"
-                "  1. Overview / Risk Dashboard\n"
-                "  2. Portfolio Performance\n"
-                "  3. Portfolio Risk (VaR/CVaR/MC)\n"
-                "  4. VaR Backtest (Kupiec)\n"
-                "  5. Scenarios & Stress\n"
-                "  6. Correlation & Rolling Beta\n"
-                "  7. Credit Model (WoE/IV/LR)\n"
-                "  8. News & Sentiment\n"
+                "頁面：市場總覽 / 持倉分析 / 風險管理 / 股票研究 / 公司分析 /\n"
+                "      即時警報 / 交易工具 / 模擬交易 / 機構選股 / 新聞情報\n"
             )
             z.writestr("README.txt", readme)
 
@@ -1795,7 +1260,9 @@ def _fetch_market_snapshot():
                         s = raw[(tkr, "Close")].dropna()
                     else:
                         continue
-                else:                              # 單檔 → 平面欄位
+                else:                              # 平面欄位只在單檔時才對應該 ticker
+                    if len(tickers) != 1:
+                        continue
                     s = raw["Close"].squeeze().dropna()
                 if len(s) >= 2:
                     out[tkr] = s
@@ -2356,13 +1823,73 @@ def page_risk_management():
 # PAGE: Stock Research (Screener + Individual AI Deep Dive)
 # ════════════════════════════════════════════════════════════════════
 
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_ticker_data(ticker: str, period: str):
+    """快取個股 info + 歷史 + 新聞（5 分鐘），避免每次改滑桿都重抓。"""
+    import yfinance as yf
+    tk = yf.Ticker(ticker)
+    try:
+        info = tk.info or {}
+    except Exception:
+        info = {}
+    try:
+        hist = tk.history(period=period, auto_adjust=True)
+    except Exception:
+        hist = pd.DataFrame()
+    try:
+        news = tk.news or []
+    except Exception:
+        news = []
+    return info, hist, news
+
+
 def page_stock_research():
     import yfinance as yf
 
     st.title("🔍 股票研究")
     st.caption("個股深度分析 · K 線 · RSI · AI 研究報告 · 市場篩選器")
 
-    tab1, tab2, tab3 = st.tabs(["📊 個股深度分析", "🔎 市場篩選器", "🧪 訊號回測"])
+    tab1, tab2, tab3, tab4 = st.tabs(
+        ["📊 個股深度分析", "🔎 市場篩選器", "🧪 訊號回測", "📺 TradingView"])
+
+    # ── Tab 4: TradingView 互動圖表（免費嵌入 widget，無需 key）──────
+    with tab4:
+        section("TradingView 專業互動圖表")
+        st.caption("縮放、畫線、數百種指標；直接嵌入 TradingView 免費 widget。")
+        tv_in = st.text_input("代碼（美股直接打 AAPL；台股 2330.TW；港股 0700.HK）",
+                              "AAPL", key="tv_sym").upper().strip()
+
+        def _tv_symbol(t: str) -> str:
+            if t.endswith(".TW"):
+                return "TWSE:" + t[:-3]
+            if t.endswith(".TWO"):
+                return "TPEX:" + t[:-4]
+            if t.endswith(".HK"):
+                return "HKEX:" + t[:-3].lstrip("0")
+            if t.endswith(".T"):
+                return "TSE:" + t[:-2]
+            return t   # 美股 TradingView 會自動解析
+
+        tv_sym = _tv_symbol(tv_in) if tv_in else "AAPL"
+        html = """
+        <div class="tradingview-widget-container">
+          <div id="tv_chart"></div>
+          <script src="https://s3.tradingview.com/tv.js"></script>
+          <script>
+          new TradingView.widget({
+            "autosize": true, "symbol": "%s", "interval": "D",
+            "timezone": "Asia/Taipei", "theme": "dark", "style": "1",
+            "locale": "zh_TW", "toolbar_bg": "#0F1117",
+            "enable_publishing": false, "allow_symbol_change": true,
+            "hide_side_toolbar": false, "studies": ["RSI@tv-basicstudies","MASimple@tv-basicstudies"],
+            "container_id": "tv_chart"
+          });
+          </script>
+        </div>
+        """ % tv_sym
+        import streamlit.components.v1 as _components
+        _components.html(html, height=600)
+        st.caption(f"目前顯示：{tv_sym}　·　圖內可直接改代碼/週期/指標。資料由 TradingView 提供。")
 
     # ── Tab 1: Individual deep dive ────────────────────────────────
     with tab1:
@@ -2380,15 +1907,10 @@ def page_stock_research():
         else:
             with st.spinner(f"載入 {ticker_r} …"):
                 try:
-                    tkr_obj = yf.Ticker(ticker_r)
-                    try:
-                        info = tkr_obj.info or {}
-                    except Exception:
-                        info = {}
-                    hist = tkr_obj.history(period=period_r, auto_adjust=True)
+                    info, hist, news_data = _cached_ticker_data(ticker_r, period_r)
                 except Exception as e:
                     st.error(f"資料載入失敗：{e}")
-                    hist = pd.DataFrame()
+                    info, hist, news_data = {}, pd.DataFrame(), []
 
             if hist.empty:
                 st.error(f"找不到 {ticker_r} 的歷史資料，請確認代碼。")
@@ -2486,7 +2008,7 @@ def page_stock_research():
                 # News
                 section("近期新聞")
                 try:
-                    news_items = tkr_obj.news or []
+                    news_items = news_data or []
                     for item in news_items[:6]:
                         from datetime import datetime as _dt
                         pub_t   = item.get("providerPublishTime", 0)
@@ -2520,7 +2042,7 @@ def page_stock_research():
                             metrics_ctx = "\n".join(f"- {l}: {v}" for l, v in metrics_r)
                             news_ctx = ""
                             try:
-                                for ni in (tkr_obj.news or [])[:5]:
+                                for ni in (news_data or [])[:5]:
                                     news_ctx += f"- {ni.get('title','')}\n"
                             except Exception:
                                 pass
@@ -3020,8 +2542,145 @@ def _send_email(smtp_host: str, port: int, user: str, pwd: str,
 
 
 # ════════════════════════════════════════════════════════════════════
+# PAGE: Sector / Category Overview
+# ════════════════════════════════════════════════════════════════════
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _cached_sector_scan(market: str, industries: tuple, period: str, with_fund: bool):
+    """快取產業掃描結果（10 分鐘）。industries 用 tuple 以利快取雜湊。"""
+    import sector_scan as ss
+    from stock_db import ADB
+    mkt = ADB.get(market, {})
+    industry_map = {ind: mkt[ind]["tickers"] for ind in industries if ind in mkt}
+    return ss.scan_universe(industry_map, period=period, with_fundamentals=with_fund)
+
+
+def page_sector_overview():
+    st.title("🗂️ 產業總覽")
+    st.caption("一次掃描整個市場/產業的標的 · 產業強弱輪動 + 風險分佈 · 可鑽取個股")
+
+    try:
+        from stock_db import ADB, MKTS
+    except Exception:
+        st.error("找不到 stock_db.py，請確認已同步（Colab 需更新 Cell 2）。")
+        return
+
+    c1, c2, c3 = st.columns([1.2, 2, 1])
+    with c1:
+        mkt_label = st.selectbox("市場", list(MKTS.keys()), key="so_mkt")
+        market = MKTS[mkt_label]
+    all_inds = list(ADB.get(market, {}).keys())
+    with c2:
+        industries = st.multiselect("產業（可多選；預設全選）", all_inds,
+                                    default=all_inds, key="so_inds")
+    with c3:
+        period = st.selectbox("期間", ["3mo", "6mo", "1y"], index=1, key="so_period")
+
+    n_tkr = sum(len(ADB[market][i]["tickers"]) for i in industries if i in ADB.get(market, {}))
+    with_fund = st.checkbox(f"加入基本面 P/E、ROE（並行抓取，較慢；目前約 {n_tkr} 檔）",
+                            value=False, key="so_fund")
+    if with_fund and n_tkr > 80:
+        st.warning(f"⚠️ {n_tkr} 檔 + 基本面可能需 1-2 分鐘，建議先縮小產業範圍。")
+
+    if not industries:
+        st.info("請至少選一個產業。")
+        return
+
+    if st.button("🔍 開始掃描", type="primary", key="so_run"):
+        with st.spinner(f"掃描 {n_tkr} 檔（{len(industries)} 產業）…"):
+            try:
+                rows, ind_rows = _cached_sector_scan(market, tuple(industries), period, with_fund)
+                st.session_state["so_result"] = (rows, ind_rows, with_fund)
+            except Exception as e:
+                st.error(f"掃描失敗：{e}")
+
+    res = st.session_state.get("so_result")
+    if not res:
+        st.info("選好市場與產業後按「開始掃描」。")
+        return
+    rows, ind_rows, had_fund = res
+    if not rows:
+        st.warning("無法取得資料，請確認代碼或稍後再試。")
+        return
+    st.caption(f"成功分析 {len(rows)} 檔 / {len(ind_rows)} 產業")
+
+    # ── 產業：報酬 vs 風險 散佈 ────────────────────────────────
+    section("產業強弱 vs 風險")
+    idf = pd.DataFrame(ind_rows)
+    plot_df = idf.dropna(subset=["return_3m", "ann_vol"])
+    if not plot_df.empty:
+        fig = px.scatter(
+            plot_df, x="ann_vol", y="return_3m", size="count", text="industry",
+            color="sharpe", color_continuous_scale="RdYlGn", color_continuous_midpoint=0,
+        )
+        fig.update_traces(textposition="top center", textfont_size=9)
+        fig.add_hline(y=0, line_dash="dot", line_color="#888")
+        fig.update_layout(**PLOTLY_LAYOUT, height=460,
+                          xaxis_title="平均年化波動（風險）", yaxis_title="平均近3月報酬",
+                          xaxis_tickformat=".0%", yaxis_tickformat=".0%",
+                          title="右上=高報酬高風險，左上=高報酬低風險（最佳）")
+        st.plotly_chart(fig, use_container_width=True)
+
+    # ── 產業彙總表 ─────────────────────────────────────────────
+    section("產業排名（依近3月報酬）")
+    idisp = idf.rename(columns={"industry": "產業", "count": "檔數",
+                                "return_1m": "近1月", "return_3m": "近3月",
+                                "ann_vol": "年化波動", "sharpe": "Sharpe"}).set_index("產業")
+    def _c(v):
+        if isinstance(v, (int, float)) and not (isinstance(v, float) and np.isnan(v)):
+            return "color:#4CAF50" if v > 0 else ("color:#F44336" if v < 0 else "")
+        return ""
+    st.dataframe(
+        idisp.style.format({"近1月": "{:+.1%}", "近3月": "{:+.1%}",
+                            "年化波動": "{:.1%}", "Sharpe": "{:.2f}"}, na_rep="—")
+             .map(_c, subset=["近1月", "近3月"]),
+        use_container_width=True,
+    )
+
+    # ── 鑽取：個股明細 ─────────────────────────────────────────
+    section("個股明細（可鑽取產業）")
+    ind_names = ["（全部）"] + [r["industry"] for r in ind_rows]
+    pick = st.selectbox("選產業檢視個股", ind_names, key="so_drill")
+    sdf = pd.DataFrame(rows)
+    if pick != "（全部）":
+        sdf = sdf[sdf["industry"] == pick]
+    cols = ["ticker", "industry", "price", "return_1m", "return_3m",
+            "ann_vol", "sharpe", "max_dd", "rsi"]
+    if had_fund:
+        cols += ["pe", "roe"]
+    sdf = sdf[[c for c in cols if c in sdf.columns]].sort_values("return_3m", ascending=False)
+    ren = {"ticker": "代碼", "industry": "產業", "price": "現價", "return_1m": "近1月",
+           "return_3m": "近3月", "ann_vol": "年化波動", "sharpe": "Sharpe",
+           "max_dd": "最大回撤", "rsi": "RSI", "pe": "P/E", "roe": "ROE"}
+    fmt = {"現價": "{:.2f}", "近1月": "{:+.1%}", "近3月": "{:+.1%}", "年化波動": "{:.1%}",
+           "Sharpe": "{:.2f}", "最大回撤": "{:.1%}", "RSI": "{:.0f}", "P/E": "{:.1f}", "ROE": "{:.1%}"}
+    sdisp = sdf.rename(columns=ren).set_index("代碼")
+    st.dataframe(
+        sdisp.style.format({k: v for k, v in fmt.items() if k in sdisp.columns}, na_rep="—")
+             .map(_c, subset=[c for c in ["近1月", "近3月"] if c in sdisp.columns]),
+        use_container_width=True,
+    )
+    st.download_button("⬇ 下載明細 CSV",
+                       data=sdf.rename(columns=ren).to_csv(index=False).encode("utf-8"),
+                       file_name=f"sector_scan_{market}_{date.today()}.csv", mime="text/csv")
+    st.caption("指標為價格衍生（報酬/波動/Sharpe/回撤/RSI）"
+               + ("＋基本面 P/E、ROE" if had_fund else "") + "，資料 yfinance，僅供參考。")
+
+
+# ════════════════════════════════════════════════════════════════════
 # PAGE: Company Fundamental Analysis
 # ════════════════════════════════════════════════════════════════════
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _cached_fundamentals(ticker: str):
+    """快取基本面 + 下次財報日（1 小時；基本面本就低頻）。"""
+    import fundamentals as fa
+    try:
+        ed = fa.next_earnings_date(ticker)
+    except Exception:
+        ed = None
+    return fa.fetch_fundamentals(ticker), ed
+
 
 def page_company_analysis():
     st.title("🏢 公司分析")
@@ -3042,11 +2701,9 @@ def page_company_analysis():
 
     if run_fa and fa_tkr:
         with st.spinner(f"抓取 {fa_tkr} 基本面資料…"):
-            st.session_state["fa_data"] = fa.fetch_fundamentals(fa_tkr)
-            try:
-                st.session_state["fa_earnings"] = fa.next_earnings_date(fa_tkr)
-            except Exception:
-                st.session_state["fa_earnings"] = None
+            d, ed = _cached_fundamentals(fa_tkr)
+            st.session_state["fa_data"] = d
+            st.session_state["fa_earnings"] = ed
         st.session_state.pop("fa_ai_out", None)   # 換股時清掉舊的 AI 解讀
 
     data = st.session_state.get("fa_data")
@@ -3703,6 +3360,79 @@ def page_paper_trading():
             })
         st.dataframe(pd.DataFrame(jrows), use_container_width=True, hide_index=True)
         st.caption("每筆自動交易的決策評分與觸發原因（由 Bot 記錄，與上方 Alpaca 實際成交對照）。")
+
+        # ── 訊號實際表現（回算前進報酬，對照回測）──────────────
+        section("訊號實際表現（前進報酬）")
+        st.caption("把 Bot 實際發出的買訊，用「進場價 → 最新價」回算實測勝率——"
+                   "這是真實的向前測試（非歷史回測），驗證訊號到底有沒有用。")
+        if st.button("📈 計算訊號實測勝率", key="jstats_run"):
+            buys = [e for e in journal if e.get("side") == "buy" and e.get("submitted")]
+            syms = sorted({e["symbol"] for e in buys if e.get("symbol")})
+            if not syms:
+                st.info("尚無已成交的買進訊號可統計。")
+            else:
+                with st.spinner(f"抓取 {len(syms)} 檔價格回算…"):
+                    try:
+                        import yfinance as yf, datetime as _dt
+                        raw = yf.download(syms, period="1y", auto_adjust=True,
+                                          progress=False, threads=True)
+                        # 建每檔的收盤序列（穩健處理 MultiIndex）
+                        cser = {}
+                        multi = isinstance(raw.columns, pd.MultiIndex)
+                        for s in syms:
+                            try:
+                                if multi:
+                                    ser = raw[("Close", s)].dropna() if ("Close", s) in raw.columns else None
+                                else:
+                                    ser = raw["Close"].squeeze().dropna() if len(syms) == 1 else None
+                                if ser is not None and len(ser):
+                                    cser[s] = ser
+                            except Exception:
+                                continue
+
+                        def _price_at(sym, tiso):
+                            ser = cser.get(sym)
+                            if ser is None:
+                                return None
+                            try:
+                                d = _dt.datetime.fromisoformat(tiso.replace("Z", "+00:00")).date()
+                                sub = ser[ser.index.date >= d]
+                                return float(sub.iloc[0]) if len(sub) else None
+                            except Exception:
+                                return None
+
+                        def _price_now(sym):
+                            ser = cser.get(sym)
+                            return float(ser.iloc[-1]) if ser is not None and len(ser) else None
+
+                        stats = at.journal_win_stats(journal, _price_at, _price_now)
+                        st.session_state["jstats"] = stats
+                    except Exception as e:
+                        st.error(f"計算失敗：{e}")
+
+        js = st.session_state.get("jstats")
+        if js and js.get("trades"):
+            m1, m2, m3 = st.columns(3)
+            with m1: metric_card("訊號筆數", f"{js['trades']}")
+            with m2: metric_card("實測勝率", f"{js['win_rate']:.0%}",
+                                 positive=js['win_rate'] >= 0.5)
+            with m3: metric_card("平均前進報酬", f"{js['avg_return']:+.1%}",
+                                 positive=js['avg_return'] >= 0)
+            if js.get("best") and js.get("worst"):
+                st.caption(f"最佳：{js['best']['symbol']} {js['best']['return']:+.1%}　"
+                           f"最差：{js['worst']['symbol']} {js['worst']['return']:+.1%}")
+            pt = pd.DataFrame(js["per_trade"])
+            if not pt.empty:
+                pt = pt[["symbol", "time", "entry", "now", "return", "score", "win"]]
+                pt["time"] = pt["time"].str[:10]
+                st.dataframe(
+                    pt.rename(columns={"symbol": "代碼", "time": "進場日", "entry": "進場價",
+                                       "now": "最新價", "return": "報酬", "score": "評分", "win": "獲利"})
+                      .style.format({"進場價": "{:.2f}", "最新價": "{:.2f}",
+                                     "報酬": "{:+.1%}", "評分": "{:+.2f}"}),
+                    use_container_width=True, hide_index=True)
+            st.caption("⚠️ 為訊號發出後的 mark-to-market（未配對賣出、未計費用），"
+                       "與「回測」的差異即真實 vs 歷史模擬的落差。")
     else:
         st.info("尚無自動交易紀錄。開啟 Bot 的 `/autotrade on` 後，每筆自動交易的評分與原因會記在這裡。")
 
@@ -3963,12 +3693,12 @@ PAGES = {
     "⚠️ 風險管理":  page_risk_management,
     "🔍 股票研究":  page_stock_research,
     "🏢 公司分析":  page_company_analysis,
+    "🗂️ 產業總覽":  page_sector_overview,
     "🚨 即時警報":  page_alerts,
     "🛠️ 交易工具":  page_trading_tools,
     "📉 模擬交易":  page_paper_trading,
     "🏦 機構選股":  page_stock_selector,
     "📰 新聞情報":  page_news_sentiment,
-    "💳 信用模型":  page_credit,
     "📦 匯出報告":  page_export,
 }
 

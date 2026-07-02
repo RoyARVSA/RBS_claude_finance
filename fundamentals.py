@@ -387,6 +387,19 @@ def fetch_fundamentals(ticker: str) -> dict:
         return out
 
 
+def quick_valuation(ticker: str) -> dict:
+    """輕量抓 P/E + ROE（只讀 .info，不抓三表）供規模化掃描用。缺則 None。"""
+    out = {"pe": None, "roe": None}
+    try:
+        import yfinance as yf
+        info = yf.Ticker(ticker).info or {}
+        out["pe"] = _num(info.get("trailingPE"))
+        out["roe"] = _num(info.get("returnOnEquity"))
+    except Exception:
+        pass
+    return out
+
+
 def next_earnings_date(ticker: str):
     """
     取得下一次財報日（datetime.date）或 None。
