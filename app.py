@@ -1343,6 +1343,9 @@ def page_ai_assistant():
                     # 帶入近期對話（純文字）+ 當前資料
                     history = [{"role": m["role"], "content": m["content"]}
                                for m in st.session_state["asst_chat"][:-1][-6:]]
+                    # Anthropic 相容端點要求對話由 user 起始 → 去掉開頭的 assistant
+                    while history and history[0]["role"] == "assistant":
+                        history.pop(0)
                     messages = ([{"role": "system", "content": asst.SYSTEM_PROMPT}]
                                 + history
                                 + [{"role": "user", "content": f"{context}\n\n問題：{q}"}])
