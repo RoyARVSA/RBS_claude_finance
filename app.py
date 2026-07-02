@@ -2025,9 +2025,10 @@ def page_stock_research():
             return t   # 美股 TradingView 會自動解析
 
         tv_sym = _tv_symbol(tv_in) if tv_in else "AAPL"
+        tv_h = st.slider("圖表高度 (px)", 400, 1100, 780, 20, key="tv_h")
         html = """
-        <div class="tradingview-widget-container">
-          <div id="tv_chart"></div>
+        <div class="tradingview-widget-container" style="height:%dpx;width:100%%">
+          <div id="tv_chart" style="height:100%%;width:100%%"></div>
           <script src="https://s3.tradingview.com/tv.js"></script>
           <script>
           new TradingView.widget({
@@ -2040,10 +2041,10 @@ def page_stock_research():
           });
           </script>
         </div>
-        """ % tv_sym
+        """ % (tv_h, tv_sym)
         import streamlit.components.v1 as _components
-        _components.html(html, height=600)
-        st.caption(f"目前顯示：{tv_sym}　·　圖內可直接改代碼/週期/指標。資料由 TradingView 提供。")
+        _components.html(html, height=tv_h + 10)
+        st.caption(f"目前顯示：{tv_sym}　·　圖內可直接改代碼/週期/指標，或拖上方滑桿調高度。資料由 TradingView 提供。")
 
     # ── Tab 1: Individual deep dive ────────────────────────────────
     with tab1:
