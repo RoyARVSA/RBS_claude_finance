@@ -80,6 +80,7 @@ streamlit run app.py
 | `TELEGRAM_TOKEN` + `TELEGRAM_CHAT_ID` | Bot 推播 | Bot 無法推送 | @BotFather |
 | `LLM_API_KEY` | AI 分析 / 晨報解讀 | 晨報走純數據版；AI 頁不可用 | Claude / OpenAI |
 | `FRED_API_KEY` | 總經數據 | 總經指標區塊不顯示 | [fred.stlouisfed.org](https://fred.stlouisfed.org/) |
+| `FINNHUB_API_KEY` | 基本面備援 | yfinance `.info` 被限流時，市值/P/E/ROE 顯示「—」 | [finnhub.io](https://finnhub.io/) |
 | `ALPACA_KEY_ID` + `ALPACA_SECRET_KEY` | 模擬交易（**paper**）| 模擬交易不執行 | [alpaca.markets](https://alpaca.markets/) Trading API |
 
 **放哪裡：**
@@ -101,6 +102,7 @@ backtest.py             Triple-Barrier 回測 + walk-forward + 參數最佳化
 quant_tools.py          部位配置與風險管理（部位/Kelly/風險平價）
 fundamentals.py         公司基本面：抓取 + 財務健康評分 + 估值旗標 + 財報日
 macro.py                總經數據（FRED）：Fed利率/殖利率曲線/CPI/失業率 + 判讀
+finnhub_data.py         基本面備援（Finnhub）：yfinance 被限流時後援市值/P/E/ROE
 sector_scan.py          產業總覽：批次掃描 stock_db 全市場 + 產業風險彙總
 assistant.py            對話式 AI 助理：代碼/意圖解析 + grounded context builder
 alpaca_trader.py        Alpaca 紙上交易：下單決策(decide_orders) + REST client

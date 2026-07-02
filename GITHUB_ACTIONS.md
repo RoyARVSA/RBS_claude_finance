@@ -38,6 +38,7 @@
 | `LLM_BASE_URL` | 選填 | 自訂 API 端點（留空自動判斷 Anthropic/OpenAI） |
 | `LLM_MODEL` | 選填 | 模型名（預設 Claude 用 `claude-3-5-haiku`，OpenAI 用 `gpt-4o-mini`） |
 | `FRED_API_KEY` | 選填 | 晨報總經數據（免費申請 fred.stlouisfed.org） |
+| `FINNHUB_API_KEY` | 選填 | 基本面備援；yfinance `.info` 被限流時的後援（免費申請 finnhub.io） |
 | `ALPACA_KEY_ID` | 選填 | Alpaca **paper** trading key（模擬自動交易；**不設則不下單**） |
 | `ALPACA_SECRET_KEY` | 選填 | Alpaca paper secret |
 

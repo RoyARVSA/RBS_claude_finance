@@ -57,6 +57,18 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# 把 Streamlit Secrets 複製到環境變數，讓各模組用 os.environ 統一讀取
+import os as _os_boot
+for _k in ("FINNHUB_API_KEY", "FRED_API_KEY", "LLM_API_KEY", "LLM_BASE_URL",
+           "LLM_MODEL", "ALPACA_KEY_ID", "ALPACA_SECRET_KEY"):
+    if not _os_boot.environ.get(_k):
+        try:
+            _v = st.secrets.get(_k)
+            if _v:
+                _os_boot.environ[_k] = str(_v)
+        except Exception:
+            pass
+
 # ─────────────────────────── Custom CSS ─────────────────────────────
 
 st.markdown(
@@ -2019,6 +2031,25 @@ def _cached_ticker_data(ticker: str, period: str):
                 info["fiftyTwoWeekLow"] = v
     except Exception:
         pass
+    # Finnhub 備援：.info 被限流時補 P/E、EPS、Beta、股利、市值、52週
+    import os as _os
+    _fh_key = _os.environ.get("FINNHUB_API_KEY", "")
+    if _fh_key and not info.get("trailingPE"):
+        try:
+            import finnhub_data as _fh
+            fh = _fh.fetch(ticker, _fh_key)
+            if fh:
+                info.setdefault("marketCap", fh.get("market_cap"))
+                info.setdefault("trailingPE", fh.get("pe"))
+                info.setdefault("trailingEps", fh.get("eps"))
+                info.setdefault("beta", fh.get("beta"))
+                info.setdefault("fiftyTwoWeekHigh", fh.get("high_52w"))
+                info.setdefault("fiftyTwoWeekLow", fh.get("low_52w"))
+                if fh.get("dividend_yield_pct") is not None and not info.get("dividendYield"):
+                    info["dividendYield"] = fh["dividend_yield_pct"] / 100  # 存成小數（yfinance 慣例）
+                info.setdefault("longName", fh.get("name"))
+        except Exception:
+            pass
     try:
         hist = tk.history(period=period, auto_adjust=True)
     except Exception:
