@@ -743,7 +743,7 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                     reply = f"❌ {e}"
 
         elif cmd == "/journal":
-            n = int(args[0]) if args and args[0].isdigit() else 10
+            n = max(1, int(args[0])) if args and args[0].isdigit() else 10  # 避免 /journal 0 顯示全部
             try:
                 import alpaca_trader as at
                 log = at.load_journal(JOURNAL_FILE)

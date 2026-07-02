@@ -65,7 +65,9 @@ jobs:
         run: |
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git config user.name  "github-actions[bot]"
-          git add watchlist_state.json trade_journal.json 2>/dev/null || true
+          # 分開 add：git add 對多個 pathspec 是原子的，任一檔不存在會整批中止
+          git add watchlist_state.json 2>/dev/null || true
+          git add trade_journal.json 2>/dev/null || true
           git diff --staged --quiet && echo "No state changes." || \
             git commit -m "chore: update bot state + trade journal [skip ci]"
 
