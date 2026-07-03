@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import re
 
-KNOWN_TOOLS = {"backtest", "risk", "screen", "options"}
+KNOWN_TOOLS = {"backtest", "risk", "screen", "options", "insider"}
 MAX_TOOLS = 4
 
 # 觸發字（純啟發式）：問題含這些字才啟動規劃器，省一次 LLM 呼叫
@@ -32,6 +32,9 @@ _TOOL_HINTS = [
     # 選擇權情緒（不用裸 "iv"：會誤中 positive/derivative 等英文字）
     "選擇權", "put/call", "put call", "pcr", "隱含波動", "偏斜", "options",
     "避險情緒",
+    # 內部人交易
+    "內部人", "內部人交易", "insider", "form 4", "form4", "董事買", "經理人買",
+    "高管買", "大股東", "自家股",
 ]
 
 
@@ -57,7 +60,9 @@ def build_planner_prompt(question: str, tickers: list[str],
         "3. screen    args={\"industry\":\"半導體\"}　掃描該產業標的，依動能與風險排名，找強勢/候選股。\n"
         "   —— 問『某產業有哪些強勢股/幫我找標的/篩選』時用。\n"
         "4. options   args={\"ticker\":\"AAPL\"}　取得選擇權情緒（Put/Call 比、隱含波動偏斜、情緒分數）。\n"
-        "   —— 問『選擇權情緒/Put Call 比/隱含波動/避險情緒』時用（多為美股大型股才有）。\n\n"
+        "   —— 問『選擇權情緒/Put Call 比/隱含波動/避險情緒』時用（多為美股大型股才有）。\n"
+        "5. insider   args={\"ticker\":\"AAPL\"}　取得 SEC Form 4 內部人買賣（董事/經理人/大股東）。\n"
+        "   —— 問『內部人/高管有沒有買/insider/Form 4』時用（僅美股）。\n\n"
         f"已辨識標的：{tk}\n"
         f"可用產業名（screen 用，請盡量對到最接近的一個）：{inds}\n\n"
         f"使用者問題：{question}\n\n"
@@ -128,7 +133,7 @@ def _norm_ticker(x) -> str | None:
 
 def _clean_args(tool: str, args: dict, valid_tickers, valid_industries):
     """依工具正規化/驗證參數；不合法回 None（整個工具略過）。"""
-    if tool in ("backtest", "options"):
+    if tool in ("backtest", "options", "insider"):
         t = _norm_ticker(args.get("ticker"))
         return {"ticker": t} if t else None
 
@@ -177,11 +182,27 @@ def _num(v, dp=2):
         return "無資料"
 
 
+def _money(v):
+    if v is None:
+        return "無資料"
+    try:
+        a = abs(v)
+        if a >= 1e9:
+            return f"${v/1e9:.2f}B"
+        if a >= 1e6:
+            return f"${v/1e6:.2f}M"
+        if a >= 1e3:
+            return f"${v/1e3:.1f}K"
+        return f"${v:.0f}"
+    except (TypeError, ValueError):
+        return "無資料"
+
+
 def format_tool_results(results: list[dict]) -> str:
     """把執行器回傳的結構化結果組成標註來源的 context 文字（純函數）。"""
     if not results:
         return ""
-    lines = ["=== 工具分析結果（客觀數據，來源：本平台回測/風險/選股引擎）==="]
+    lines = ["=== 工具分析結果（客觀數據，來源：本平台回測/風險/選股引擎、yfinance 選擇權、SEC EDGAR）==="]
     for r in results:
         if not r or not r.get("ok"):
             lines.append(f"\n【{(r or {}).get('tool', '工具')}】執行失敗："
@@ -214,6 +235,16 @@ def format_tool_results(results: list[dict]) -> str:
                     f"  · {x.get('ticker')}：近3月 {_pct(x.get('return_3m'))}　"
                     f"年化波動 {_pct(x.get('ann_vol'))}　"
                     f"Sharpe {_num(x.get('sharpe'))}　RSI {_num(x.get('rsi'), dp=0)}")
+        elif tool == "insider":
+            lines.append(f"\n【內部人交易 {r.get('ticker')}】（近 {r.get('window_days', 90)} 天，SEC Form 4）")
+            sc = r.get("score")
+            lines.append(
+                f"  情緒 {(('%+.2f' % sc) if sc is not None else '無資料')}"
+                f"（{r.get('label', '')}）　"
+                f"買 {r.get('n_buyers')} 人/{r.get('n_buys')} 筆　"
+                f"賣 {r.get('n_sellers')} 人/{r.get('n_sells')} 筆　"
+                f"淨買賣 {_money(r.get('net_value'))}"
+                + ("　🔶 cluster buy" if r.get("cluster_buy") else ""))
         elif tool == "options":
             lines.append(f"\n【選擇權情緒 {r.get('ticker')}】")
             sc = r.get("score")

@@ -1394,12 +1394,29 @@ def _run_options_tool(ticker):
             "notes": sent.get("notes", [])}
 
 
+def _run_insider_tool(ticker):
+    """SEC 內部人交易（Form 4）：買賣人數/金額、cluster buy、情緒。"""
+    import sec_insider as si
+    summ = _cached_insider(ticker)
+    if not summ:
+        return {"tool": "insider", "ok": False, "ticker": ticker,
+                "error": "查無 Form 4（非美股或無內部人申報）"}
+    return {"tool": "insider", "ok": True, "ticker": ticker,
+            "score": summ.get("score"), "label": summ.get("label"),
+            "n_buys": summ.get("n_buys"), "n_sells": summ.get("n_sells"),
+            "n_buyers": summ.get("n_buyers"), "n_sellers": summ.get("n_sellers"),
+            "buy_value": summ.get("buy_value"), "sell_value": summ.get("sell_value"),
+            "net_value": summ.get("net_value"), "cluster_buy": summ.get("cluster_buy"),
+            "window_days": summ.get("window_days")}
+
+
 def _assistant_run_tools(plan):
     """執行規劃器產生的工具計畫，回結構化結果（每個工具各自防呆）。"""
     dispatch = {"backtest": lambda a: _run_backtest_tool(a["ticker"]),
                 "risk":     lambda a: _run_risk_tool(a["tickers"]),
                 "screen":   lambda a: _run_screen_tool(a["industry"]),
-                "options":  lambda a: _run_options_tool(a["ticker"])}
+                "options":  lambda a: _run_options_tool(a["ticker"]),
+                "insider":  lambda a: _run_insider_tool(a["ticker"])}
     results = []
     for step in plan:
         fn = dispatch.get(step["tool"])
@@ -3104,6 +3121,13 @@ def _cached_options(ticker: str):
     return ops.fetch_options(ticker)
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def _cached_insider(ticker: str):
+    """快取 SEC Form 4 內部人交易彙總（1 小時；申報低頻）。"""
+    import sec_insider as si
+    return si.fetch_insider(ticker)
+
+
 def page_company_analysis():
     st.title("🏢 公司分析")
     st.caption("基本面體質分析 · 財務健康評分 · 估值 · 三表趨勢 · AI 解讀（資料來源 yfinance）")
@@ -3327,6 +3351,44 @@ def page_company_analysis():
                 f"{st.session_state['fa_ai_out'].replace(chr(10),'<br>')}</div>",
                 unsafe_allow_html=True,
             )
+
+    # ⑦ SEC 內部人交易（Form 4）─────────────────────────────────
+    section("內部人交易（SEC Form 4）")
+    st.caption("內部人＝董事/經理人/10% 大股東，買賣自家股須 2 日內申報。"
+               "公開市場**買進**（尤其多人同買）偏多；賣出訊號較弱（常為節稅/調節）。僅美股。")
+    tkr_ins = data.get("ticker", "")
+    if "." in tkr_ins:
+        st.info("此標的非美股，SEC Form 4 僅涵蓋美國掛牌公司。")
+    elif st.button("查詢內部人交易", key="ins_go"):
+        with st.spinner(f"查詢 {tkr_ins} 的 SEC Form 4…"):
+            try:
+                ins = _cached_insider(tkr_ins)
+            except Exception as e:
+                ins = None
+                st.error(f"SEC 查詢失敗：{e}")
+        if not ins:
+            st.warning("查無近期 Form 4（可能無內部人申報，或代碼無法對應 SEC CIK）。")
+        else:
+            sc = ins.get("score")
+            k1, k2, k3, k4 = st.columns(4)
+            k1.metric("內部人情緒", f"{sc:+.2f}" if sc is not None else "—", ins.get("label"))
+            k2.metric("買進（人/筆）", f"{ins['n_buyers']} / {ins['n_buys']}")
+            k3.metric("賣出（人/筆）", f"{ins['n_sellers']} / {ins['n_sells']}")
+            import sec_insider as _si
+            k4.metric("淨買賣", _si._money(ins.get("net_value")))
+            if ins.get("cluster_buy"):
+                st.success("🔶 多位內部人同期買進（cluster buy）— 歷史上偏多訊號。")
+            rb = ins.get("recent_buys") or []
+            rs = ins.get("recent_sells") or []
+            if rb:
+                st.markdown("**近期買進**　" + "　".join(
+                    f"{o}（{_si._money(v)}, {d}）" for o, v, _sh, d in rb))
+            if rs:
+                st.markdown("**近期賣出**　" + "　".join(
+                    f"{o}（{_si._money(v)}, {d}）" for o, v, _sh, d in rs))
+            st.caption(f"統計視窗 {ins.get('window_days', 90)} 天　·　"
+                       f"解析 {ins.get('n_filings', 0)} 份 Form 4　·　資料來源 SEC EDGAR。"
+                       "內部人交易屬輔助訊號，需搭配基本面與趨勢，非投資建議。")
 
     st.markdown(
         "<small style='color:#B8C0D0'>⚠️ 資料來源 yfinance，季報更新、非即時；"
