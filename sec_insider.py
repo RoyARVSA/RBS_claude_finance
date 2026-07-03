@@ -140,14 +140,17 @@ def summarize_insiders(parsed: list, cutoff_date: str | None = None) -> dict:
         score = None
 
     cluster_buy = len(buyers) >= 2
+    _buy_label = "多位內部人買超（偏多，訊號較強）" if cluster_buy else "內部人買超（偏多）"
     if score is None:
         label = "近期無公開市場交易"
-    elif cluster_buy and net > 0:
-        label = "多位內部人買超（偏多，訊號較強）"
-    elif net > 0:
-        label = "內部人買超（偏多）"
+    elif buys and not sells:                       # 只買（含缺價、net=0）→ 買超
+        label = _buy_label
     elif sells and not buys:
         label = "內部人賣超（訊號較弱，常為調節/節稅）"
+    elif net > 0:
+        label = _buy_label
+    elif net < 0:
+        label = "內部人賣超（偏空）"
     else:
         label = "買賣互見（中性）"
 
@@ -257,6 +260,7 @@ def fetch_insider(ticker: str, max_filings: int = 20, window_days: int = 90) -> 
         if n >= max_filings:
             break
 
+    parsed = [p for p in parsed if p and p.get("ok")]   # 全部無法解析 → 視同查無
     if not parsed:
         return None
     cutoff = (pd.Timestamp.now().normalize() - pd.Timedelta(days=window_days)).strftime("%Y-%m-%d")
