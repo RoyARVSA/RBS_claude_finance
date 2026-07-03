@@ -1295,6 +1295,106 @@ def _assistant_fetch(tickers, intents, fred_key):
     return ticker_data, macro_data, market_data
 
 
+def _industry_ticker_map():
+    """跨市場的 {產業名: [代碼,...]}，供助理 screen 工具用（含快取）。"""
+    from stock_db import ADB
+    out = {}
+    for _market, inds in ADB.items():
+        for ind, meta in inds.items():
+            out.setdefault(ind, [])
+            for t in meta.get("tickers", []):
+                if t not in out[ind]:
+                    out[ind].append(t)
+    return out
+
+
+def _run_backtest_tool(ticker):
+    """單一標的：跑 backtest_all，回前幾名有效規則。"""
+    import backtest as bt
+    _info, hist, _news = _cached_ticker_data(ticker, "1y")
+    if hist is None or hist.empty or len(hist) < 60:
+        return {"tool": "backtest", "ok": False, "ticker": ticker, "error": "歷史資料不足"}
+    df = bt.normalize_ohlc(hist, ticker)
+    table = bt.backtest_all(df)
+    top = []
+    for rule, row in table.iterrows():
+        if row.get("trades", 0) >= 5 and np.isfinite(row.get("profit_factor", np.nan)):
+            top.append({"rule": rule, "win_rate": float(row["win_rate"]),
+                        "profit_factor": float(row["profit_factor"]),
+                        "expectancy": float(row["expectancy"]),
+                        "trades": int(row["trades"])})
+        if len(top) >= 4:
+            break
+    return {"tool": "backtest", "ok": True, "ticker": ticker,
+            "bars": int(len(df)), "top": top}
+
+
+def _run_risk_tool(tickers):
+    """一組標的：等權組合的年化波動、歷史 VaR/CVaR、最大回撤。"""
+    closes = {}
+    for t in tickers[:8]:
+        try:
+            _info, hist, _news = _cached_ticker_data(t, "1y")
+            if hist is not None and not hist.empty:
+                s = hist["Close"].dropna()
+                if len(s) >= 30:
+                    closes[t] = s
+        except Exception:
+            continue
+    if not closes:
+        return {"tool": "risk", "ok": False, "tickers": tickers, "error": "抓不到足夠價格資料"}
+    px = pd.DataFrame(closes).dropna(how="all")
+    rets = px.pct_change().dropna()
+    if rets.empty:
+        return {"tool": "risk", "ok": False, "tickers": list(closes), "error": "報酬序列不足"}
+    w = np.repeat(1.0 / rets.shape[1], rets.shape[1])
+    port = rets.values @ w                          # 等權組合日報酬
+    port = port[np.isfinite(port)]
+    vol_ann = float(np.std(port, ddof=1) * np.sqrt(252)) if len(port) > 1 else None
+    var95 = float(np.percentile(port, 5)) if len(port) else None
+    tail = port[port <= var95] if var95 is not None else np.array([])
+    cvar95 = float(tail.mean()) if len(tail) else var95
+    # 等權組合權益曲線最大回撤
+    curve = np.cumprod(1 + port)
+    max_dd = float((curve / np.maximum.accumulate(curve) - 1).min()) if len(curve) else None
+    return {"tool": "risk", "ok": True, "tickers": list(closes),
+            "vol_ann": vol_ann, "var95": var95, "cvar95": cvar95, "max_dd": max_dd}
+
+
+def _run_screen_tool(industry):
+    """掃描某產業標的，依 3 月動能排名（重用 sector_scan）。"""
+    import sector_scan as ssc
+    imap = _industry_ticker_map()
+    tkrs = imap.get(industry)
+    if not tkrs:
+        return {"tool": "screen", "ok": False, "industry": industry, "error": "找不到該產業"}
+    rows, _agg = ssc.scan_universe({industry: tkrs}, period="6mo", with_fundamentals=False)
+    rows = [r for r in rows if r.get("return_3m") is not None]
+    rows.sort(key=lambda r: r["return_3m"], reverse=True)
+    top = [{"ticker": r["ticker"], "return_3m": r.get("return_3m"),
+            "ann_vol": r.get("ann_vol"), "sharpe": r.get("sharpe"),
+            "rsi": r.get("rsi")} for r in rows[:8]]
+    return {"tool": "screen", "ok": True, "industry": industry,
+            "scanned": len(rows), "top": top}
+
+
+def _assistant_run_tools(plan):
+    """執行規劃器產生的工具計畫，回結構化結果（每個工具各自防呆）。"""
+    dispatch = {"backtest": lambda a: _run_backtest_tool(a["ticker"]),
+                "risk":     lambda a: _run_risk_tool(a["tickers"]),
+                "screen":   lambda a: _run_screen_tool(a["industry"])}
+    results = []
+    for step in plan:
+        fn = dispatch.get(step["tool"])
+        if not fn:
+            continue
+        try:
+            results.append(fn(step["args"]))
+        except Exception as e:
+            results.append({"tool": step["tool"], "ok": False, "error": str(e)})
+    return results
+
+
 def page_ai_assistant():
     st.title("💬 AI 助理")
     st.caption("財金研究副駕：用自然語言問個股/總經/大盤，AI 綜合技術+基本面回答（有據可查、風險優先）")
@@ -1324,8 +1424,12 @@ def page_ai_assistant():
     force_syms = st.text_input(
         "指定股票代碼（選填，逗號分隔）— 冷門/新標的抓不到時用這個強制納入",
         "", key="asst_force", placeholder="VRT, PLTR, 2454.TW")
-    st.caption("範例：「比較 AAPL 和 MSFT 的財務體質」「台積電技術面如何」「現在總經環境對科技股有利嗎」"
-               "　·　代碼前加 `$`（如 `$VRT`）也能強制辨識。")
+    use_tools = st.checkbox(
+        "🛠 允許 AI 自己跑分析工具（回測 / 風險 / 選股）", value=True, key="asst_tools",
+        help="開啟後，遇到「回測勝率/風險多大/某產業有哪些強勢股」這類問題，"
+             "AI 會實際呼叫回測、風險與選股引擎取得客觀數據再回答（會多花幾秒）。")
+    st.caption("範例：「AAPL 回測勝率如何」「AAPL+MSFT 組合風險多大」「半導體有哪些強勢股」"
+               "「比較 AAPL 和 MSFT 的財務體質」　·　代碼前加 `$`（如 `$VRT`）也能強制辨識。")
 
     if "asst_chat" not in st.session_state:
         st.session_state["asst_chat"] = []
@@ -1357,10 +1461,40 @@ def page_ai_assistant():
         intents = asst.detect_intents(q, bool(tickers))
         with st.chat_message("assistant"):
             with st.spinner(f"分析中…（{', '.join(tickers) if tickers else '總經/大盤'}）"):
+                tool_used = []
                 try:
                     td, macd, mkd = _assistant_fetch(tickers, intents, fred_key)
                     ts = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M")
                     context = asst.build_context(q, ts, intents, td, macd, mkd)
+
+                    # ── Phase 2：讓 AI 自己規劃並執行分析工具 ──
+                    client = _llm_client(ai_key, ai_base, ai_model)
+                    try:
+                        import assistant_tools as atools
+                    except ImportError:
+                        atools = None
+                    if use_tools and atools and atools.might_need_tools(q):
+                        try:
+                            inds = list(_industry_ticker_map().keys())
+                            plan_prompt = atools.build_planner_prompt(q, tickers, inds)
+                            pr = client.chat.completions.create(
+                                model=ai_model,
+                                messages=[{"role": "user", "content": plan_prompt}],
+                                temperature=0.0, max_tokens=300)
+                            plan = atools.parse_plan(
+                                pr.choices[0].message.content,
+                                set(_universe_tickers()) | set(tickers), set(inds))
+                            if plan:
+                                tool_used = [f"{p['tool']}({list(p['args'].values())[0]})"
+                                             for p in plan]
+                                st.caption("🛠 執行工具：" + "、".join(tool_used))
+                                results = _assistant_run_tools(plan)
+                                tctx = atools.format_tool_results(results)
+                                if tctx:
+                                    context += "\n\n" + tctx
+                        except Exception:
+                            pass   # 工具失敗不影響基本回答
+
                     # 帶入近期對話（純文字）+ 當前資料
                     history = [{"role": m["role"], "content": m["content"]}
                                for m in st.session_state["asst_chat"][:-1][-6:]]
@@ -1370,7 +1504,6 @@ def page_ai_assistant():
                     messages = ([{"role": "system", "content": asst.SYSTEM_PROMPT}]
                                 + history
                                 + [{"role": "user", "content": f"{context}\n\n問題：{q}"}])
-                    client = _llm_client(ai_key, ai_base, ai_model)
                     resp = client.chat.completions.create(
                         model=ai_model, messages=messages, temperature=0.3, max_tokens=1100)
                     ans = resp.choices[0].message.content
@@ -1378,8 +1511,11 @@ def page_ai_assistant():
                     ans = f"分析失敗：{e}"
                 st.markdown(ans)
                 if tickers or intents:
-                    st.caption(f"🔎 已納入：{', '.join(tickers) if tickers else '—'}"
-                               f"　意圖：{', '.join(sorted(intents))}")
+                    cap = (f"🔎 已納入：{', '.join(tickers) if tickers else '—'}"
+                           f"　意圖：{', '.join(sorted(intents))}")
+                    if tool_used:
+                        cap += f"　🛠 工具：{'、'.join(tool_used)}"
+                    st.caption(cap)
         st.session_state["asst_chat"].append({"role": "assistant", "content": ans})
 
     if st.session_state["asst_chat"]:
