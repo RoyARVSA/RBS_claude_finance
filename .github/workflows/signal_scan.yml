@@ -56,6 +56,8 @@ jobs:
           LLM_MODEL:    ${{ secrets.LLM_MODEL }}
           # 每日晨報用的 FRED 總經（可選）
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+          # 基本面備援（yfinance .info 被限流時的後援，可選）
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           # Alpaca 模擬交易（可選；未設則自動交易不執行）
           ALPACA_KEY_ID:     ${{ secrets.ALPACA_KEY_ID }}
           ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}

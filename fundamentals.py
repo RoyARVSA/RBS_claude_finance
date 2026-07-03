@@ -16,6 +16,8 @@ fundamentals.py – 公司基本面分析（yfinance 免費資料，可重用，
 
 from __future__ import annotations
 
+import os
+
 import numpy as np
 import pandas as pd
 
@@ -297,6 +299,23 @@ def fetch_fundamentals(ticker: str) -> dict:
         out["high_52w"] = _num(info.get("fiftyTwoWeekHigh"))
         out["low_52w"] = _num(info.get("fiftyTwoWeekLow"))
 
+        # .info 雲端常被限流 → 用較穩的 fast_info 補價格/市值/52週
+        try:
+            fi = tk.fast_info
+
+            def _fi(k):
+                try:
+                    v = fi[k]
+                    return float(v) if v is not None else None
+                except Exception:
+                    return None
+            out["price"] = out["price"] or _fi("last_price")
+            out["market_cap"] = out["market_cap"] or _fi("market_cap")
+            out["high_52w"] = out["high_52w"] or _fi("year_high")
+            out["low_52w"] = out["low_52w"] or _fi("year_low")
+        except Exception:
+            pass
+
         # ETF / 指數 / 基金：無基本面，提早回
         if out["quote_type"] in ("ETF", "INDEX", "MUTUALFUND", "CURRENCY", "CRYPTOCURRENCY"):
             out["ok"] = False
@@ -376,6 +395,29 @@ def fetch_fundamentals(ticker: str) -> dict:
                 if equity and ni is not None and equity != 0:
                     out["roe"] = ni / equity
                     out["roe_note"] = "由淨利/股東權益估算"
+            except Exception:
+                pass
+
+        # ── Finnhub 備援：.info 被限流時補上仍為 None 的關鍵欄位 ──
+        _fh_key = os.environ.get("FINNHUB_API_KEY", "")
+        _need = [k for k in ("pe", "roe", "market_cap", "net_margin",
+                             "revenue_growth", "price") if out.get(k) is None]
+        if _fh_key and _need:
+            try:
+                import finnhub_data as _fh
+                fh = _fh.fetch(ticker, _fh_key)
+                if fh:
+                    for k in ("price", "market_cap", "pe", "roe", "roa", "net_margin",
+                              "gross_margin", "op_margin", "revenue_growth",
+                              "high_52w", "low_52w", "pb"):
+                        if out.get(k) is None and fh.get(k) is not None:
+                            out[k] = fh[k]
+                    if out.get("dividend_yield") is None and fh.get("dividend_yield_pct") is not None:
+                        out["dividend_yield"] = fh["dividend_yield_pct"]
+                    if not out.get("name") or out["name"] == ticker:
+                        out["name"] = fh.get("name") or out.get("name")
+                    out["sector"] = out.get("sector") or fh.get("sector")
+                    out["data_source"] = "yfinance + Finnhub 備援"
             except Exception:
                 pass
 

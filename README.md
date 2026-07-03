@@ -13,12 +13,12 @@ Streamlit 網頁應用 + 獨立的訊號掃描 Bot（GitHub Actions 排程版 / 
 
 | 頁面 | 功能 |
 |------|------|
-| 💬 AI 助理 | **對話式研究副駕：自然語言問個股/總經/大盤，AI 綜合技術+基本面（有據可查、風險優先）** |
+| 💬 AI 助理 | **對話式研究副駕：自然語言問個股/總經/大盤，AI 綜合技術+基本面（有據可查、風險優先）；可自主呼叫回測/風險/選股/選擇權/內部人交易工具取客觀數據** |
 | 🏠 市場總覽 | 即時指數/板塊/宏觀指標、**總經數據(FRED)**、市場快訊、**AI 自主市場分析** |
 | 📈 持倉分析 | 多資產組合：權益曲線、回撤、Sharpe、IR、Beta |
 | ⚠️ 風險管理 | VaR/CVaR、蒙地卡羅、Kupiec 回測、壓力測試、**風險平價配置** |
-| 🔍 股票研究 | K 線+RSI、AI 深度報告、市場篩選器、**訊號回測 + 參數最佳化** |
-| 🏢 公司分析 | **基本面體質：財務健康評分、估值旗標、三表趨勢、AI 解讀** |
+| 🔍 股票研究 | K 線+RSI、AI 深度報告、市場篩選器、**訊號回測 + 參數最佳化**、TradingView、**選擇權情緒(Put/Call、IV 偏斜)** |
+| 🏢 公司分析 | **基本面體質：財務健康評分、估值旗標、三表趨勢、AI 解讀、SEC 內部人交易(Form 4)** |
 | 🗂️ 產業總覽 | **一次掃描整個市場：產業強弱 vs 風險散佈、鑽取個股（可加基本面）** |
 | 🚨 即時警報 | 監控清單、盤中走勢、訊號掃描、Telegram/Email 推播 |
 | 🛠️ 交易工具 | 部位大小、**波動率目標部位**、Kelly、風險報酬比、複利 |
@@ -32,13 +32,13 @@ Streamlit 網頁應用 + 獨立的訊號掃描 Bot（GitHub Actions 排程版 / 
 - **技術訊號**：RSI、MACD、布林通道、ATR 進出場、MA 交叉、爆量
 - **綜合評分**：趨勢/MACD/RSI/布林/動量合成 -1~+1 分數，5 級評級
 - **多時間框架確認**：日線分數與週線同向加強、背離減弱（軟性調整）
-- **每日 AI 晨報**：每交易日 ET 08:30 自動推送大盤+排名+訊號
+- **每日 AI 晨報**：每交易日 ET 08:30 自動推送大盤+排名+訊號+最強標的內部人亮點
 - **自我優化迴圈**：回測各訊號歷史勝率 → 動態調整評分權重（每週校準）
 - **防護機制**（freqtrade 式）：訊號冷卻去重、大盤風險濾網
 - **部位建議**：每個訊號附 ATR 風險基準的建議股數
 - **財報行事曆提醒**：觀察清單標的財報前 N 天自動提醒（晨報 + `/earnings`）
 - **Alpaca 模擬交易**：訊號自動下模擬單驗證策略實效（預設關閉，`/autotrade on` 啟用）
-- **Telegram 指令**：清單 `/add /remove /list`、分析 `/rank /fundamentals /earnings /briefing`、
+- **Telegram 指令**：清單 `/add /remove /list`、分析 `/rank /fundamentals /options /insider /earnings /briefing`、
   風控 `/risk /protections /calibrate`、模擬交易 `/autotrade /positions /pnl /journal /closeall`（`/help` 看全部）
 
 ### 🧪 回測引擎（`backtest.py`）
@@ -80,6 +80,7 @@ streamlit run app.py
 | `TELEGRAM_TOKEN` + `TELEGRAM_CHAT_ID` | Bot 推播 | Bot 無法推送 | @BotFather |
 | `LLM_API_KEY` | AI 分析 / 晨報解讀 | 晨報走純數據版；AI 頁不可用 | Claude / OpenAI |
 | `FRED_API_KEY` | 總經數據 | 總經指標區塊不顯示 | [fred.stlouisfed.org](https://fred.stlouisfed.org/) |
+| `FINNHUB_API_KEY` | 基本面備援 | yfinance `.info` 被限流時，市值/P/E/ROE 顯示「—」 | [finnhub.io](https://finnhub.io/) |
 | `ALPACA_KEY_ID` + `ALPACA_SECRET_KEY` | 模擬交易（**paper**）| 模擬交易不執行 | [alpaca.markets](https://alpaca.markets/) Trading API |
 
 **放哪裡：**
@@ -101,8 +102,12 @@ backtest.py             Triple-Barrier 回測 + walk-forward + 參數最佳化
 quant_tools.py          部位配置與風險管理（部位/Kelly/風險平價）
 fundamentals.py         公司基本面：抓取 + 財務健康評分 + 估值旗標 + 財報日
 macro.py                總經數據（FRED）：Fed利率/殖利率曲線/CPI/失業率 + 判讀
+finnhub_data.py         基本面備援（Finnhub）：yfinance 被限流時後援市值/P/E/ROE
 sector_scan.py          產業總覽：批次掃描 stock_db 全市場 + 產業風險彙總
 assistant.py            對話式 AI 助理：代碼/意圖解析 + grounded context builder
+assistant_tools.py      AI 助理工具編排：規劃(plan)/解析/格式化，讓助理自跑回測/風險/選股/選擇權
+options_sentiment.py    選擇權情緒：Put/Call 比、ATM 隱含波動、賣買權偏斜 + 情緒評分
+sec_insider.py          SEC 內部人交易：Form 4 XML 解析 + 買賣彙總（cluster buy）+ 情緒
 alpaca_trader.py        Alpaca 紙上交易：下單決策(decide_orders) + REST client
 stock_db.py             選股資料庫（5 市場、30+ 產業、200+ 標的）
 rbs_lib.py              風險計算函式庫（VaR/CVaR/共變異數/情境）

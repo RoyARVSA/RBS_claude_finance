@@ -57,6 +57,18 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# 把 Streamlit Secrets 複製到環境變數，讓各模組用 os.environ 統一讀取
+import os as _os_boot
+for _k in ("FINNHUB_API_KEY", "FRED_API_KEY", "LLM_API_KEY", "LLM_BASE_URL",
+           "LLM_MODEL", "ALPACA_KEY_ID", "ALPACA_SECRET_KEY", "SEC_USER_AGENT"):
+    if not _os_boot.environ.get(_k):
+        try:
+            _v = st.secrets.get(_k)
+            if _v:
+                _os_boot.environ[_k] = str(_v)
+        except Exception:
+            pass
+
 # ─────────────────────────── Custom CSS ─────────────────────────────
 
 st.markdown(
@@ -1283,6 +1295,140 @@ def _assistant_fetch(tickers, intents, fred_key):
     return ticker_data, macro_data, market_data
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def _industry_ticker_map():
+    """跨市場的 {產業名: [代碼,...]}，供助理 screen 工具用（快取 1 小時）。"""
+    from stock_db import ADB
+    out = {}
+    for _market, inds in ADB.items():
+        for ind, meta in inds.items():
+            out.setdefault(ind, [])
+            for t in meta.get("tickers", []):
+                if t not in out[ind]:
+                    out[ind].append(t)
+    return out
+
+
+def _run_backtest_tool(ticker):
+    """單一標的：跑 backtest_all，回前幾名有效規則。"""
+    import backtest as bt
+    _info, hist, _news = _cached_ticker_data(ticker, "1y")
+    if hist is None or hist.empty or len(hist) < 60:
+        return {"tool": "backtest", "ok": False, "ticker": ticker, "error": "歷史資料不足"}
+    df = bt.normalize_ohlc(hist, ticker)
+    table = bt.backtest_all(df)
+    top = []
+    for rule, row in table.iterrows():
+        if row.get("trades", 0) >= 5 and np.isfinite(row.get("profit_factor", np.nan)):
+            top.append({"rule": rule, "win_rate": float(row["win_rate"]),
+                        "profit_factor": float(row["profit_factor"]),
+                        "expectancy": float(row["expectancy"]),
+                        "trades": int(row["trades"])})
+        if len(top) >= 4:
+            break
+    return {"tool": "backtest", "ok": True, "ticker": ticker,
+            "bars": int(len(df)), "top": top}
+
+
+def _run_risk_tool(tickers):
+    """一組標的：等權組合的年化波動、歷史 VaR/CVaR、最大回撤。"""
+    closes = {}
+    for t in tickers[:8]:
+        try:
+            _info, hist, _news = _cached_ticker_data(t, "1y")
+            if hist is not None and not hist.empty:
+                s = hist["Close"].dropna()
+                if len(s) >= 30:
+                    closes[t] = s
+        except Exception:
+            continue
+    if not closes:
+        return {"tool": "risk", "ok": False, "tickers": tickers, "error": "抓不到足夠價格資料"}
+    px = pd.DataFrame(closes).dropna(how="all")
+    rets = px.pct_change().dropna()
+    if rets.empty:
+        return {"tool": "risk", "ok": False, "tickers": list(closes), "error": "報酬序列不足"}
+    w = np.repeat(1.0 / rets.shape[1], rets.shape[1])
+    port = rets.values @ w                          # 等權組合日報酬
+    port = port[np.isfinite(port)]
+    vol_ann = float(np.std(port, ddof=1) * np.sqrt(252)) if len(port) > 1 else None
+    var95 = float(np.percentile(port, 5)) if len(port) else None
+    tail = port[port <= var95] if var95 is not None else np.array([])
+    cvar95 = float(tail.mean()) if len(tail) else var95
+    # 等權組合權益曲線最大回撤
+    curve = np.cumprod(1 + port)
+    max_dd = float((curve / np.maximum.accumulate(curve) - 1).min()) if len(curve) else None
+    return {"tool": "risk", "ok": True, "tickers": list(closes),
+            "vol_ann": vol_ann, "var95": var95, "cvar95": cvar95, "max_dd": max_dd}
+
+
+def _run_screen_tool(industry):
+    """掃描某產業標的，依 3 月動能排名（重用 sector_scan）。"""
+    import sector_scan as ssc
+    imap = _industry_ticker_map()
+    tkrs = imap.get(industry)
+    if not tkrs:
+        return {"tool": "screen", "ok": False, "industry": industry, "error": "找不到該產業"}
+    rows, _agg = ssc.scan_universe({industry: tkrs}, period="6mo", with_fundamentals=False)
+    rows = [r for r in rows if r.get("return_3m") is not None]
+    rows.sort(key=lambda r: r["return_3m"], reverse=True)
+    top = [{"ticker": r["ticker"], "return_3m": r.get("return_3m"),
+            "ann_vol": r.get("ann_vol"), "sharpe": r.get("sharpe"),
+            "rsi": r.get("rsi")} for r in rows[:8]]
+    return {"tool": "screen", "ok": True, "industry": industry,
+            "scanned": len(rows), "top": top}
+
+
+def _run_options_tool(ticker):
+    """選擇權情緒：Put/Call、隱含波動偏斜、情緒分數。"""
+    import options_sentiment as ops
+    summ = _cached_options(ticker)
+    if not summ:
+        return {"tool": "options", "ok": False, "ticker": ticker,
+                "error": "無選擇權資料（非選擇權標的/外股/無報價）"}
+    sent = ops.sentiment(summ)
+    return {"tool": "options", "ok": True, "ticker": ticker,
+            "score": sent.get("score"), "label": sent.get("label"),
+            "pcr_oi": summ.get("pcr_oi"), "pcr_vol": summ.get("pcr_vol"),
+            "atm_iv": summ.get("atm_iv"), "iv_skew": summ.get("iv_skew"),
+            "notes": sent.get("notes", [])}
+
+
+def _run_insider_tool(ticker):
+    """SEC 內部人交易（Form 4）：買賣人數/金額、cluster buy、情緒。"""
+    import sec_insider as si
+    summ = _cached_insider(ticker)
+    if not summ:
+        return {"tool": "insider", "ok": False, "ticker": ticker,
+                "error": "查無 Form 4（非美股或無內部人申報）"}
+    return {"tool": "insider", "ok": True, "ticker": ticker,
+            "score": summ.get("score"), "label": summ.get("label"),
+            "n_buys": summ.get("n_buys"), "n_sells": summ.get("n_sells"),
+            "n_buyers": summ.get("n_buyers"), "n_sellers": summ.get("n_sellers"),
+            "buy_value": summ.get("buy_value"), "sell_value": summ.get("sell_value"),
+            "net_value": summ.get("net_value"), "cluster_buy": summ.get("cluster_buy"),
+            "window_days": summ.get("window_days")}
+
+
+def _assistant_run_tools(plan):
+    """執行規劃器產生的工具計畫，回結構化結果（每個工具各自防呆）。"""
+    dispatch = {"backtest": lambda a: _run_backtest_tool(a["ticker"]),
+                "risk":     lambda a: _run_risk_tool(a["tickers"]),
+                "screen":   lambda a: _run_screen_tool(a["industry"]),
+                "options":  lambda a: _run_options_tool(a["ticker"]),
+                "insider":  lambda a: _run_insider_tool(a["ticker"])}
+    results = []
+    for step in plan:
+        fn = dispatch.get(step["tool"])
+        if not fn:
+            continue
+        try:
+            results.append(fn(step["args"]))
+        except Exception as e:
+            results.append({"tool": step["tool"], "ok": False, "error": str(e)})
+    return results
+
+
 def page_ai_assistant():
     st.title("💬 AI 助理")
     st.caption("財金研究副駕：用自然語言問個股/總經/大盤，AI 綜合技術+基本面回答（有據可查、風險優先）")
@@ -1309,7 +1455,15 @@ def page_ai_assistant():
             pass
         st.caption("問總經時若有 FRED key 會帶入利率/CPI 等數據。")
 
-    st.caption("範例：「比較 AAPL 和 MSFT 的財務體質」「台積電技術面如何」「現在總經環境對科技股有利嗎」")
+    force_syms = st.text_input(
+        "指定股票代碼（選填，逗號分隔）— 冷門/新標的抓不到時用這個強制納入",
+        "", key="asst_force", placeholder="VRT, PLTR, 2454.TW")
+    use_tools = st.checkbox(
+        "🛠 允許 AI 自己跑分析工具（回測 / 風險 / 選股）", value=True, key="asst_tools",
+        help="開啟後，遇到「回測勝率/風險多大/某產業有哪些強勢股」這類問題，"
+             "AI 會實際呼叫回測、風險與選股引擎取得客觀數據再回答（會多花幾秒）。")
+    st.caption("範例：「AAPL 回測勝率如何」「AAPL+MSFT 組合風險多大」「半導體有哪些強勢股」"
+               "「比較 AAPL 和 MSFT 的財務體質」　·　代碼前加 `$`（如 `$VRT`）也能強制辨識。")
 
     if "asst_chat" not in st.session_state:
         st.session_state["asst_chat"] = []
@@ -1333,13 +1487,48 @@ def page_ai_assistant():
 
         universe = _universe_tickers()
         tickers = asst.extract_tickers(q, universe)
+        # 併入使用者手動指定的代碼（強制納入，去重保序）
+        for t in [x.strip().upper() for x in force_syms.split(",") if x.strip()]:
+            if t not in tickers:
+                tickers.append(t)
+        tickers = tickers[:5]
         intents = asst.detect_intents(q, bool(tickers))
         with st.chat_message("assistant"):
             with st.spinner(f"分析中…（{', '.join(tickers) if tickers else '總經/大盤'}）"):
+                tool_used = []
                 try:
                     td, macd, mkd = _assistant_fetch(tickers, intents, fred_key)
                     ts = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M")
                     context = asst.build_context(q, ts, intents, td, macd, mkd)
+
+                    # ── Phase 2：讓 AI 自己規劃並執行分析工具 ──
+                    client = _llm_client(ai_key, ai_base, ai_model)
+                    try:
+                        import assistant_tools as atools
+                    except ImportError:
+                        atools = None
+                    if use_tools and atools and atools.might_need_tools(q):
+                        try:
+                            inds = list(_industry_ticker_map().keys())
+                            plan_prompt = atools.build_planner_prompt(q, tickers, inds)
+                            pr = client.chat.completions.create(
+                                model=ai_model,
+                                messages=[{"role": "user", "content": plan_prompt}],
+                                temperature=0.0, max_tokens=300)
+                            plan = atools.parse_plan(
+                                pr.choices[0].message.content,
+                                set(_universe_tickers()) | set(tickers), set(inds))
+                            if plan:
+                                tool_used = [f"{p['tool']}({list(p['args'].values())[0]})"
+                                             for p in plan]
+                                st.caption("🛠 執行工具：" + "、".join(tool_used))
+                                results = _assistant_run_tools(plan)
+                                tctx = atools.format_tool_results(results)
+                                if tctx:
+                                    context += "\n\n" + tctx
+                        except Exception:
+                            pass   # 工具失敗不影響基本回答
+
                     # 帶入近期對話（純文字）+ 當前資料
                     history = [{"role": m["role"], "content": m["content"]}
                                for m in st.session_state["asst_chat"][:-1][-6:]]
@@ -1349,7 +1538,6 @@ def page_ai_assistant():
                     messages = ([{"role": "system", "content": asst.SYSTEM_PROMPT}]
                                 + history
                                 + [{"role": "user", "content": f"{context}\n\n問題：{q}"}])
-                    client = _llm_client(ai_key, ai_base, ai_model)
                     resp = client.chat.completions.create(
                         model=ai_model, messages=messages, temperature=0.3, max_tokens=1100)
                     ans = resp.choices[0].message.content
@@ -1357,8 +1545,11 @@ def page_ai_assistant():
                     ans = f"分析失敗：{e}"
                 st.markdown(ans)
                 if tickers or intents:
-                    st.caption(f"🔎 已納入：{', '.join(tickers) if tickers else '—'}"
-                               f"　意圖：{', '.join(sorted(intents))}")
+                    cap = (f"🔎 已納入：{', '.join(tickers) if tickers else '—'}"
+                           f"　意圖：{', '.join(sorted(intents))}")
+                    if tool_used:
+                        cap += f"　🛠 工具：{'、'.join(tool_used)}"
+                    st.caption(cap)
         st.session_state["asst_chat"].append({"role": "assistant", "content": ans})
 
     if st.session_state["asst_chat"]:
@@ -1983,9 +2174,53 @@ def _cached_ticker_data(ticker: str, period: str):
     import yfinance as yf
     tk = yf.Ticker(ticker)
     try:
-        info = tk.info or {}
+        info = dict(tk.info) if tk.info else {}
     except Exception:
         info = {}
+    # .info 在雲端常被 Yahoo 限流 → 用較穩的 fast_info 補市值/52週高低
+    try:
+        fi = tk.fast_info
+
+        def _fi(k):
+            try:
+                v = fi[k]
+                return float(v) if v is not None else None
+            except Exception:
+                return None
+        if not info.get("marketCap"):
+            v = _fi("market_cap")
+            if v:
+                info["marketCap"] = v
+        if not info.get("fiftyTwoWeekHigh"):
+            v = _fi("year_high")
+            if v:
+                info["fiftyTwoWeekHigh"] = v
+        if not info.get("fiftyTwoWeekLow"):
+            v = _fi("year_low")
+            if v:
+                info["fiftyTwoWeekLow"] = v
+    except Exception:
+        pass
+    # Finnhub 備援：.info 被限流時補 P/E、EPS、Beta、股利、市值、52週
+    import os as _os
+    _fh_key = _os.environ.get("FINNHUB_API_KEY", "")
+    if _fh_key and not info.get("trailingPE"):
+        try:
+            import finnhub_data as _fh
+            fh = _fh.fetch(ticker, _fh_key)
+            if fh:
+                # 用「present-but-None 也補」的寫法（setdefault 只認 key 缺席，
+                # 部份限流時 key 常存在但值為 None，會漏補）
+                for _ik, _fk in (("marketCap", "market_cap"), ("trailingPE", "pe"),
+                                 ("trailingEps", "eps"), ("beta", "beta"),
+                                 ("fiftyTwoWeekHigh", "high_52w"),
+                                 ("fiftyTwoWeekLow", "low_52w"), ("longName", "name")):
+                    if info.get(_ik) is None and fh.get(_fk) is not None:
+                        info[_ik] = fh[_fk]
+                if fh.get("dividend_yield_pct") is not None and not info.get("dividendYield"):
+                    info["dividendYield"] = fh["dividend_yield_pct"] / 100  # 存成小數（yfinance 慣例）
+        except Exception:
+            pass
     try:
         hist = tk.history(period=period, auto_adjust=True)
     except Exception:
@@ -2003,8 +2238,50 @@ def page_stock_research():
     st.title("🔍 股票研究")
     st.caption("個股深度分析 · K 線 · RSI · AI 研究報告 · 市場篩選器")
 
-    tab1, tab2, tab3, tab4 = st.tabs(
-        ["📊 個股深度分析", "🔎 市場篩選器", "🧪 訊號回測", "📺 TradingView"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(
+        ["📊 個股深度分析", "🔎 市場篩選器", "🧪 訊號回測", "📺 TradingView", "🎭 選擇權情緒"])
+
+    # ── Tab 5: 選擇權情緒（Put/Call、IV、偏斜）──────────────────────
+    with tab5:
+        section("選擇權情緒 · Put/Call 比 · 隱含波動偏斜")
+        st.caption("用選擇權定位判斷市場情緒：Put/Call 比與隱含波動偏斜。"
+                   "多為美股大型股才有選擇權；情緒屬定位訊號，非買賣建議。")
+        opt_sym = st.text_input("代碼（美股，如 AAPL / NVDA / SPY）", "AAPL",
+                                key="opt_sym").upper().strip()
+        if opt_sym and st.button("分析選擇權情緒", key="opt_go"):
+            with st.spinner(f"抓取 {opt_sym} 選擇權鏈…"):
+                try:
+                    import options_sentiment as ops
+                    summ = _cached_options(opt_sym)
+                except Exception as e:
+                    summ = None
+                    st.error(f"選擇權資料載入失敗：{e}")
+            if not summ:
+                st.warning(f"找不到 {opt_sym} 的選擇權資料（可能非選擇權標的、外股或當前無報價）。")
+            else:
+                sent = ops.sentiment(summ)
+                sc = sent.get("score")
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("情緒分數", f"{sc:+.2f}" if sc is not None else "—",
+                          sent.get("label"))
+                c2.metric("Put/Call（未平倉）",
+                          f"{summ['pcr_oi']:.2f}" if summ.get("pcr_oi") is not None else "—")
+                c3.metric("Put/Call（成交量）",
+                          f"{summ['pcr_vol']:.2f}" if summ.get("pcr_vol") is not None else "—")
+                c4.metric("ATM 隱含波動",
+                          f"{summ['atm_iv']*100:.1f}%" if summ.get("atm_iv") is not None else "—")
+                skew = summ.get("iv_skew")
+                if skew is not None:
+                    st.caption(f"隱含波動偏斜（賣權-買權）：**{skew*100:+.1f} 個百分點**"
+                               f"（買權 {summ['atm_call_iv']*100:.1f}% / 賣權 {summ['atm_put_iv']*100:.1f}%）"
+                               "　正值＝下檔保護需求高（偏避險），負值＝偏多投機。")
+                st.markdown("**判讀**")
+                for n in sent.get("notes", []):
+                    st.markdown(f"- {n}")
+                if summ.get("expiries"):
+                    st.caption("到期日：" + "、".join(summ["expiries"])
+                               + f"　·　現價 {summ.get('spot')}")
+                st.caption("⚠️ 選擇權情緒反映當前定位與避險成本，需搭配趨勢與基本面判讀，非投資建議。")
 
     # ── Tab 4: TradingView 互動圖表（免費嵌入 widget，無需 key）──────
     with tab4:
@@ -2837,6 +3114,20 @@ def _cached_fundamentals(ticker: str):
     return fa.fetch_fundamentals(ticker), ed
 
 
+@st.cache_data(ttl=900, show_spinner=False)
+def _cached_options(ticker: str):
+    """快取選擇權情緒彙總（15 分鐘；選擇權盤中變動較快但抓取偏慢）。"""
+    import options_sentiment as ops
+    return ops.fetch_options(ticker)
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _cached_insider(ticker: str):
+    """快取 SEC Form 4 內部人交易彙總（1 小時；申報低頻）。"""
+    import sec_insider as si
+    return si.fetch_insider(ticker)
+
+
 def page_company_analysis():
     st.title("🏢 公司分析")
     st.caption("基本面體質分析 · 財務健康評分 · 估值 · 三表趨勢 · AI 解讀（資料來源 yfinance）")
@@ -3060,6 +3351,44 @@ def page_company_analysis():
                 f"{st.session_state['fa_ai_out'].replace(chr(10),'<br>')}</div>",
                 unsafe_allow_html=True,
             )
+
+    # ⑦ SEC 內部人交易（Form 4）─────────────────────────────────
+    section("內部人交易（SEC Form 4）")
+    st.caption("內部人＝董事/經理人/10% 大股東，買賣自家股須 2 日內申報。"
+               "公開市場**買進**（尤其多人同買）偏多；賣出訊號較弱（常為節稅/調節）。僅美股。")
+    tkr_ins = data.get("ticker", "")
+    if "." in tkr_ins:
+        st.info("此標的非美股，SEC Form 4 僅涵蓋美國掛牌公司。")
+    elif st.button("查詢內部人交易", key="ins_go"):
+        with st.spinner(f"查詢 {tkr_ins} 的 SEC Form 4…"):
+            try:
+                ins = _cached_insider(tkr_ins)
+            except Exception as e:
+                ins = None
+                st.error(f"SEC 查詢失敗：{e}")
+        if not ins:
+            st.warning("查無近期 Form 4（可能無內部人申報，或代碼無法對應 SEC CIK）。")
+        else:
+            sc = ins.get("score")
+            k1, k2, k3, k4 = st.columns(4)
+            k1.metric("內部人情緒", f"{sc:+.2f}" if sc is not None else "—", ins.get("label"))
+            k2.metric("買進（人/筆）", f"{ins['n_buyers']} / {ins['n_buys']}")
+            k3.metric("賣出（人/筆）", f"{ins['n_sellers']} / {ins['n_sells']}")
+            import sec_insider as _si
+            k4.metric("淨買賣", _si._money(ins.get("net_value")))
+            if ins.get("cluster_buy"):
+                st.success("🔶 多位內部人同期買進（cluster buy）— 歷史上偏多訊號。")
+            rb = ins.get("recent_buys") or []
+            rs = ins.get("recent_sells") or []
+            if rb:
+                st.markdown("**近期買進**　" + "　".join(
+                    f"{o}（{_si._money(v)}, {d}）" for o, v, _sh, d in rb))
+            if rs:
+                st.markdown("**近期賣出**　" + "　".join(
+                    f"{o}（{_si._money(v)}, {d}）" for o, v, _sh, d in rs))
+            st.caption(f"統計視窗 {ins.get('window_days', 90)} 天　·　"
+                       f"解析 {ins.get('n_filings', 0)} 份 Form 4　·　資料來源 SEC EDGAR。"
+                       "內部人交易屬輔助訊號，需搭配基本面與趨勢，非投資建議。")
 
     st.markdown(
         "<small style='color:#B8C0D0'>⚠️ 資料來源 yfinance，季報更新、非即時；"
