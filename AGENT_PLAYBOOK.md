@@ -8,8 +8,9 @@
 1. **「完工」散落在 4+ 個檔案**：新 key 要同步 app.py `_os_boot` 清單 / workflow env /
    GITHUB_ACTIONS.md / README；新模組要進 Colab Cell 2。靠記憶必漏（漏過 SEC_USER_AGENT、
    險漏 trade_journal 提交）。→ **對策**：一律走 CLAUDE.md 的 DoD 清單逐項打勾。
-2. **app.py ~3600 行**：整檔閱讀極耗 token 且易看漏。→ **對策**：只用 Grep 定位
-   （`def page_` / `PAGES = {` / `def _cached_` / `elif cmd ==`），一次只讀目標函數 ±30 行；
+2. **app.py ~4300 行（會漂移，以 `wc -l` 為準）**：整檔閱讀極耗 token 且易看漏。→ **對策**：
+   只用 Grep 定位（app.py 內：`def page_` / `PAGES = {` / `def _cached_` / `def _run_.*_tool`；
+   Bot 指令在 scan_signals.py：`elif cmd ==`），一次只讀目標函數 ±30 行；
    新的可離線測試邏輯寫成獨立模組，不要再往 app.py 塞純邏輯。
 3. **驗證品質靠自覺**：自己寫的碼自己看不出盲點。實績：本專案的子代理對抗驗證在
    risk-parity 不收斂、`setdefault`-None、無標的 outlook 空 context、workflow 原子 add、
@@ -26,14 +27,15 @@
 
 **回報合約**：子代理只回「結論 + file:line + 嚴重度」，不回檔案傾印；長產物落檔傳路徑。
 
-**驗證不自驗**：驗收一律 fresh-context 子代理。已在主對話討論過的假設，子代理不會被污染。
+**驗證不自驗**：驗收預設派 fresh-context 子代理（不被主對話的假設污染）。
+**唯一例外**：同一子任務重派兩輪仍回報空泛時，主對話自驗，並在給使用者的回報中註明是自驗。
 
 **模型選擇**：預設不指定（繼承 session 模型）。機械式批次工作可用 `model: "haiku"` 省成本。
 （顯式調 model/effort 的增益未經本專案實測，屬建議而非鐵律。）
 
 **升降級路徑**：
 - 子代理回報空泛（只有「看起來沒問題」、沒有 file:line）→ 換更尖銳的問題重派一次，
-  同一子任務**最多重派兩輪**，仍不行就主對話自己驗。
+  同一子任務**最多重派兩輪**，仍不行才適用上面的自驗例外。
 - 子代理報 High/Med → 必修；報 Low → 修一行能解的就修，要大動的記入 PITFALLS 後跳過。
 
 **醒來協議**：scheduled wakeup / task-notification 觸發時，第一件事
@@ -41,7 +43,7 @@
 
 ## §3 模板（複製填空）
 
-### T1 對抗式驗證（每個功能 commit 前後必用）
+### T1 對抗式驗證（每個功能 commit 前必用；驗已 commit 的舊功能時把 UNCOMMITTED 換成 commit hash）
 ```
 Review the new <功能名> in /home/user/RBS_claude_finance (branch <branch>, <UNCOMMITTED 或 commit hash>).
 目的：<一句話：這功能該做到什麼>。
@@ -102,14 +104,14 @@ In /home/user/RBS_claude_finance, find <目標>。
 |---|---|---|
 | PITFALLS.md | 任何 session 自行改 | 新坑追加（格式照檔內規則）；>35 條時精簡 |
 | AGENT_PLAYBOOK.md | 任何 session 自行改 | 模板可迭代；§4 判準改動要附新的正反例 |
-| CLAUDE.md | **鐵律區塊需使用者同意**；DoD/導航可自行更新 | 保持 ≤100 行，細節推到引用檔 |
+| CLAUDE.md | **鐵律區塊需使用者同意**；其餘區塊（DoD/導航/專案摘要等）可自行更新 | 保持 ≤100 行，細節推到引用檔 |
 
 每次踩坑：教訓寫 PITFALLS（事實類）或本檔 §4（判斷類）。commit 訊息照常規。
 
 ## §6 給未來 session 的信
 
 **三件最重要、但使用者不會主動說的事：**
-1. **儀式是硬需求**：建任務→自我批判→實作→子代理驗證→commit→更新 md。使用者會檢查
+1. **儀式是硬需求**：建任務→自我批判→實作＋md 同步→子代理驗證→commit+push。使用者會檢查
    你有沒有跳過驗證（曾明確要求「記得規畫自我監督執行」）。驗證的投報率有實據（§1.3）。
 2. **斷網不是壞掉**：本地連不上金融 API 是環境設計。純邏輯離線測、事實網查、
    整合請使用者部署後實測並回報（他願意配合，貼截圖/錯誤訊息給你）。

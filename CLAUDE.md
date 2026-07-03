@@ -16,10 +16,12 @@ Streamlit 金融儀表板（`app.py`，13 頁）+ Telegram 訊號 Bot（`scan_si
 1. **公開 repo：金鑰絕不寫進任何被 commit 的檔案。** 只放 GitHub/Streamlit Secrets 或 UI 當場輸入。
    `.gitignore` 已排除 `.env`、`secrets.toml`、`alerts_config.json`。
 2. **開發環境對外網路被 proxy 擋住**：yfinance / SEC EDGAR / Finnhub / Telegram / FRED 本地全連不上。
-   **這不是 bug，不要試圖「修」它。** 純邏輯離線測（`python3 <module>.py`）；
+   **「本地連不上」這件事本身不是 bug、不要修；程式碼內的真錯誤（如逾時處理寫錯）照修。**
+   純邏輯離線測（`python3 <module>.py`）；
    代碼、公司名、API 行為等「事實」一律派 web-search 子代理查證（模板見 AGENT_PLAYBOOK）。
 3. **工作流程儀式**（使用者的硬性期待，會明確檢查）：
-   建任務（TaskCreate）→ 自我批判 → 實作 → **子代理對抗驗證** → commit+push → 更新 md。
+   建任務（TaskCreate；無此工具就寫計畫清單）→ 自我批判 → 實作＋**md 同步** →
+   **子代理對抗驗證** → commit+push。（md 在 commit 前改完，避免文件與程式碼漂移。）
    驗證不可省：本專案幾乎每個功能的驗證都抓到過真 bug（統計見 AGENT_PLAYBOOK §1）。
 4. 開發分支照 session 指示（通常 `claude/...`），`git push -u origin <branch>`；
    commit 訊息帶 session 指定 footer；**不開 PR** 除非使用者明說。
@@ -29,7 +31,7 @@ Streamlit 金融儀表板（`app.py`，13 頁）+ Telegram 訊號 Bot（`scan_si
 
 | 要改什麼 | 檔案 |
 |---|---|
-| 網頁頁面/UI | `app.py`（~3600 行，**不要整檔讀**。導航：Grep `def page_` 找頁面、`PAGES = {` 看路由、`def _cached_` 找快取層、`def _run_.*_tool` 找 AI 助理工具執行器）|
+| 網頁頁面/UI | `app.py`（~4300 行、會持續漂移，以 `wc -l` 為準；**不要整檔讀**。導航：Grep `def page_` 找頁面、`PAGES = {` 看路由、`def _cached_` 找快取層、`def _run_.*_tool` 找 AI 助理工具執行器）|
 | Bot 訊號/指令/晨報 | `scan_signals.py`（排程進入點；指令 dispatch 搜 `elif cmd ==`）；`bot_daemon.py` 重用其全部邏輯 |
 | 回測引擎 | `backtest.py`（triple-barrier / walk-forward / 參數最佳化）|
 | 部位與風險數學 | `quant_tools.py`（ATR/Kelly/風險平價）、`rbs_lib.py`（VaR/CVaR）|
@@ -48,7 +50,7 @@ Streamlit 金融儀表板（`app.py`，13 頁）+ Telegram 訊號 Bot（`scan_si
 - [ ] `python3 -c "import ast; ast.parse(open('app.py').read())"`（app.py 不能直接 import——開發環境沒裝 streamlit）
 - [ ] **新增環境變數 key？四處同步**：app.py 開機 secrets→env 複製清單（搜 `_os_boot`）、
       `.github/workflows/signal_scan.yml` env、`GITHUB_ACTIONS.md` Secrets 表、`README.md` API Keys 表
-- [ ] **新增 .py 模組？** `RBS_Finance_Colab.ipynb` Cell 2 同步清單加檔名（用 NotebookEdit，cell id `cell-2`）
+- [ ] **新增 .py 模組？** `RBS_Finance_Colab.ipynb` Cell 2 同步清單加檔名（用 NotebookEdit；先 Read 該筆記本確認 cell id，目標是 source 以 `# ── CELL 2` 開頭的那格）
 - [ ] **新增 Bot 指令？** `scan_signals.py`：dispatch elif + `/help` 文字 + 檔頭 docstring；`GITHUB_ACTIONS.md` 指令表
 - [ ] README 同步：頁面表 / 功能列表 / 檔案結構
 - [ ] 子代理對抗驗證（模板：AGENT_PLAYBOOK §3），**High/Med 發現必修**，Low 視成本

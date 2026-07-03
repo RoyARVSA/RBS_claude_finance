@@ -15,7 +15,8 @@
 - **症狀**：`import app` 直接 Traceback。
 - **原因**：開發環境沒裝 streamlit。
 - **修法**：語法檢查用 `python3 -c "import ast; ast.parse(open('app.py').read())"`；
-  要測 app.py 裡的純函數，用 `re.search` 取函數原始碼 + `exec` 在乾淨 namespace 跑（session 中已多次成功）。
+  要測 app.py 裡的純函數，用 `re.search` 取函數原始碼 + `exec` 在乾淨 namespace 跑
+  （被取函數若引用 `st.*` 或模組全域，要先在 namespace 塞 stub——那種 NameError 是缺 stub，不是 bug）。
 
 ### A3. Streamlit Cloud 模組快取
 - **症狀**：给既有模組加了新函數並 push，網頁報 `AttributeError: module 'X' has no attribute 'Y'`。
@@ -32,7 +33,7 @@
 ### B1. yfinance `.info` 雲端被限流
 - **症狀**：市值/P/E/ROE 全顯示「—」，本地卻正常。
 - **原因**：`.info`（quoteSummary 端點）被 Yahoo 對雲端 IP 限流；`.history` 與 `.fast_info` 通常仍可用。
-- **修法**：三層備援：`.fast_info`（有 market_cap/52週/價格，**沒有** P/E/EPS/ROE）→ Finnhub（`finnhub_data.py`）。已內建於 `fundamentals.py` 與 app.py `_cached_ticker_data`。
+- **修法**：備援鏈三層：`.info` → `.fast_info`（有 market_cap/52週/價格，**沒有** P/E/EPS/ROE）→ Finnhub（`finnhub_data.py`）。已內建於 `fundamentals.py` 與 app.py `_cached_ticker_data`。
 
 ### B2. `dict.setdefault` 補不了「key 存在但值是 None」
 - **症狀**：部份限流時 `.info` 回 `{"trailingPE": None}`，備援明明啟動卻沒補值。
@@ -93,11 +94,14 @@
 ### D3. 併發 push 撞牆
 - **症狀**：cron 跑到一半 push 被 reject（non-fast-forward）。
 - **修法**：workflow 用 rebase-retry 迴圈；本地 push 失敗時 `git pull --rebase` 再推。
+  **絕不 `push --force`**（Bot 會往同一分支 commit 狀態檔，force 會毀掉它的歷史）；
+  rebase 重試三次仍失敗就停下向使用者回報。
 
 ### D4. 刪 app.py 死碼的近事故
 - **症狀**：差點把仍在用的 `page_portfolio_performance` 當死碼刪掉（live 函數與死函數交錯排列）。
 - **修法**：刪除前逐一 Grep 確認函數未被引用（查 `PAGES` dict + 所有呼叫點）；
-  大規模刪除前先 commit，刪後立即語法檢查 + 抽查存活函數還在。
+  大規模刪除前先 commit（此檢查點 commit 不需先過子代理驗證，照常帶 footer），
+  刪後立即語法檢查 + 抽查存活函數還在。
 
 ### D5. LLM API key 隱形字元
 - **症狀**：`'ascii' codec can't encode characters in position 7-10`（Bearer 前綴剛好 7 字元）。
