@@ -1607,7 +1607,7 @@ def daily_briefing(state: dict, force: bool = False) -> str | None:
                      if r.get("score", 0) >= 0.3 and "." not in r.get("ticker", "")), None)
         if cand:
             import sec_insider as _si
-            ins = _si.fetch_insider(cand["ticker"])
+            ins = _si.fetch_insider(cand["ticker"], max_filings=8)  # 限縮抓取數，控制晨報延遲
             if ins and ins.get("n_buys") and (ins.get("cluster_buy")
                                               or (ins.get("net_value") or 0) > 0):
                 net = ins.get("net_value")
