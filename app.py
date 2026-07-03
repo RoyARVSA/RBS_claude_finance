@@ -60,7 +60,7 @@ st.set_page_config(
 # 把 Streamlit Secrets 複製到環境變數，讓各模組用 os.environ 統一讀取
 import os as _os_boot
 for _k in ("FINNHUB_API_KEY", "FRED_API_KEY", "LLM_API_KEY", "LLM_BASE_URL",
-           "LLM_MODEL", "ALPACA_KEY_ID", "ALPACA_SECRET_KEY"):
+           "LLM_MODEL", "ALPACA_KEY_ID", "ALPACA_SECRET_KEY", "SEC_USER_AGENT"):
     if not _os_boot.environ.get(_k):
         try:
             _v = st.secrets.get(_k)
