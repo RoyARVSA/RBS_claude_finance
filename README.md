@@ -32,13 +32,13 @@ Streamlit 網頁應用 + 獨立的訊號掃描 Bot（GitHub Actions 排程版 / 
 - **技術訊號**：RSI、MACD、布林通道、ATR 進出場、MA 交叉、爆量
 - **綜合評分**：趨勢/MACD/RSI/布林/動量合成 -1~+1 分數，5 級評級
 - **多時間框架確認**：日線分數與週線同向加強、背離減弱（軟性調整）
-- **每日 AI 晨報**：每交易日 ET 08:30 自動推送大盤+排名+訊號
+- **每日 AI 晨報**：每交易日 ET 08:30 自動推送大盤+排名+訊號+最強標的內部人亮點
 - **自我優化迴圈**：回測各訊號歷史勝率 → 動態調整評分權重（每週校準）
 - **防護機制**（freqtrade 式）：訊號冷卻去重、大盤風險濾網
 - **部位建議**：每個訊號附 ATR 風險基準的建議股數
 - **財報行事曆提醒**：觀察清單標的財報前 N 天自動提醒（晨報 + `/earnings`）
 - **Alpaca 模擬交易**：訊號自動下模擬單驗證策略實效（預設關閉，`/autotrade on` 啟用）
-- **Telegram 指令**：清單 `/add /remove /list`、分析 `/rank /fundamentals /earnings /briefing`、
+- **Telegram 指令**：清單 `/add /remove /list`、分析 `/rank /fundamentals /options /insider /earnings /briefing`、
   風控 `/risk /protections /calibrate`、模擬交易 `/autotrade /positions /pnl /journal /closeall`（`/help` 看全部）
 
 ### 🧪 回測引擎（`backtest.py`）

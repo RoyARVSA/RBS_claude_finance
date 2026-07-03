@@ -23,6 +23,8 @@ Telegram 指令（傳給 Bot）：
   /protections            – 查看防護機制（訊號冷卻 / 大盤風險濾網）狀態
   /risk [帳戶 風險%]       – 設定/查看部位風險（訊號附建議部位股數）
   /fundamentals TICKER    – 查公司基本面摘要（健康評分/ROE/估值，快取一天）（別名 /f）
+  /options TICKER         – 選擇權情緒：Put/Call 比、隱含波動偏斜、情緒分數（別名 /opt）
+  /insider TICKER         – SEC 內部人交易（Form 4，僅美股，買賣/cluster buy）（別名 /ins）
   /earnings [天數]        – 觀察清單近期財報日（晨報也會自動提醒 N 天內財報）
   /autotrade on|off       – Alpaca 模擬自動交易總開關（預設關）
   /positions /pnl /closeall – 模擬持倉 / 帳戶報酬 / 一鍵平倉
@@ -260,6 +262,8 @@ def _cmd_help() -> str:
         "`/top 5` — 今日漲跌幅前 5 名\n"
         "`/rank` — 綜合評分排名（-1~+1）\n"
         "`/fundamentals AAPL`（或 `/f`）— 公司基本面摘要\n"
+        "`/options AAPL`（或 `/opt`）— 選擇權情緒（Put/Call、IV 偏斜）\n"
+        "`/insider AAPL`（或 `/ins`）— SEC 內部人交易（Form 4，僅美股）\n"
         "`/earnings [天數]` — 觀察清單近期財報日\n"
         "`/briefing` — 立即生成每日晨報\n\n"
         "🤖 *模擬交易（Alpaca paper）*\n"
@@ -414,6 +418,42 @@ def _cmd_fundamentals(state: dict, ticker: str) -> str:
 
     cache[ticker] = {"date": today, "text": text}
     return text
+
+
+def _cmd_options(ticker: str) -> str:
+    """查詢單檔選擇權情緒（Put/Call、隱含波動偏斜、情緒分數）。"""
+    try:
+        import options_sentiment as ops
+    except Exception:
+        return "❌ 找不到 options_sentiment.py（請同步該檔案）"
+    try:
+        summ = ops.fetch_options(ticker)
+    except Exception as e:
+        return f"❌ {ticker} 選擇權查詢失敗：{e}"
+    if not summ:
+        return f"⚠️ {ticker}：查無選擇權資料（非選擇權標的/外股/無報價）"
+    sent = ops.sentiment(summ)
+    return f"🎭 *選擇權情緒* {ticker}\n" + ops.format_options_text(summ, sent) \
+        + "\n_定位訊號，非投資建議_"
+
+
+def _cmd_insider(ticker: str) -> str:
+    """查詢單檔 SEC Form 4 內部人交易摘要（僅美股）。"""
+    try:
+        import sec_insider as si
+    except Exception:
+        return "❌ 找不到 sec_insider.py（請同步該檔案）"
+    if "." in ticker:
+        return f"⚠️ {ticker}：SEC Form 4 僅涵蓋美股掛牌公司"
+    try:
+        summ = si.fetch_insider(ticker)
+    except Exception as e:
+        return f"❌ {ticker} 內部人查詢失敗：{e}"
+    if not summ:
+        return f"⚠️ {ticker}：查無近期 Form 4（無內部人申報或代碼無法對應 CIK）"
+    win = f"近{summ.get('window_days', 90)}天"
+    return f"🕵️ *內部人交易* {ticker}\n" + si.format_insider_text(summ, win) \
+        + "\n_輔助訊號，非投資建議_"
 
 
 def _cmd_positions() -> str:
@@ -684,6 +724,22 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                 _tg_send(token, src_chat or chat_id, reply)
                 reply = _cmd_fundamentals(state, tkr)
                 changed = True   # 可能更新快取
+
+        elif cmd in ("/options", "/opt"):
+            if not args:
+                reply = "用法：`/options AAPL` 或 `/opt AAPL`"
+            else:
+                tkr = args[0].upper()
+                _tg_send(token, src_chat or chat_id, f"🎭 查詢 {tkr} 選擇權情緒中…")
+                reply = _cmd_options(tkr)
+
+        elif cmd in ("/insider", "/ins"):
+            if not args:
+                reply = "用法：`/insider AAPL` 或 `/ins AAPL`"
+            else:
+                tkr = args[0].upper()
+                _tg_send(token, src_chat or chat_id, f"🕵️ 查詢 {tkr} 內部人交易中…")
+                reply = _cmd_insider(tkr)
 
         elif cmd == "/briefing":
             reply = "☀️ 生成晨報中，約需 20-40 秒…"
@@ -1544,6 +1600,22 @@ def daily_briefing(state: dict, force: bool = False) -> str | None:
         lines.append("")
     if flagged:
         lines.append(f"🚨 今日 {len(flagged)} 檔觸發訊號（詳見後續掃描）")
+
+    # 內部人交易亮點：只查「最強且偏多的美股」1 檔（每日 1 次呼叫、全程防呆）
+    try:
+        cand = next((r for r in top
+                     if r.get("score", 0) >= 0.3 and "." not in r.get("ticker", "")), None)
+        if cand:
+            import sec_insider as _si
+            ins = _si.fetch_insider(cand["ticker"])
+            if ins and ins.get("n_buys") and (ins.get("cluster_buy")
+                                              or (ins.get("net_value") or 0) > 0):
+                net = ins.get("net_value")
+                lines.append("")
+                lines.append(f"🕵️ *內部人*：{cand['ticker']} {ins.get('label','')}"
+                             + (f"（淨 {_si._money(net)}）" if net else ""))
+    except Exception:
+        pass
 
     # 近期財報提醒
     try:
