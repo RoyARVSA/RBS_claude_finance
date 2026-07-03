@@ -115,9 +115,10 @@ def detect_intents(question: str, has_tickers: bool) -> set:
             if (kw in ql) if kw.isascii() else (kw in question):
                 intents.add(intent)
                 break
-    # 前瞻問題需要全維度：技術+基本面+總經一起看，才有「遠見」可談
-    if "outlook" in intents and has_tickers:
-        intents |= {"technical", "fundamental", "macro"}
+    # 前瞻問題需要全維度：有標的→技術+基本面+總經；無標的（問大盤後市）→大盤+總經
+    if "outlook" in intents:
+        intents |= ({"technical", "fundamental", "macro"} if has_tickers
+                    else {"market", "macro"})
     if has_tickers and not (intents & {"technical", "fundamental"}):
         intents |= {"technical", "fundamental"}
     if not has_tickers and not intents:
@@ -241,6 +242,9 @@ if __name__ == "__main__":
     out = detect_intents("NVDA 未來前景怎麼看", True)
     print(" ", out, "(前瞻→技術+基本面+總經)")
     assert {"outlook", "technical", "fundamental", "macro"} <= out
+    out0 = detect_intents("美股後市怎麼看", False)
+    print(" ", out0, "(無標的前瞻→大盤+總經，不會空 context)")
+    assert {"market", "macro"} <= out0
 
     print("\n=== build_context（含趨勢/催化劑/同業）===")
     td = {"AAPL": {"tech": {"price": 190, "return_1m": 0.05, "rsi": 62, "ann_vol": 0.25,

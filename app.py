@@ -1298,13 +1298,15 @@ def _assistant_peer_note(ticker: str) -> str | None:
         by_ret = sorted(rows, key=lambda r: r["return_3m"], reverse=True)
         n = len(by_ret)
         pos_ret = next((i + 1 for i, r in enumerate(by_ret) if r["ticker"] == ticker), None)
+        pes = sorted([r for r in rows if r.get("pe") and r["pe"] > 0], key=lambda r: r["pe"])
+        pos_pe = next((i + 1 for i, r in enumerate(pes) if r["ticker"] == ticker), None)
+        if not pos_ret and not pos_pe:
+            return None                       # 標的不在排名中，這句話沒有資訊量
         note = f"{ind} {n} 檔中"
         if pos_ret:
             note += f"，近3月報酬排 {pos_ret}/{n}"
-        pes = sorted([r for r in rows if r.get("pe")], key=lambda r: r["pe"])
-        pos_pe = next((i + 1 for i, r in enumerate(pes) if r["ticker"] == ticker), None)
         if pos_pe:
-            note += f"、P/E 排 {pos_pe}/{len(pes)}（越前越便宜）"
+            note += f"、P/E 排 {pos_pe}/{len(pes)}（越前越便宜，僅計正 P/E）"
         return note
     except Exception:
         return None
