@@ -24,12 +24,11 @@ _TOOL_HINTS = [
     # 回測 / 勝率
     "回測", "backtest", "勝率", "獲利因子", "profit factor", "期望值", "訊號有效",
     "策略表現", "歷史表現", "進出場",
-    # 風險
+    # 風險（去掉過寬的 "risk"/"volatility"，中文 風險/波動 已涵蓋；var/cvar 夠專指）
     "風險", "var", "cvar", "波動", "回撤", "drawdown", "下檔", "虧損機率",
-    "volatility", "risk",
-    # 選股 / 篩選
+    # 選股 / 篩選（"有哪些股/標的" 而非過寬的 "有哪些"）
     "選股", "篩選", "screen", "找標的", "推薦標的", "哪些股", "哪幾檔", "強勢股",
-    "產業裡", "族群裡", "有哪些", "候選", "掃描",
+    "產業裡", "族群裡", "有哪些股", "有哪些標的", "候選", "掃描",
 ]
 
 
@@ -130,6 +129,8 @@ def _clean_args(tool: str, args: dict, valid_tickers, valid_industries):
 
     if tool == "risk":
         raw = args.get("tickers") or ([args.get("ticker")] if args.get("ticker") else [])
+        if isinstance(raw, str):          # 容忍 LLM 回字串（單檔或逗號分隔）
+            raw = [p for p in re.split(r"[,\s]+", raw) if p]
         ts = []
         for x in raw if isinstance(raw, list) else []:
             t = _norm_ticker(x)

@@ -1295,8 +1295,9 @@ def _assistant_fetch(tickers, intents, fred_key):
     return ticker_data, macro_data, market_data
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
 def _industry_ticker_map():
-    """跨市場的 {產業名: [代碼,...]}，供助理 screen 工具用（含快取）。"""
+    """跨市場的 {產業名: [代碼,...]}，供助理 screen 工具用（快取 1 小時）。"""
     from stock_db import ADB
     out = {}
     for _market, inds in ADB.items():
