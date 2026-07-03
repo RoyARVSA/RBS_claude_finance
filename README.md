@@ -109,7 +109,7 @@ assistant_tools.py      AI 助理工具編排：規劃(plan)/解析/格式化，
 options_sentiment.py    選擇權情緒：Put/Call 比、ATM 隱含波動、賣買權偏斜 + 情緒評分
 sec_insider.py          SEC 內部人交易：Form 4 XML 解析 + 買賣彙總（cluster buy）+ 情緒
 alpaca_trader.py        Alpaca 紙上交易：下單決策(decide_orders) + REST client
-stock_db.py             選股資料庫（5 市場、30+ 產業、200+ 標的）
+stock_db.py             選股資料庫（5 市場、30+ 產業、200+ 標的，含 AI 供應鏈瓶頸主題）
 rbs_lib.py              風險計算函式庫（VaR/CVaR/共變異數/情境）
 streamlit_app.py        雲端部署進入點
 .github/workflows/      GitHub Actions 排程掃描
