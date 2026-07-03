@@ -1260,6 +1260,56 @@ def _universe_tickers() -> set:
         return set()
 
 
+def _trend_fields(close) -> dict:
+    """由收盤序列算 52 週位置與均線乖離（純計算，供前瞻判斷）。"""
+    c = close.dropna()
+    if len(c) < 50:
+        return {}
+    price = float(c.iloc[-1])
+    look = c.tail(252)
+    hi, lo = float(look.max()), float(look.min())
+    out = {}
+    if hi > 0:
+        out["pct_from_52w_high"] = price / hi - 1
+    if lo > 0:
+        out["pct_from_52w_low"] = price / lo - 1
+    ma50 = float(c.tail(50).mean())
+    if ma50 > 0:
+        out["vs_ma50"] = price / ma50 - 1
+    if len(c) >= 200:
+        ma200 = float(c.tail(200).mean())
+        if ma200 > 0:
+            out["vs_ma200"] = price / ma200 - 1
+    return out
+
+
+def _assistant_peer_note(ticker: str) -> str | None:
+    """把標的放進同產業對手中排名（近3月報酬 + P/E），回一句話。"""
+    try:
+        import sector_scan as ssc
+        imap = _industry_ticker_map()
+        ind = next((i for i, ts in imap.items() if ticker in ts), None)
+        if not ind or len(imap[ind]) < 3:
+            return None
+        rows, _agg = ssc.scan_universe({ind: imap[ind][:12]}, "6mo", True)
+        rows = [r for r in rows if r.get("return_3m") is not None]
+        if len(rows) < 3:
+            return None
+        by_ret = sorted(rows, key=lambda r: r["return_3m"], reverse=True)
+        n = len(by_ret)
+        pos_ret = next((i + 1 for i, r in enumerate(by_ret) if r["ticker"] == ticker), None)
+        note = f"{ind} {n} 檔中"
+        if pos_ret:
+            note += f"，近3月報酬排 {pos_ret}/{n}"
+        pes = sorted([r for r in rows if r.get("pe")], key=lambda r: r["pe"])
+        pos_pe = next((i + 1 for i, r in enumerate(pes) if r["ticker"] == ticker), None)
+        if pos_pe:
+            note += f"、P/E 排 {pos_pe}/{len(pes)}（越前越便宜）"
+        return note
+    except Exception:
+        return None
+
+
 def _assistant_fetch(tickers, intents, fred_key):
     """依意圖抓取各標的與總經/大盤資料（重用快取 helper）。"""
     import sector_scan as ssc
@@ -1267,14 +1317,16 @@ def _assistant_fetch(tickers, intents, fred_key):
     ticker_data = {}
     for t in tickers:
         d = {}
-        if intents & {"technical", "compare", "earnings"}:
+        if intents & {"technical", "compare", "earnings", "outlook"}:
             try:
-                _info, hist, _news = _cached_ticker_data(t, "6mo")
+                _info, hist, _news = _cached_ticker_data(t, "1y")
                 if hist is not None and not hist.empty:
-                    d["tech"] = ssc.price_metrics(hist["Close"])
+                    tech = ssc.price_metrics(hist["Close"]) or {}
+                    tech.update(_trend_fields(hist["Close"]))   # 52週位置 + 均線
+                    d["tech"] = tech
             except Exception:
                 pass
-        if intents & {"fundamental", "compare"}:
+        if intents & {"fundamental", "compare", "outlook"}:
             try:
                 fund, ed = _cached_fundamentals(t)
                 if fund and fund.get("ok"):
@@ -1282,11 +1334,17 @@ def _assistant_fetch(tickers, intents, fred_key):
                     d["fund"] = {"health": hs.get("score"), "pe": fund.get("pe"),
                                  "roe": fund.get("roe"), "net_margin": fund.get("net_margin"),
                                  "revenue_growth": fund.get("revenue_growth")}
-                if "earnings" in intents:
+                if intents & {"earnings", "outlook", "fundamental"}:
                     d["earnings"] = ed.isoformat() if ed else None
             except Exception:
                 pass
         ticker_data[t] = d
+
+    # 同業對比：僅前瞻/比較問題、只算第一檔（控成本），放進相對排名
+    if intents & {"outlook", "compare"} and tickers:
+        note = _assistant_peer_note(tickers[0])
+        if note:
+            ticker_data[tickers[0]]["peers_note"] = note
 
     macro_data = None
     if "macro" in intents and fred_key:
@@ -1446,7 +1504,8 @@ def _assistant_run_tools(plan):
 
 def page_ai_assistant():
     st.title("💬 AI 助理")
-    st.caption("財金研究副駕：用自然語言問個股/總經/大盤，AI 綜合技術+基本面回答（有據可查、風險優先）")
+    st.caption("資深分析師模式：論點導向、事實vs推論分開、催化劑+情境+觀察指標；"
+               "問前瞻問題會主動跑回測/選擇權/內部人並比較同業（有據可查、風險優先）")
 
     try:
         import assistant as asst
@@ -1477,8 +1536,9 @@ def page_ai_assistant():
         "🛠 允許 AI 自己跑分析工具（回測 / 風險 / 選股）", value=True, key="asst_tools",
         help="開啟後，遇到「回測勝率/風險多大/某產業有哪些強勢股」這類問題，"
              "AI 會實際呼叫回測、風險與選股引擎取得客觀數據再回答（會多花幾秒）。")
-    st.caption("範例：「AAPL 回測勝率如何」「AAPL+MSFT 組合風險多大」「半導體有哪些強勢股」"
-               "「比較 AAPL 和 MSFT 的財務體質」　·　代碼前加 `$`（如 `$VRT`）也能強制辨識。")
+    st.caption("範例：「NVDA 未來前景怎麼看」（前瞻→自動回測+選擇權+內部人+同業比較）"
+               "「AAPL+MSFT 組合風險多大」「半導體有哪些強勢股」「比較 AAPL 和 MSFT 的財務體質」"
+               "　·　代碼前加 `$`（如 `$VRT`）也能強制辨識。")
 
     if "asst_chat" not in st.session_state:
         st.session_state["asst_chat"] = []
@@ -1522,17 +1582,26 @@ def page_ai_assistant():
                         import assistant_tools as atools
                     except ImportError:
                         atools = None
-                    if use_tools and atools and atools.might_need_tools(q):
+                    if use_tools and atools:
                         try:
-                            inds = list(_industry_ticker_map().keys())
-                            plan_prompt = atools.build_planner_prompt(q, tickers, inds)
-                            pr = client.chat.completions.create(
-                                model=ai_model,
-                                messages=[{"role": "user", "content": plan_prompt}],
-                                temperature=0.0, max_tokens=300)
-                            plan = atools.parse_plan(
-                                pr.choices[0].message.content,
-                                set(_universe_tickers()) | set(tickers), set(inds))
+                            plan = []
+                            # 前瞻問題：主動對主要美股跑回測+選擇權+內部人（有證據才有遠見）
+                            prim = next((t for t in tickers if "." not in t), None)
+                            if "outlook" in intents and prim:
+                                plan = [{"tool": "backtest", "args": {"ticker": prim}},
+                                        {"tool": "options", "args": {"ticker": prim}},
+                                        {"tool": "insider", "args": {"ticker": prim}}]
+                            # 否則（或無美股主標的）交給規劃器判斷
+                            if not plan and atools.might_need_tools(q):
+                                inds = list(_industry_ticker_map().keys())
+                                plan_prompt = atools.build_planner_prompt(q, tickers, inds)
+                                pr = client.chat.completions.create(
+                                    model=ai_model,
+                                    messages=[{"role": "user", "content": plan_prompt}],
+                                    temperature=0.0, max_tokens=300)
+                                plan = atools.parse_plan(
+                                    pr.choices[0].message.content,
+                                    set(_universe_tickers()) | set(tickers), set(inds))
                             if plan:
                                 tool_used = [f"{p['tool']}({list(p['args'].values())[0]})"
                                              for p in plan]
@@ -1554,7 +1623,7 @@ def page_ai_assistant():
                                 + history
                                 + [{"role": "user", "content": f"{context}\n\n問題：{q}"}])
                     resp = client.chat.completions.create(
-                        model=ai_model, messages=messages, temperature=0.3, max_tokens=1100)
+                        model=ai_model, messages=messages, temperature=0.3, max_tokens=1600)
                     ans = resp.choices[0].message.content
                 except Exception as e:
                     ans = f"分析失敗：{e}"

@@ -50,6 +50,9 @@ _INTENT_KW = {
                     "報告日期"],
     "compare":     ["比較", "對比", "相比", "vs", "versus", "哪個好", "哪個較",
                     "誰比較", "compare"],
+    "outlook":     ["未來", "前景", "展望", "後市", "怎麼看", "看法",
+                    "會漲", "會跌", "值得", "該買", "該進", "布局", "方向",
+                    "outlook", "prospect", "future", "看多", "看空", "潛力"],
 }
 
 
@@ -112,6 +115,9 @@ def detect_intents(question: str, has_tickers: bool) -> set:
             if (kw in ql) if kw.isascii() else (kw in question):
                 intents.add(intent)
                 break
+    # 前瞻問題需要全維度：技術+基本面+總經一起看，才有「遠見」可談
+    if "outlook" in intents and has_tickers:
+        intents |= {"technical", "fundamental", "macro"}
     if has_tickers and not (intents & {"technical", "fundamental"}):
         intents |= {"technical", "fundamental"}
     if not has_tickers and not intents:
@@ -151,6 +157,18 @@ def build_context(question: str, timestamp: str, intents: set,
                 f"年化波動 {_fmt(tech.get('ann_vol'), pct=True)}　"
                 f"RSI {_fmt(tech.get('rsi'), dp=0)}　"
                 f"最大回撤 {_fmt(tech.get('max_dd'), pct=True)}")
+            # 趨勢結構（52週位置 + 均線）——有前瞻判斷的材料
+            trend_bits = []
+            if tech.get("pct_from_52w_high") is not None:
+                trend_bits.append(f"距52週高 {_fmt(tech.get('pct_from_52w_high'), pct=True)}")
+            if tech.get("pct_from_52w_low") is not None:
+                trend_bits.append(f"距52週低 {_fmt(tech.get('pct_from_52w_low'), pct=True)}")
+            if tech.get("vs_ma50") is not None:
+                trend_bits.append(f"vs MA50 {_fmt(tech.get('vs_ma50'), pct=True)}")
+            if tech.get("vs_ma200") is not None:
+                trend_bits.append(f"vs MA200 {_fmt(tech.get('vs_ma200'), pct=True)}")
+            if trend_bits:
+                lines.append("  趨勢：" + "　".join(trend_bits))
         fund = d.get("fund") or {}
         if fund and ("fundamental" in intents or "compare" in intents):
             hs = fund.get("health")
@@ -160,8 +178,10 @@ def build_context(question: str, timestamp: str, intents: set,
                 f"ROE {_fmt(fund.get('roe'), pct=True)}　"
                 f"淨利率 {_fmt(fund.get('net_margin'), pct=True)}　"
                 f"營收成長 {_fmt(fund.get('revenue_growth'), pct=True)}")
-        if d.get("earnings") and "earnings" in intents:
-            lines.append(f"  下次財報：{d['earnings']}")
+        if d.get("earnings") and (intents & {"earnings", "outlook", "fundamental"}):
+            lines.append(f"  催化劑—下次財報：{d['earnings']}")
+        if d.get("peers_note"):
+            lines.append(f"  同業對比：{d['peers_note']}")
 
     if "macro" in intents and macro_data:
         lines.append("\n【總經】")
@@ -179,13 +199,27 @@ def build_context(question: str, timestamp: str, intents: set,
 
 
 SYSTEM_PROMPT = (
-    "你是財金專業團隊的研究副駕（research copilot）。嚴格遵守：\n"
-    "1. 只根據『分析資料』區塊的數字回答，每個結論都引用具體數字。\n"
-    "2. 資料顯示『無資料』的項目，就明說沒有該資料，絕不編造或臆測。\n"
-    "3. 風險優先：談機會時務必同時點出風險、下檔、波動或回撤。\n"
-    "4. 用繁體中文，條理清晰、精簡專業；必要時用『技術面/基本面/總經/風險』分段。\n"
-    "5. 這是分析與教育用途，非投資建議；不做買賣指令式結論。\n"
-    "若問題超出提供的資料範圍，請說明需要哪些額外資料。"
+    "你是財金專業團隊的資深研究分析師。目標不是複述數據，而是形成"
+    "『有論點、有前瞻、可被檢驗』的分析。嚴守以下紀律：\n\n"
+    "【事實 vs 判斷】\n"
+    "· 標為『事實』的內容只能引用『分析資料』中的數字，並附上數值；資料為『無資料』"
+    "就明說沒有，絕不編造。\n"
+    "· 可以提出『判斷／推論』，但必須明確標示（例如以「推論：」開頭），並說明是根據"
+    "哪些事實推得。事實與推論不可混為一談。\n\n"
+    "【回答結構】（依問題深淺調整；前瞻／展望類問題盡量涵蓋）\n"
+    "1. 核心論點：一句話講你的判斷，含方向與時間框架。\n"
+    "2. 支持證據：引用具體數字（技術／基本面／總經／工具結果）。\n"
+    "3. 反方與風險：下檔、波動、回撤，以及『什麼證據會推翻此論點』。\n"
+    "4. 催化劑與時間點：財報日、總經事件、可能觸發價格變動的因素。\n"
+    "5. 情境：牛／基準／熊三情境與各自的觸發條件。\n"
+    "6. 觀察指標：接下來要盯哪些數據或價位來確認或否定論點。\n"
+    "7. 信心度（低／中／高）與適用時間框架。\n\n"
+    "【原則】\n"
+    "· 相對思維：有多檔標的時要互相比較與排名，不要各講各的。\n"
+    "· 風險優先：談機會必談下檔。\n"
+    "· 主動：若資料不足以支撐前瞻判斷，明說還需要哪些資料（如回測、選擇權、內部人、總經）。\n"
+    "· 繁體中文，精簡專業，善用分段。\n"
+    "· 分析與教育用途，非投資建議；不下買賣指令式結論。"
 )
 
 
@@ -204,12 +238,20 @@ if __name__ == "__main__":
     print(" ", detect_intents("比較兩家的財務體質估值", True))
     print(" ", detect_intents("現在總經利率環境如何", False))
     print(" ", detect_intents("NVDA 怎麼樣", True), "(有標的無意圖→技術+基本面)")
+    out = detect_intents("NVDA 未來前景怎麼看", True)
+    print(" ", out, "(前瞻→技術+基本面+總經)")
+    assert {"outlook", "technical", "fundamental", "macro"} <= out
 
-    print("\n=== build_context ===")
+    print("\n=== build_context（含趨勢/催化劑/同業）===")
     td = {"AAPL": {"tech": {"price": 190, "return_1m": 0.05, "rsi": 62, "ann_vol": 0.25,
-                            "return_3m": 0.12, "max_dd": -0.08},
+                            "return_3m": 0.12, "max_dd": -0.08,
+                            "pct_from_52w_high": -0.06, "pct_from_52w_low": 0.35,
+                            "vs_ma50": 0.03, "vs_ma200": 0.11},
                    "fund": {"health": 82, "pe": 29, "roe": 1.5, "net_margin": 0.25,
                             "revenue_growth": 0.08},
-                   "earnings": "2026-08-01"}}
-    print(build_context("AAPL 分析", "2026-07-02 10:00",
-                        {"technical", "fundamental", "earnings"}, ticker_data=td))
+                   "earnings": "2026-08-01",
+                   "peers_note": "科技硬體 8 檔中，近3月報酬排 2/8、P/E 排 5/8（偏貴）"}}
+    ctx = build_context("AAPL 前景", "2026-07-02 10:00",
+                        {"outlook", "technical", "fundamental", "macro"}, ticker_data=td)
+    print(ctx)
+    assert "趨勢：" in ctx and "催化劑" in ctx and "同業對比" in ctx
