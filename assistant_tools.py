@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import re
 
-KNOWN_TOOLS = {"backtest", "risk", "screen"}
+KNOWN_TOOLS = {"backtest", "risk", "screen", "options"}
 MAX_TOOLS = 4
 
 # 觸發字（純啟發式）：問題含這些字才啟動規劃器，省一次 LLM 呼叫
@@ -29,6 +29,9 @@ _TOOL_HINTS = [
     # 選股 / 篩選（"有哪些股/標的" 而非過寬的 "有哪些"）
     "選股", "篩選", "screen", "找標的", "推薦標的", "哪些股", "哪幾檔", "強勢股",
     "產業裡", "族群裡", "有哪些股", "有哪些標的", "候選", "掃描",
+    # 選擇權情緒
+    "選擇權", "put/call", "put call", "pcr", "隱含波動", "偏斜", "options",
+    "避險情緒", "iv",
 ]
 
 
@@ -52,7 +55,9 @@ def build_planner_prompt(question: str, tickers: list[str],
         "2. risk      args={\"tickers\":[\"AAPL\",\"MSFT\"]}　算等權組合的年化波動、歷史 VaR/CVaR、最大回撤。\n"
         "   —— 問『風險多大/波動/下檔/會賠多少/VaR』時用。\n"
         "3. screen    args={\"industry\":\"半導體\"}　掃描該產業標的，依動能與風險排名，找強勢/候選股。\n"
-        "   —— 問『某產業有哪些強勢股/幫我找標的/篩選』時用。\n\n"
+        "   —— 問『某產業有哪些強勢股/幫我找標的/篩選』時用。\n"
+        "4. options   args={\"ticker\":\"AAPL\"}　取得選擇權情緒（Put/Call 比、隱含波動偏斜、情緒分數）。\n"
+        "   —— 問『選擇權情緒/Put Call 比/隱含波動/避險情緒』時用（多為美股大型股才有）。\n\n"
         f"已辨識標的：{tk}\n"
         f"可用產業名（screen 用，請盡量對到最接近的一個）：{inds}\n\n"
         f"使用者問題：{question}\n\n"
@@ -123,7 +128,7 @@ def _norm_ticker(x) -> str | None:
 
 def _clean_args(tool: str, args: dict, valid_tickers, valid_industries):
     """依工具正規化/驗證參數；不合法回 None（整個工具略過）。"""
-    if tool == "backtest":
+    if tool in ("backtest", "options"):
         t = _norm_ticker(args.get("ticker"))
         return {"ticker": t} if t else None
 
@@ -209,6 +214,17 @@ def format_tool_results(results: list[dict]) -> str:
                     f"  · {x.get('ticker')}：近3月 {_pct(x.get('return_3m'))}　"
                     f"年化波動 {_pct(x.get('ann_vol'))}　"
                     f"Sharpe {_num(x.get('sharpe'))}　RSI {_num(x.get('rsi'), dp=0)}")
+        elif tool == "options":
+            lines.append(f"\n【選擇權情緒 {r.get('ticker')}】")
+            sc = r.get("score")
+            lines.append(
+                f"  情緒分數 {(('%+.2f' % sc) if sc is not None else '無資料')}"
+                f"（{r.get('label', '')}）　"
+                f"Put/Call(未平倉) {_num(r.get('pcr_oi'))}　"
+                f"ATM 隱含波動 {_pct(r.get('atm_iv'))}　"
+                f"偏斜(賣-買) {(('%+.1fpp' % (r['iv_skew']*100)) if r.get('iv_skew') is not None else '無資料')}")
+            for n in (r.get("notes") or []):
+                lines.append(f"  · {n}")
     return "\n".join(lines)
 
 

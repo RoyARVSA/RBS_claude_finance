@@ -1379,11 +1379,27 @@ def _run_screen_tool(industry):
             "scanned": len(rows), "top": top}
 
 
+def _run_options_tool(ticker):
+    """選擇權情緒：Put/Call、隱含波動偏斜、情緒分數。"""
+    import options_sentiment as ops
+    summ = _cached_options(ticker)
+    if not summ:
+        return {"tool": "options", "ok": False, "ticker": ticker,
+                "error": "無選擇權資料（非選擇權標的/外股/無報價）"}
+    sent = ops.sentiment(summ)
+    return {"tool": "options", "ok": True, "ticker": ticker,
+            "score": sent.get("score"), "label": sent.get("label"),
+            "pcr_oi": summ.get("pcr_oi"), "pcr_vol": summ.get("pcr_vol"),
+            "atm_iv": summ.get("atm_iv"), "iv_skew": summ.get("iv_skew"),
+            "notes": sent.get("notes", [])}
+
+
 def _assistant_run_tools(plan):
     """執行規劃器產生的工具計畫，回結構化結果（每個工具各自防呆）。"""
     dispatch = {"backtest": lambda a: _run_backtest_tool(a["ticker"]),
                 "risk":     lambda a: _run_risk_tool(a["tickers"]),
-                "screen":   lambda a: _run_screen_tool(a["industry"])}
+                "screen":   lambda a: _run_screen_tool(a["industry"]),
+                "options":  lambda a: _run_options_tool(a["ticker"])}
     results = []
     for step in plan:
         fn = dispatch.get(step["tool"])
@@ -2205,8 +2221,50 @@ def page_stock_research():
     st.title("🔍 股票研究")
     st.caption("個股深度分析 · K 線 · RSI · AI 研究報告 · 市場篩選器")
 
-    tab1, tab2, tab3, tab4 = st.tabs(
-        ["📊 個股深度分析", "🔎 市場篩選器", "🧪 訊號回測", "📺 TradingView"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(
+        ["📊 個股深度分析", "🔎 市場篩選器", "🧪 訊號回測", "📺 TradingView", "🎭 選擇權情緒"])
+
+    # ── Tab 5: 選擇權情緒（Put/Call、IV、偏斜）──────────────────────
+    with tab5:
+        section("選擇權情緒 · Put/Call 比 · 隱含波動偏斜")
+        st.caption("用選擇權定位判斷市場情緒：Put/Call 比與隱含波動偏斜。"
+                   "多為美股大型股才有選擇權；情緒屬定位訊號，非買賣建議。")
+        opt_sym = st.text_input("代碼（美股，如 AAPL / NVDA / SPY）", "AAPL",
+                                key="opt_sym").upper().strip()
+        if opt_sym and st.button("分析選擇權情緒", key="opt_go"):
+            with st.spinner(f"抓取 {opt_sym} 選擇權鏈…"):
+                try:
+                    import options_sentiment as ops
+                    summ = _cached_options(opt_sym)
+                except Exception as e:
+                    summ = None
+                    st.error(f"選擇權資料載入失敗：{e}")
+            if not summ:
+                st.warning(f"找不到 {opt_sym} 的選擇權資料（可能非選擇權標的、外股或當前無報價）。")
+            else:
+                sent = ops.sentiment(summ)
+                sc = sent.get("score")
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("情緒分數", f"{sc:+.2f}" if sc is not None else "—",
+                          sent.get("label"))
+                c2.metric("Put/Call（未平倉）",
+                          f"{summ['pcr_oi']:.2f}" if summ.get("pcr_oi") is not None else "—")
+                c3.metric("Put/Call（成交量）",
+                          f"{summ['pcr_vol']:.2f}" if summ.get("pcr_vol") is not None else "—")
+                c4.metric("ATM 隱含波動",
+                          f"{summ['atm_iv']*100:.1f}%" if summ.get("atm_iv") is not None else "—")
+                skew = summ.get("iv_skew")
+                if skew is not None:
+                    st.caption(f"隱含波動偏斜（賣權-買權）：**{skew*100:+.1f} 個百分點**"
+                               f"（買權 {summ['atm_call_iv']*100:.1f}% / 賣權 {summ['atm_put_iv']*100:.1f}%）"
+                               "　正值＝下檔保護需求高（偏避險），負值＝偏多投機。")
+                st.markdown("**判讀**")
+                for n in sent.get("notes", []):
+                    st.markdown(f"- {n}")
+                if summ.get("expiries"):
+                    st.caption("到期日：" + "、".join(summ["expiries"])
+                               + f"　·　現價 {summ.get('spot')}")
+                st.caption("⚠️ 選擇權情緒反映當前定位與避險成本，需搭配趨勢與基本面判讀，非投資建議。")
 
     # ── Tab 4: TradingView 互動圖表（免費嵌入 widget，無需 key）──────
     with tab4:
@@ -3037,6 +3095,13 @@ def _cached_fundamentals(ticker: str):
     except Exception:
         ed = None
     return fa.fetch_fundamentals(ticker), ed
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def _cached_options(ticker: str):
+    """快取選擇權情緒彙總（15 分鐘；選擇權盤中變動較快但抓取偏慢）。"""
+    import options_sentiment as ops
+    return ops.fetch_options(ticker)
 
 
 def page_company_analysis():
