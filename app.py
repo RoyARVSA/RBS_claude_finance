@@ -445,9 +445,24 @@ def _parse_llm_json(text: str) -> dict:
     return _json.loads(text.strip())
 
 
+def _clean_secret(s: str, label: str = "API Key") -> str:
+    """清掉貼上金鑰時常混入的隱形/全形字元；仍有非 ASCII 就給明確錯誤。"""
+    s = (s or "").strip()
+    for ch in ("​", "‌", "‍", "﻿", " ", "　"):
+        s = s.replace(ch, "")     # 零寬空格、BOM、不斷行空白、全形空白
+    if s and not s.isascii():
+        bad = " ".join(repr(c) for c in s if ord(c) > 127)[:60]
+        raise ValueError(
+            f"{label} 含非 ASCII 字元（{bad}）。請重新複製貼上正確金鑰，"
+            "避免混入全形字元或多餘空白。")
+    return s
+
+
 def _llm_client(api_key: str, api_base: str, model: str):
     """Return an OpenAI-compatible client; auto-set base_url for Claude models."""
     import openai
+    api_key = _clean_secret(api_key, "API Key")
+    api_base = (api_base or "").strip()
     if not api_base:
         if model.startswith("claude"):
             api_base = "https://api.anthropic.com/v1"
