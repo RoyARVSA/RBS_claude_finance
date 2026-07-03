@@ -133,6 +133,11 @@ cd /root/RBS_claude_finance && git pull && systemctl restart rbsbot
 | `TELEGRAM_TOKEN` | — | 必填 |
 | `TELEGRAM_CHAT_ID` | — | 必填 |
 
+> 排程版支援的選填 key 這裡同樣可用（在 systemd `Environment=` 各加一行）：
+> `LLM_API_KEY`/`LLM_BASE_URL`/`LLM_MODEL`（AI 晨報）、`FRED_API_KEY`（總經）、
+> `FINNHUB_API_KEY`（基本面備援）、`ALPACA_KEY_ID`/`ALPACA_SECRET_KEY`（模擬交易）、
+> `SEC_USER_AGENT`（SEC 內部人，選填有預設）。指令 `/options`、`/insider` 免 key 即可用。
+
 在 systemd 檔案的 `Environment=` 加一行即可，例如盤中想更頻繁掃描：
 ```ini
 Environment=SCAN_INTERVAL=1800

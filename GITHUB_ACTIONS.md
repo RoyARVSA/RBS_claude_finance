@@ -1,6 +1,6 @@
 # GitHub Actions 自動訊號掃描設定指引
 
-每小時自動掃描 watchlist → 有訊號時推 Telegram 通知。
+每 15 分鐘自動掃描 watchlist → 有訊號時推 Telegram 通知，並回應你傳的指令。
 
 ---
 
@@ -39,6 +39,7 @@
 | `LLM_MODEL` | 選填 | 模型名（預設 Claude 用 `claude-3-5-haiku`，OpenAI 用 `gpt-4o-mini`） |
 | `FRED_API_KEY` | 選填 | 晨報總經數據（免費申請 fred.stlouisfed.org） |
 | `FINNHUB_API_KEY` | 選填 | 基本面備援；yfinance `.info` 被限流時的後援（免費申請 finnhub.io） |
+| `SEC_USER_AGENT` | 選填 | SEC 內部人交易（Form 4）自訂 User-Agent；**有預設值即可用，免申請** |
 | `ALPACA_KEY_ID` | 選填 | Alpaca **paper** trading key（模擬自動交易；**不設則不下單**） |
 | `ALPACA_SECRET_KEY` | 選填 | Alpaca paper secret |
 
@@ -46,9 +47,22 @@
 > 且僅在美股開盤時、依掃描評分自動下*模擬*單。用 `/positions`、`/pnl` 查績效，
 > `/closeall` 一鍵平倉。純模擬不涉真錢。
 
-> ☀️ **每日 AI 晨報**：每交易日 ET 08:30 自動推送大盤+觀察清單評分+訊號。
+> ☀️ **每日 AI 晨報**：每交易日 ET 08:30 自動推送大盤+觀察清單評分+訊號+最強標的內部人亮點。
 > 設了 `LLM_API_KEY` 會多一段 AI 白話解讀；沒設則只推數據排名（仍可用）。
 > 用 `/briefing` 可隨時手動測試、`/set briefing_enabled off` 關閉。
+
+---
+
+### Telegram 指令（傳給 Bot，下次掃描時處理；輸入 `/help` 看全部）
+
+| 分類 | 指令 |
+|------|------|
+| 清單 | `/add AAPL`、`/remove AAPL`、`/list` |
+| 分析 | `/rank`、`/fundamentals AAPL`（`/f`）、`/options AAPL`（`/opt`，選擇權情緒）、`/insider AAPL`（`/ins`，SEC 內部人）、`/earnings [天數]`、`/briefing` |
+| 風控 | `/risk [帳戶 風險%]`、`/protections`、`/calibrate` |
+| 模擬交易 | `/autotrade on\|off`、`/positions`、`/pnl`、`/journal [N]`、`/closeall` |
+
+> `/options`、`/insider` 僅美股；選擇權走 yfinance、內部人走 SEC EDGAR，皆免 key。
 
 ---
 
@@ -66,13 +80,11 @@
 
 ```yaml
 schedule:
-  - cron: '0 * * * *'   # 每小時整點（UTC）執行
+  - cron: '*/15 * * * *'   # 每 15 分鐘執行
 ```
 
-UTC 整點對應台灣時間（UTC+8）：
-- UTC 00:00 = 台灣 08:00
-- UTC 08:00 = 台灣 16:00
-- UTC 22:00 = 台灣 06:00（隔天）
+每 15 分鐘掃描一次，因此你傳的指令最多等 ~15 分鐘會被處理（要秒級即時回應請改用
+[常駐版](PERSISTENT_BOT.md)）。晨報僅在每交易日 ET 08:30 之後的那次掃描推送一次。
 
 ---
 
@@ -129,11 +141,13 @@ A: GitHub 免費版 cron 可能延遲最多 15 分鐘，屬正常現象。
 **Q: Actions 跑完但沒收到 Telegram？**
 A: 可能是沒有訊號觸發（屬正常），或 Secrets 設定有誤。查看 Actions 執行 log 確認。
 
-**Q: 想要更高頻率怎麼辦？**
-A: 改成 `'*/30 * * * *'`（每 30 分鐘）。注意 yfinance 15 分鐘延遲，太高頻無實質意義。
+**Q: 想調整掃描頻率？**
+A: 預設 `'*/15 * * * *'`（每 15 分鐘）。yfinance 本身有 ~15 分鐘延遲，再高頻無實質意義；
+想省額度可改 `'*/30 * * * *'`（每 30 分鐘）或 `'0 * * * *'`（每小時）。
 
 **Q: 免費 GitHub Actions 額度夠嗎？**
-A: 公開 repo 無限制；私人 repo 每月 2000 分鐘免費額度，每次掃描約 1-2 分鐘，每小時一次 = 月用 ~60-90 分鐘，綽綽有餘。
+A: **公開 repo 無限制**（本專案即是）。私人 repo 每月 2000 分鐘免費，每次掃描約 1-2 分鐘、
+每 15 分鐘一次 ≈ 月用 ~2900-5800 分鐘會超額，私人 repo 建議改每小時或用[常駐版](PERSISTENT_BOT.md)。
 
 ---
 

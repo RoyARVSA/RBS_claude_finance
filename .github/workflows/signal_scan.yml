@@ -58,6 +58,8 @@ jobs:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
           # 基本面備援（yfinance .info 被限流時的後援，可選）
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          # SEC 內部人交易（Form 4）自訂 User-Agent（可選，有預設值）
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
           # Alpaca 模擬交易（可選；未設則自動交易不執行）
           ALPACA_KEY_ID:     ${{ secrets.ALPACA_KEY_ID }}
           ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
