@@ -1471,9 +1471,15 @@ def _llm_complete(prompt: str, max_tokens: int = 900) -> str | None:
     可選 LLM_BASE_URL、LLM_MODEL。失敗回 None（晨報退回純數據版）。
     """
     key = os.environ.get("LLM_API_KEY", "")
+    # 清掉貼上金鑰時混入的隱形/全形字元（同 app.py _clean_secret；HTTP header 只吃 ASCII）
+    for _ch in ("​", "‌", "‍", "﻿", " ", "　"):
+        key = key.replace(_ch, "")
+    key = key.strip()
     if not key:
         return None
-    base = os.environ.get("LLM_BASE_URL", "").rstrip("/")
+    base = os.environ.get("LLM_BASE_URL", "").strip().rstrip("/")
+    if base.endswith("/v1"):
+        base = base[:-3].rstrip("/")   # 容忍帶 /v1 的 base（app.py 的 SDK 慣例），這裡自己補路徑
     model = os.environ.get("LLM_MODEL", "")
     is_anthropic = ("anthropic" in base.lower()) or key.startswith("sk-ant") or model.startswith("claude")
     if not model:
@@ -1489,7 +1495,7 @@ def _llm_complete(prompt: str, max_tokens: int = 900) -> str | None:
             if r.ok:
                 return r.json()["content"][0]["text"]
         else:
-            url = (base or "https://api.openai.com/v1") + "/chat/completions"
+            url = ((base + "/v1") if base else "https://api.openai.com/v1") + "/chat/completions"
             r = requests.post(url, timeout=45,
                               headers={"Authorization": f"Bearer {key}"},
                               json={"model": model, "max_tokens": max_tokens, "temperature": 0.3,

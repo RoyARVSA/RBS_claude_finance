@@ -1859,10 +1859,11 @@ def page_market_overview():
     try:
         import feedparser
         feed = feedparser.parse("https://feeds.marketwatch.com/marketwatch/topstories/")
+        import html as _html
         for entry in feed.entries[:5]:
             st.markdown(
-                f"**[{entry.get('title','')}]({entry.get('link','#')})**  \n"
-                f"<small style='color:#B8C0D0'>{entry.get('published','')}</small>",
+                f"**[{_html.escape(entry.get('title',''))}]({entry.get('link','#')})**  \n"
+                f"<small style='color:#B8C0D0'>{_html.escape(entry.get('published',''))}</small>",
                 unsafe_allow_html=True,
             )
             st.markdown("---")
@@ -1944,10 +1945,11 @@ def page_market_overview():
                         st.error(f"AI 分析失敗：{e}")
 
         if "ov_ai_analysis" in st.session_state:
+            import html as _html
             st.markdown(
                 f"<div style='background:#1A1D27;border:1px solid #2D3142;border-radius:10px;"
                 f"padding:20px;margin-top:10px;color:#E8EAF0;line-height:1.7'>"
-                f"{st.session_state['ov_ai_analysis'].replace(chr(10),'<br>')}"
+                f"{_html.escape(st.session_state['ov_ai_analysis']).replace(chr(10),'<br>')}"
                 f"</div>",
                 unsafe_allow_html=True,
             )
@@ -2518,12 +2520,10 @@ def page_stock_research():
                 with rs3: metric_card("Sharpe",     f"{sharpe_r:.2f}",   positive=sharpe_r > 1)
                 with rs4: metric_card("最大回撤",   f"{max_dd_r:.2%}",   positive=False)
 
-                # RSI
+                # RSI — 用 backtest.rsi（Wilder 公式），與 Bot 訊號/回測/校準同一個數字
                 section("動能指標 — RSI (14)")
-                gain_r = rets_r.clip(lower=0)
-                loss_r = (-rets_r).clip(lower=0)
-                rs_val = gain_r.rolling(14).mean() / loss_r.rolling(14).mean().replace(0, np.nan)
-                rsi_s  = 100 - 100 / (1 + rs_val)
+                import backtest as _bt
+                rsi_s = _bt.rsi(hist["Close"])
                 fig_rsi = go.Figure()
                 fig_rsi.add_trace(go.Scatter(x=rsi_s.index, y=rsi_s.values,
                                              name="RSI(14)", line=dict(color="#1E88E5", width=2)))
@@ -2544,13 +2544,14 @@ def page_stock_research():
                 section("近期新聞")
                 try:
                     news_items = news_data or []
+                    import html as _html
                     for item in news_items[:6]:
                         from datetime import datetime as _dt
                         pub_t   = item.get("providerPublishTime", 0)
                         pub_str = _dt.fromtimestamp(pub_t).strftime("%Y-%m-%d %H:%M") if pub_t else ""
                         st.markdown(
-                            f"**[{item.get('title','')}]({item.get('link','#')})**  \n"
-                            f"<small style='color:#B8C0D0'>{item.get('publisher','')} · {pub_str}</small>",
+                            f"**[{_html.escape(item.get('title',''))}]({item.get('link','#')})**  \n"
+                            f"<small style='color:#B8C0D0'>{_html.escape(item.get('publisher',''))} · {pub_str}</small>",
                             unsafe_allow_html=True,
                         )
                         st.markdown("---")
@@ -2696,11 +2697,8 @@ def page_stock_research():
                             continue
                         if len(s_s) < 10:
                             continue
-                        r_s = s_s.pct_change().dropna()
-                        gain_s = r_s.clip(lower=0)
-                        loss_s = (-r_s).clip(lower=0)
-                        rs_s   = gain_s.rolling(14).mean() / loss_s.rolling(14).mean().replace(0, np.nan)
-                        rsi_sv = float(100 - 100 / (1 + rs_s.dropna().iloc[-1])) if not rs_s.dropna().empty else np.nan
+                        import backtest as _bt
+                        rsi_sv = float(_bt.rsi(s_s).iloc[-1]) if len(s_s) >= 15 else np.nan
                         rows_sc.append({
                             "代碼":     tkr_s,
                             "現價":     float(s_s.iloc[-1]),
@@ -3448,10 +3446,11 @@ def page_company_analysis():
                     except Exception as e:
                         st.error(f"AI 解讀失敗：{e}")
         if st.session_state.get("fa_ai_out"):
+            import html as _html
             st.markdown(
                 f"<div style='background:#1A1D27;border:1px solid #2D3142;border-radius:10px;"
                 f"padding:18px;color:#E8EAF0;line-height:1.7'>"
-                f"{st.session_state['fa_ai_out'].replace(chr(10),'<br>')}</div>",
+                f"{_html.escape(st.session_state['fa_ai_out']).replace(chr(10),'<br>')}</div>",
                 unsafe_allow_html=True,
             )
 
@@ -3672,11 +3671,8 @@ def page_alerts():
                             s = cl_sg[tk].dropna()
                             if len(s) < 50:
                                 continue
-                            r = s.pct_change().dropna()
-                            gain = r.clip(lower=0).rolling(14).mean()
-                            loss = (-r).clip(lower=0).rolling(14).mean()
-                            rs   = gain / loss.replace(0, np.nan)
-                            rsi  = float((100 - 100 / (1 + rs)).dropna().iloc[-1]) if not rs.dropna().empty else np.nan
+                            import backtest as _bt
+                            rsi = float(_bt.rsi(s).iloc[-1])
                             ma20 = float(s.rolling(20).mean().iloc[-1])
                             ma50 = float(s.rolling(50).mean().iloc[-1]) if len(s) >= 50 else np.nan
                             day_c = float(s.iloc[-1] / s.iloc[-2] - 1)

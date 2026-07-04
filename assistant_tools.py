@@ -241,8 +241,8 @@ def format_tool_results(results: list[dict]) -> str:
             lines.append(
                 f"  情緒 {(('%+.2f' % sc) if sc is not None else '無資料')}"
                 f"（{r.get('label', '')}）　"
-                f"買 {r.get('n_buyers')} 人/{r.get('n_buys')} 筆　"
-                f"賣 {r.get('n_sellers')} 人/{r.get('n_sells')} 筆　"
+                f"買 {r.get('n_buyers')} 人/{r.get('n_buys')} 筆（{_money(r.get('buy_value'))}）　"
+                f"賣 {r.get('n_sellers')} 人/{r.get('n_sells')} 筆（{_money(r.get('sell_value'))}）　"
                 f"淨買賣 {_money(r.get('net_value'))}"
                 + ("　🔶 cluster buy" if r.get("cluster_buy") else ""))
         elif tool == "options":
@@ -252,6 +252,7 @@ def format_tool_results(results: list[dict]) -> str:
                 f"  情緒分數 {(('%+.2f' % sc) if sc is not None else '無資料')}"
                 f"（{r.get('label', '')}）　"
                 f"Put/Call(未平倉) {_num(r.get('pcr_oi'))}　"
+                f"Put/Call(量) {_num(r.get('pcr_vol'))}　"
                 f"ATM 隱含波動 {_pct(r.get('atm_iv'))}　"
                 f"偏斜(賣-買) {(('%+.1fpp' % (r['iv_skew']*100)) if r.get('iv_skew') is not None else '無資料')}")
             for n in (r.get("notes") or []):

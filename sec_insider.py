@@ -168,6 +168,10 @@ def summarize_insiders(parsed: list, cutoff_date: str | None = None) -> dict:
 def _money(v):
     if v is None:
         return "無資料"
+    try:
+        v = float(v)
+    except (TypeError, ValueError):   # SEC XML 解析值可能非數字，防禦性處理
+        return "無資料"
     a = abs(v)
     if a >= 1e9:
         return f"${v/1e9:.2f}B"
