@@ -25,6 +25,7 @@ Telegram 指令（傳給 Bot）：
   /fundamentals TICKER    – 查公司基本面摘要（健康評分/ROE/估值，快取一天）（別名 /f）
   /options TICKER         – 選擇權情緒：Put/Call 比、隱含波動偏斜、情緒分數（別名 /opt）
   /insider TICKER         – SEC 內部人交易（Form 4，僅美股，買賣/cluster buy）（別名 /ins）
+  /whales [編號]           – 超級投資人 13F 季度持倉增減（巴菲特/Burry/Ackman…）
   /alert TICKER 價位      – 到價警報：突破/跌破時推播，觸發後自動移除（/alert 看清單）
   /earnings [天數]        – 觀察清單近期財報日（晨報也會自動提醒 N 天內財報）
   /autotrade on|off       – Alpaca 模擬自動交易總開關（預設關）
@@ -280,6 +281,7 @@ def _cmd_help() -> str:
         "`/fundamentals AAPL`（或 `/f`）— 公司基本面摘要\n"
         "`/options AAPL`（或 `/opt`）— 選擇權情緒（Put/Call、IV 偏斜）\n"
         "`/insider AAPL`（或 `/ins`）— SEC 內部人交易（Form 4，僅美股）\n"
+        "`/whales [編號]` — 超級投資人 13F 季度增減倉（巴菲特/Burry…）\n"
         "`/alert AAPL 200` — 到價警報（`/alert` 看清單、`/alert del AAPL` 刪）\n"
         "`/earnings [天數]` — 觀察清單近期財報日\n"
         "`/briefing` — 立即生成每日晨報\n\n"
@@ -801,6 +803,28 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                 tkr = args[0].upper()
                 _tg_send(token, src_chat or chat_id, f"🎭 查詢 {tkr} 選擇權情緒中…")
                 reply = _cmd_options(tkr)
+
+        elif cmd == "/whales":
+            try:
+                import whales_13f as wf
+                whales = list(wf.WHALES.items())          # [(cik, name), ...]
+                if not args or not args[0].isdigit():
+                    lines = ["🐋 *超級投資人 13F*（`/whales 編號` 查詢季度增減倉）"]
+                    lines += [f"{i+1}. {name}" for i, (_c, name) in enumerate(whales)]
+                    reply = "\n".join(lines)
+                else:
+                    i = int(args[0]) - 1
+                    if not (0 <= i < len(whales)):
+                        reply = f"編號範圍 1-{len(whales)}"
+                    else:
+                        cik, name = whales[i]
+                        _tg_send(token, src_chat or chat_id, f"🐋 抓取 {name} 的 13F 中…")
+                        res = wf.fetch_whale(cik, name)
+                        reply = (wf.format_whale_text(name, res, res.get("period", ""))
+                                 + "\n_SEC 13F · 45天延遲 · 非投資建議_") if res else \
+                            f"⚠️ 查無 {name} 的 13F（EDGAR 暫時無回應或無申報）"
+            except Exception as e:
+                reply = f"❌ 13F 查詢失敗：{e}"
 
         elif cmd in ("/insider", "/ins"):
             if not args:

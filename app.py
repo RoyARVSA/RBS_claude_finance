@@ -792,6 +792,49 @@ def page_stock_selector():
     st.title("🏦 機構選股模型")
     st.caption("六步驟系統化篩選流程，結合宏觀環境、策略偏好與產業輪動")
 
+    # ── 🐋 超級投資人 13F 動向（SEC EDGAR，免 key）────────────────
+    with st.expander("🐋 超級投資人 13F 持倉動向（巴菲特/Burry/Ackman…季度增減倉）", expanded=False):
+        import whales_13f as _wf
+        _whale_names = {v: k for k, v in _wf.WHALES.items()}
+        wsel = st.selectbox("選擇投資人", list(_whale_names.keys()), key="whale_sel")
+        if st.button("查詢 13F", key="whale_go"):
+            with st.spinner(f"抓取 {wsel} 最近兩季 13F（SEC EDGAR）…"):
+                try:
+                    st.session_state["whale_result"] = (
+                        wsel, _cached_whale(_whale_names[wsel], wsel))
+                except Exception as e:
+                    st.error(f"查詢失敗：{e}")
+        _w_saved = st.session_state.get("whale_result")
+        if _w_saved and _w_saved[0] == wsel:
+            wres = _w_saved[1]
+            if not wres:
+                st.warning("查無 13F 申報（或 EDGAR 暫時無回應）。")
+            else:
+                st.caption(f"申報期：{wres.get('period', '?')}　·　持倉 {wres.get('n_holdings')} 檔"
+                           "　·　45 天申報延遲，看到時倉位可能已變動")
+                if wres.get("top"):
+                    st.markdown("**前十大持倉（占組合權重）**")
+                    st.dataframe(pd.DataFrame([
+                        {"發行人": t["issuer"], "權重": f"{t['weight']:.1%}",
+                         "股數": f"{t['shares']:,.0f}"} for t in wres["top"]]),
+                        use_container_width=True, hide_index=True)
+                wc1, wc2 = st.columns(2)
+                with wc1:
+                    if wres.get("new"):
+                        st.markdown("**🆕 本季新進**　" + "、".join(
+                            n["issuer"] for n in wres["new"][:6]))
+                    if wres.get("added"):
+                        st.markdown("**➕ 加碼**　" + "、".join(
+                            f"{a['issuer']}({a['chg']:+.0%})" for a in wres["added"][:6]))
+                with wc2:
+                    if wres.get("reduced"):
+                        st.markdown("**➖ 減碼**　" + "、".join(
+                            f"{r_['issuer']}({r_['chg']:+.0%})" for r_ in wres["reduced"][:6]))
+                    if wres.get("exited"):
+                        st.markdown("**🚪 清倉**　" + "、".join(
+                            e["issuer"] for e in wres["exited"][:6]))
+                st.caption("資料 SEC EDGAR 13F-HR · 只含美股多頭（無空單/債券）· 非投資建議。")
+
     # ── Persistent step state ────────────────────────────────────────
     if "ss_step" not in st.session_state:
         st.session_state.ss_step = 0
@@ -3503,6 +3546,20 @@ def _cached_analyst(ticker: str):
     return ad.fetch_analyst(ticker)
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def _cached_shorts(ticker: str):
+    """快取做空籌碼面（FINRA 日做空量 + 短倉 + SEC FTD，1 小時）。"""
+    import short_data as sd
+    return sd.fetch_short_overview(ticker)
+
+
+@st.cache_data(ttl=21600, show_spinner=False)
+def _cached_whale(cik: str, name: str):
+    """快取單一機構 13F 兩季比較（6 小時；季度資料本就低頻）。"""
+    import whales_13f as wf
+    return wf.fetch_whale(cik, name)
+
+
 def page_company_analysis():
     st.title("🏢 公司分析")
     st.caption("基本面體質分析 · 財務健康評分 · 估值 · 三表趨勢 · AI 解讀（資料來源 yfinance）")
@@ -3769,6 +3826,40 @@ def page_company_analysis():
                 f"{u['firm']}: {u['from'] or '—'}→{u['to']}（{u['date']}）"
                 for u in an["upgrades"][:4]))
         st.caption("資料 yfinance + Finnhub 備援 · 分析師觀點僅供參考，非投資建議。")
+
+    # ⑥.7 做空籌碼（FINRA/SEC 官方數據，免 key）───────────────────
+    section("做空籌碼（Short Data）")
+    st.caption("FINRA 日做空量占比 + 短倉/流通比 + 回補天數 + SEC 失券（FTD）。僅美股。")
+    tkr_sh = data.get("ticker", "")
+    if "." in tkr_sh:
+        st.info("此標的非美股，FINRA/SEC 做空數據僅涵蓋美國市場。")
+    else:
+        if st.button("查詢做空數據", key="sh_go"):
+            with st.spinner(f"抓取 {tkr_sh} 做空數據（FINRA + SEC）…"):
+                try:
+                    st.session_state["sh_result"] = (tkr_sh, _cached_shorts(tkr_sh))
+                except Exception as e:
+                    st.error(f"查詢失敗：{e}")
+        _sh_saved = st.session_state.get("sh_result")
+        if _sh_saved and _sh_saved[0] == tkr_sh and _sh_saved[1]:
+            sh = _sh_saved[1]
+            s1, s2, s3, s4 = st.columns(4)
+            with s1:
+                metric_card("日做空量占比",
+                            f"{sh['short_vol_ratio']:.0%}" if sh.get("short_vol_ratio") is not None else "—")
+            with s2:
+                metric_card("短倉/流通",
+                            f"{sh['short_pct_float']:.1%}" if sh.get("short_pct_float") is not None else "—")
+            with s3:
+                metric_card("回補天數",
+                            f"{sh['days_to_cover']:.1f}" if sh.get("days_to_cover") is not None else "—")
+            with s4:
+                metric_card("短倉月變化",
+                            f"{sh['short_chg_1m']:+.0%}" if sh.get("short_chg_1m") is not None else "—")
+            for n in sh.get("notes", []):
+                st.markdown(f"- {n}")
+            st.caption(f"資料 FINRA（{sh.get('as_of', '最近交易日')}）/ yfinance / SEC FTD · "
+                       "做空數據屬定位訊號，高短倉≠必跌（可能軋空），非投資建議。")
 
     # ⑦ SEC 內部人交易（Form 4）─────────────────────────────────
     section("內部人交易（SEC Form 4）")

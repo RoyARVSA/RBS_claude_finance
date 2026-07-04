@@ -58,7 +58,7 @@
 | 分類 | 指令 |
 |------|------|
 | 清單 | `/add AAPL`、`/remove AAPL`、`/list` |
-| 分析 | `/rank`、`/fundamentals AAPL`（`/f`）、`/options AAPL`（`/opt`，選擇權情緒）、`/insider AAPL`（`/ins`，SEC 內部人）、`/earnings [天數]`、`/briefing` |
+| 分析 | `/rank`、`/fundamentals AAPL`（`/f`）、`/options AAPL`（`/opt`，選擇權情緒）、`/insider AAPL`（`/ins`，SEC 內部人）、`/whales [編號]`（13F 大戶動向）、`/earnings [天數]`、`/briefing` |
 | 警報 | `/alert AAPL 200`（到價通知，觸發自動移除）、`/alert`（清單）、`/alert del AAPL` |
 | 風控 | `/risk [帳戶 風險%]`、`/protections`、`/calibrate` |
 | 模擬交易 | `/autotrade on\|off`、`/positions`、`/pnl`、`/journal [N]`、`/closeall` |
