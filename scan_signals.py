@@ -199,6 +199,13 @@ def load_state() -> dict:
 
 
 def save_state(state: dict) -> None:
+    # 修剪只增不減的每日快取（fund/earnings）：留 35 天內的，移除的標的不再永久佔位
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=35)).strftime("%Y-%m-%d")
+    for ck, datekey in (("fund_cache", "date"), ("earnings_cache", "checked")):
+        c = state.get(ck)
+        if isinstance(c, dict):
+            state[ck] = {k: v for k, v in c.items()
+                         if isinstance(v, dict) and str(v.get(datekey, "")) >= cutoff}
     # 原子寫入：先寫暫存檔再 os.replace，中途被砍不會留下截斷的 JSON
     tmp = STATE_FILE.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")

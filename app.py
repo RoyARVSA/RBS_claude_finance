@@ -290,7 +290,11 @@ def page_portfolio_performance():
         twd_cash = st.number_input("TWD Cash", value=27426.0, step=1000.0)
         run = st.button("Calculate", use_container_width=True, type="primary")
 
-    if not run:
+    # 按過一次就保持啟用：之後調整側欄（頻率/基準/現金）即時重算而不是整頁塌回空白。
+    # 下載已有快取（_cached_portfolio_prices），重算只花毫秒級計算成本。
+    if run:
+        st.session_state["pp_active"] = True
+    if not st.session_state.get("pp_active"):
         st.info("Configure holdings in the sidebar and click **Calculate**.")
         return
 
@@ -304,7 +308,7 @@ def page_portfolio_performance():
         try:
             fx_pair = "TWD=X"
             dl = tickers + [benchmark, fx_pair]
-            raw = yf.download(dl, start=pd.to_datetime(start), auto_adjust=True, progress=False)
+            raw = _cached_portfolio_prices(tuple(dl), str(start))
             if isinstance(raw.columns, pd.MultiIndex):
                 data = raw["Close"]
             elif "Close" in raw.columns:
@@ -335,7 +339,7 @@ def page_portfolio_performance():
     ppy = {"M": 12, "W": 52, "D": 252}[freq]
     if rf_choice.startswith("^IRX"):
         try:
-            rf_raw = yf.download("^IRX", start=pd.to_datetime(start), progress=False)["Close"].ffill()
+            rf_raw = _cached_portfolio_prices(("^IRX",), str(start))["Close"].squeeze().ffill()
             if freq in ["W", "M"]:
                 rf_raw = rf_raw.resample(_RESAMPLE_ALIAS[freq]).last()
             rf = (1 + rf_raw / 100) ** (1 / ppy) - 1
@@ -523,20 +527,24 @@ def page_news_sentiment():
                             except Exception as _e:
                                 st.warning(f"{src} 載入失敗：{_e}")
                     if articles:
-                        st.success(f"共取得 {len(articles)} 篇（{', '.join(selected_feeds)}）")
                         st.session_state["news_articles"] = articles
                         st.session_state["news_source"] = " + ".join(selected_feeds)
-                        for a in articles:
-                            with st.expander(f"[{a['Source']}] {a['Title']}"):
-                                st.caption(a["Published"])
-                                st.write(a["Summary"])
-                                st.markdown(f"[Read more]({a['Link']})")
                     else:
                         st.warning("No articles found. Try different sources.")
                 except ImportError:
                     st.error("feedparser not installed.")
                 except Exception as e:
                     st.error(f"Feed error: {e}")
+
+        # 從 session_state 渲染——改篩選/來源等 widget 後文章列表不再消失
+        if st.session_state.get("news_articles"):
+            _arts = st.session_state["news_articles"]
+            st.success(f"共取得 {len(_arts)} 篇（{st.session_state.get('news_source','')}）")
+            for a in _arts:
+                with st.expander(f"[{a['Source']}] {a['Title']}"):
+                    st.caption(a["Published"])
+                    st.write(a["Summary"])
+                    st.markdown(f"[Read more]({a['Link']})")
 
     # ── Tab 2: Sentiment ──────────────────────────────────────────────
     with tab2:
@@ -996,10 +1004,9 @@ def page_stock_selector():
         section("即時行情")
         with st.spinner(f"抓取 {len(candidates)} 檔即時報價…"):
             try:
-                import yfinance as yf
-                raw = yf.download(
-                    candidates, period="1y", auto_adjust=True, progress=False
-                )
+                # 快取 5 分鐘：下方「選擇標的對比」multiselect 每動一下都會 rerun，
+                # 舊版每次都把全部候選股的一年歷史重新下載
+                raw = _cached_candidates_prices(tuple(candidates))
                 if isinstance(raw.columns, pd.MultiIndex):
                     px_close = raw["Close"].dropna(how="all")
                 else:
@@ -1488,22 +1495,39 @@ def _run_insider_tool(ticker):
 
 
 def _assistant_run_tools(plan):
-    """執行規劃器產生的工具計畫，回結構化結果（每個工具各自防呆）。"""
+    """執行規劃器產生的工具計畫，回結構化結果（每個工具各自防呆）。
+    多工具時並行執行（回測/選擇權/內部人互不相依、各自等網路），
+    outlook 一題可省 10-25 秒；Streamlit 執行緒需掛 ScriptRunContext，掛不上就退回序列。"""
     dispatch = {"backtest": lambda a: _run_backtest_tool(a["ticker"]),
                 "risk":     lambda a: _run_risk_tool(a["tickers"]),
                 "screen":   lambda a: _run_screen_tool(a["industry"]),
                 "options":  lambda a: _run_options_tool(a["ticker"]),
                 "insider":  lambda a: _run_insider_tool(a["ticker"])}
-    results = []
-    for step in plan:
-        fn = dispatch.get(step["tool"])
-        if not fn:
-            continue
+    steps = [s for s in plan if s["tool"] in dispatch]
+
+    def _run_one(step):
         try:
-            results.append(fn(step["args"]))
+            return dispatch[step["tool"]](step["args"])
         except Exception as e:
-            results.append({"tool": step["tool"], "ok": False, "error": str(e)})
-    return results
+            return {"tool": step["tool"], "ok": False, "error": str(e)}
+
+    if len(steps) <= 1:
+        return [_run_one(s) for s in steps]
+
+    try:
+        import threading
+        from concurrent.futures import ThreadPoolExecutor
+        from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
+        ctx = get_script_run_ctx()
+
+        def _with_ctx(step):
+            add_script_run_ctx(threading.current_thread(), ctx)
+            return _run_one(step)
+
+        with ThreadPoolExecutor(max_workers=min(4, len(steps))) as ex:
+            return list(ex.map(_with_ctx, steps))
+    except Exception:
+        return [_run_one(s) for s in steps]   # Streamlit 內部 API 變動時退回序列
 
 
 def page_ai_assistant():
@@ -1673,41 +1697,14 @@ def _fetch_market_snapshot():
         "XLI": "工業", "XLU": "公用事業", "XLRE": "房地產",
         "XLB": "原物料", "XLC": "通訊",
     }
-    def _batch_closes(tickers: list[str], period: str) -> dict:
-        """一次批次下載多檔的收盤序列，穩健處理 MultiIndex 兩種版面。"""
-        try:
-            raw = yf.download(tickers, period=period, auto_adjust=True,
-                              progress=False, threads=True)
-        except Exception:
-            return {}
-        if raw is None or raw.empty:
-            return {}
-        out = {}
-        is_multi = isinstance(raw.columns, pd.MultiIndex)
-        for tkr in tickers:
-            try:
-                if is_multi:
-                    if ("Close", tkr) in raw.columns:
-                        s = raw[("Close", tkr)].dropna()
-                    elif (tkr, "Close") in raw.columns:
-                        s = raw[(tkr, "Close")].dropna()
-                    else:
-                        continue
-                else:                              # 平面欄位只在單檔時才對應該 ticker
-                    if len(tickers) != 1:
-                        continue
-                    s = raw["Close"].squeeze().dropna()
-                if len(s) >= 2:
-                    out[tkr] = s
-            except Exception:
-                continue
-        return out
+    # 批次下載共用 sector_scan._batch_closes（全專案唯一實作，MultiIndex 修補只改一處）
+    from sector_scan import _batch_closes
 
     # 指數與板塊兩批並行下載（22 次序列 → 2 次批次，快 3-5 倍）
     from concurrent.futures import ThreadPoolExecutor
     with ThreadPoolExecutor(max_workers=2) as ex:
-        f_idx = ex.submit(_batch_closes, list(INDICES.keys()), "5d")
-        f_sec = ex.submit(_batch_closes, list(SECTORS.keys()), "2mo")
+        f_idx = ex.submit(_batch_closes, list(INDICES.keys()), "5d", 2)
+        f_sec = ex.submit(_batch_closes, list(SECTORS.keys()), "2mo", 2)
         idx_closes = f_idx.result()
         sec_closes = f_sec.result()
 
@@ -1750,6 +1747,28 @@ def _cached_intraday(ticker: str, period: str, interval: str):
     import yfinance as yf
     return yf.download(ticker, period=period, interval=interval,
                        auto_adjust=True, progress=False)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_candidates_prices(tickers: tuple):
+    """選股庫候選股一年歷史，快取 5 分鐘。"""
+    import yfinance as yf
+    return yf.download(list(tickers), period="1y", auto_adjust=True, progress=False)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _cached_portfolio_prices(tickers: tuple, start: str):
+    """持倉分析頁的價格下載快取 10 分鐘——調側欄設定不再重抓多年數據。"""
+    import yfinance as yf
+    return yf.download(list(tickers), start=pd.to_datetime(start),
+                       auto_adjust=True, progress=False)
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def _cached_watchlist_closes(tickers: tuple):
+    """警報頁監控清單的 5 日收盤，批次一次抓 + 快取 2 分鐘。"""
+    from sector_scan import _batch_closes
+    return _batch_closes(list(tickers), "5d", min_len=2)
 
 
 def page_market_overview():
@@ -2714,20 +2733,20 @@ def page_stock_research():
         )
 
         if st.button("開始篩選", type="primary", key="sc_run"):
-            with st.spinner(f"篩選 {len(screen_tickers)} 檔，約需 15–30 秒…"):
+            with st.spinner(f"篩選 {len(screen_tickers)} 檔（批次下載）…"):
                 try:
+                    # 一次批次下載全清單（舊版逐檔 30 次請求要 15-30 秒）
+                    import backtest as _bt
+                    from sector_scan import _batch_closes as _bc
+                    closes_sc = _bc(screen_tickers, sc_period, min_len=10)
                     rows_sc = []
                     for tkr_s in screen_tickers:
-                        try:
-                            _raw_s = yf.download(tkr_s, period=sc_period, auto_adjust=True, progress=False)
-                            if _raw_s.empty:
-                                continue
-                            s_s = _raw_s["Close"].squeeze().dropna()
-                        except Exception:
+                        s_s = closes_sc.get(tkr_s)
+                        if s_s is None:
                             continue
-                        if len(s_s) < 10:
+                        r_s = s_s.pct_change().dropna()
+                        if r_s.empty:
                             continue
-                        import backtest as _bt
                         rsi_sv = float(_bt.rsi(s_s).iloc[-1]) if len(s_s) >= 15 else np.nan
                         rows_sc.append({
                             "代碼":     tkr_s,
@@ -3568,25 +3587,21 @@ def page_alerts():
             section("最新報價快照")
             with st.spinner("抓取報價…"):
                 try:
+                    # 批次一次抓整個清單（舊版逐檔 N 次請求）＋快取 2 分鐘
+                    closes_al = _cached_watchlist_closes(tuple(cfg["watchlist"]))
                     rows = []
                     for tk in cfg["watchlist"]:
-                        try:
-                            _r = yf.download(tk, period="5d", auto_adjust=True, progress=False)
-                            if _r.empty:
-                                continue
-                            s = _r["Close"].squeeze().dropna()
-                            if len(s) >= 2:
-                                chg1 = float(s.iloc[-1] / s.iloc[-2] - 1)
-                                chg5 = float(s.iloc[-1] / s.iloc[0]  - 1)
-                                rows.append({
-                                    "代碼": tk,
-                                    "現價": round(float(s.iloc[-1]), 2),
-                                    "1日%": chg1,
-                                    "5日%": chg5,
-                                    "趨勢": "▲" if chg1 > 0 else "▼",
-                                })
-                        except Exception:
-                            continue
+                        s = closes_al.get(tk)
+                        if s is not None and len(s) >= 2:
+                            chg1 = float(s.iloc[-1] / s.iloc[-2] - 1)
+                            chg5 = float(s.iloc[-1] / s.iloc[0]  - 1)
+                            rows.append({
+                                "代碼": tk,
+                                "現價": round(float(s.iloc[-1]), 2),
+                                "1日%": chg1,
+                                "5日%": chg5,
+                                "趨勢": "▲" if chg1 > 0 else "▼",
+                            })
                     if rows:
                         snap_df = pd.DataFrame(rows).set_index("代碼")
                         def _color(v):
@@ -3729,18 +3744,21 @@ def page_alerts():
                                     "1日%": day_c, "RSI(14)": rsi,
                                     "訊號": " · ".join(tags),
                                 })
-                        if signals:
-                            sg_df = pd.DataFrame(signals).set_index("代碼")
-                            st.success(f"找到 {len(signals)} 檔觸發訊號")
-                            st.dataframe(
-                                sg_df.style.format({"現價": "{:.2f}", "1日%": "{:.2%}", "RSI(14)": "{:.1f}"}),
-                                use_container_width=True,
-                            )
-                            st.session_state["last_signals"] = signals
-                        else:
+                        st.session_state["last_signals"] = signals
+                        if not signals:
                             st.info("目前沒有觸發任何訊號。")
                     except Exception as e:
                         st.error(f"掃描失敗：{e}")
+
+        # 掃描結果表：從 session_state 渲染——按「推送」等按鈕（會 rerun）表格不再消失
+        if st.session_state.get("last_signals"):
+            _sigs_tbl = st.session_state["last_signals"]
+            sg_df = pd.DataFrame(_sigs_tbl).set_index("代碼")
+            st.success(f"找到 {len(_sigs_tbl)} 檔觸發訊號")
+            st.dataframe(
+                sg_df.style.format({"現價": "{:.2f}", "1日%": "{:.2%}", "RSI(14)": "{:.1f}"}),
+                use_container_width=True,
+            )
 
         # Push notifications
         if st.session_state.get("last_signals"):
@@ -4136,10 +4154,11 @@ def page_trading_tools():
                 vt_maxlev = st.slider("最大槓桿", 1.0, 3.0, 2.0, 0.1, key="vt_ml")
 
             if st.button("計算波動率部位", type="primary", key="vt_run"):
+                st.session_state["vt_active"] = True    # 按過一次就保持顯示，調滑桿即時重算
+            if st.session_state.get("vt_active"):
                 with st.spinner(f"抓取 {vt_tkr} 波動數據…"):
                     try:
-                        raw_vt = _yf.download(vt_tkr, period="6mo",
-                                              auto_adjust=True, progress=False)
+                        _info_vt, raw_vt, _news_vt = _cached_ticker_data(vt_tkr, "6mo")
                         if raw_vt.empty:
                             st.error("無資料，請確認代碼。")
                         else:

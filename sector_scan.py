@@ -78,8 +78,9 @@ def aggregate_by_industry(rows: list[dict]) -> list[dict]:
 
 # ── 抓取層（需網路；此環境代理擋 yfinance，需部署後實測）────────────────────────
 
-def _batch_closes(tickers: list[str], period: str) -> dict:
-    """批次下載多檔收盤序列，穩健處理 MultiIndex 兩種版面。"""
+def _batch_closes(tickers: list[str], period: str, min_len: int = 20) -> dict:
+    """批次下載多檔收盤序列，穩健處理 MultiIndex 兩種版面。
+    全專案共用的唯一實作（app.py 市場快照/篩選器皆 import 此函數）。"""
     import yfinance as yf
     try:
         raw = yf.download(tickers, period=period, auto_adjust=True,
@@ -103,7 +104,7 @@ def _batch_closes(tickers: list[str], period: str) -> dict:
                 if len(tickers) != 1:   # 平面欄位只在單檔時才對應該 ticker
                     continue
                 s = raw["Close"].squeeze().dropna()
-            if len(s) >= 20:
+            if len(s) >= min_len:
                 out[tkr] = s
         except Exception:
             continue
