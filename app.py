@@ -2386,10 +2386,11 @@ def page_stock_research():
                     summ = None
                     st.error(f"選擇權資料載入失敗：{e}")
             # 存進 session_state，之後動其他 widget（Streamlit 會整頁重跑）結果不消失
-            st.session_state["opt_result"] = (opt_sym, summ)
-        if st.session_state.get("opt_result"):
+            # 注意：不能叫 "opt_result"——同頁參數最佳化 tab 已用該 key（型別不同會互炸）
+            st.session_state["optsent_result"] = (opt_sym, summ)
+        if st.session_state.get("optsent_result"):
             import options_sentiment as ops
-            _opt_sym_r, summ = st.session_state["opt_result"]
+            _opt_sym_r, summ = st.session_state["optsent_result"]
             if not summ:
                 st.warning(f"找不到 {_opt_sym_r} 的選擇權資料（可能非選擇權標的、外股或當前無報價）。")
             else:
