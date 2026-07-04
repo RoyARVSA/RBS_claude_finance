@@ -2,7 +2,7 @@
 app.py – RBS Finance Dashboard (Streamlit)
 
 Local:  streamlit run app.py
-Colab:  see colab_setup.py (handles pip, pyngrok, Drive path, tunnel)
+Colab:  see RBS_Finance_Colab.ipynb (Cell 1-3: Drive, sync, launch)
 """
 from __future__ import annotations
 
@@ -2263,6 +2263,23 @@ def _cached_ticker_data(ticker: str, period: str):
         info = dict(tk.info) if tk.info else {}
     except Exception:
         info = {}
+    # 新版 yfinance 的 dividendYield 可能直接給百分比數字（0.44=0.44%）而非小數。
+    # 在源頭正規化成小數，顯示端一律 ×100（否則 AAPL 會顯示 44.00%）。
+    _dy = info.get("dividendYield")
+    if _dy is not None:
+        try:
+            _dy = float(_dy)
+            _rate, _px = info.get("dividendRate"), info.get("currentPrice") or info.get("regularMarketPrice")
+            if _rate and _px:                    # 最可靠：年配息 ÷ 股價
+                info["dividendYield"] = float(_rate) / float(_px)
+            elif _dy >= 1:                        # ≥1 幾乎必是百分比慣例
+                info["dividendYield"] = _dy / 100
+            # 尾端保險：>25% 的「殖利率」幾乎必是百分比值被當小數
+            # （犧牲極少數 Yieldmax 型超高配息 ETF 的無 rate 情況，換一般個股不再顯示 44.00%）
+            if info.get("dividendYield") and float(info["dividendYield"]) > 0.25:
+                info["dividendYield"] = float(info["dividendYield"]) / 100
+        except Exception:
+            pass
     # .info 在雲端常被 Yahoo 限流 → 用較穩的 fast_info 補市值/52週高低
     try:
         fi = tk.fast_info

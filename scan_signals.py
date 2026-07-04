@@ -183,6 +183,7 @@ def load_state() -> dict:
                 th.setdefault(k, v)
             state.setdefault("signal_history", {})
             state.setdefault("last_update_id", 0)
+            state.setdefault("watchlist", DEFAULT_WATCHLIST.copy())
             return state
         except Exception as e:
             print(f"State load error: {e}, using defaults")
@@ -198,7 +199,10 @@ def load_state() -> dict:
 
 
 def save_state(state: dict) -> None:
-    STATE_FILE.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
+    # 原子寫入：先寫暫存檔再 os.replace，中途被砍不會留下截斷的 JSON
+    tmp = STATE_FILE.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
+    os.replace(tmp, STATE_FILE)
     print(f"State saved → {STATE_FILE}")
 
 
@@ -206,8 +210,12 @@ def save_state(state: dict) -> None:
 
 def _tg_get(token: str, method: str, params: dict | None = None) -> dict:
     url = f"https://api.telegram.org/bot{token}/{method}"
-    r = requests.get(url, params=params, timeout=15)
-    return r.json() if r.ok else {}
+    try:
+        r = requests.get(url, params=params, timeout=15)
+        return r.json() if r.ok else {}
+    except Exception as e:          # Telegram 瞬斷不該廢掉整輪掃描
+        print(f"_tg_get {method} error: {e}")
+        return {}
 
 
 def _tg_send(token: str, chat_id: str, text: str) -> bool:
@@ -551,6 +559,11 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
         text = msg.get("text", "").strip()
         src_chat = str(msg.get("chat", {}).get("id", ""))
 
+        # 安全：只接受授權聊天室（任何人都找得到 bot username；未授權者可下 /closeall 等指令）
+        if src_chat != str(chat_id):
+            print(f"Ignored message from unauthorized chat {src_chat}")
+            continue
+
         if not text.startswith("/"):
             continue
 
@@ -603,6 +616,7 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
 
         elif cmd == "/mute":
             hours = int(args[0]) if args and args[0].isdigit() else 8
+            hours = max(1, min(hours, 720))   # clamp：超大數字會讓 timedelta 溢位、毒掉之後每輪 cron
             until = datetime.now(timezone.utc) + timedelta(hours=hours)
             state["mute_until"] = until.isoformat()
             changed = True
@@ -1164,13 +1178,16 @@ def calibrate(tickers: list[str], period: str = "2y") -> dict:
     這是較重的操作（每支下載 2 年資料），建議每天/每週跑一次，不要每次掃描都跑。
     """
     print(f"校準 {len(tickers)} 支標的的訊號權重（回測 {period}）…")
+    import backtest as bt
     result = {}
     for tk in tickers:
         try:
             raw = yf.download(tk, period=period, auto_adjust=True, progress=False)
             if raw.empty or len(raw) < 60:
                 continue
-            df = raw if "Close" in raw.columns else raw.xs(tk, axis=1, level=1)
+            # MultiIndex 下 `"Close" in raw.columns` 是部分鍵比對、恆為 True，
+            # 舊寫法會讓 MultiIndex 直接漏過去 → 校準悄悄算出垃圾。統一用 normalize_ohlc。
+            df = bt.normalize_ohlc(raw, tk)
             mult = calibrate_ticker(df)
             if mult:
                 result[tk] = mult
@@ -1878,7 +1895,13 @@ def main() -> int:
     # Step 1: Process incoming Telegram commands
     if TELEGRAM_TOKEN:
         print("── Processing Telegram commands ──")
-        state, changed = process_commands(TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, state)
+        try:
+            state, changed = process_commands(TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, state)
+        except Exception as e:
+            # 毒訊息防護：state 是就地修改，last_update_id 已前進——照樣存檔，
+            # 讓壞訊息被消耗掉，而不是讓之後每 15 分鐘的 cron 重複崩潰
+            print(f"Command processing error: {e}")
+            changed = True
         if changed:
             state_changed = True
             save_state(state)
