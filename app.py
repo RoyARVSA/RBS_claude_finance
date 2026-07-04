@@ -1755,6 +1755,9 @@ def page_ai_assistant():
     force_syms = st.text_input(
         "指定股票代碼（選填，逗號分隔）— 冷門/新標的抓不到時用這個強制納入",
         "", key="asst_force", placeholder="VRT, PLTR, 2454.TW")
+    debate_on = st.checkbox(
+        "⚖️ 前瞻問題啟用多空對辯（單輪；多 2 次 LLM 呼叫，換取去偏見的正反論證）",
+        value=True, key="asst_debate")
     use_tools = st.checkbox(
         "🛠 允許 AI 自己跑分析工具（回測 / 風險 / 選股）", value=True, key="asst_tools",
         help="開啟後，遇到「回測勝率/風險多大/某產業有哪些強勢股」這類問題，"
@@ -1835,6 +1838,38 @@ def page_ai_assistant():
                                     context += "\n\n" + tctx
                         except Exception:
                             pass   # 工具失敗不影響基本回答
+
+                    # 反思記憶：把 Bot 過去判斷的命中率/近期失誤餵回 context（FinMem 式）
+                    try:
+                        import json as _json
+
+                        import reflection as _rfl
+                        _sf = Path("watchlist_state.json")
+                        if _sf.exists():
+                            _s_ref = _rfl.summary_text(_json.loads(_sf.read_text(encoding="utf-8")))
+                            if _s_ref:
+                                context += f"\n\n【AI 判斷回顧】{_s_ref}"
+                    except Exception:
+                        pass
+
+                    # 單輪多空對辯（TradingAgents 式；文獻：一輪足矣，多輪遞減）
+                    if debate_on and "outlook" in intents and tickers:
+                        try:
+                            _bull = client.chat.completions.create(
+                                model=ai_model, temperature=0.4, max_tokens=450,
+                                messages=[{"role": "user",
+                                           "content": asst.DEBATE_BULL_PROMPT + "\n\n" + context}]
+                            ).choices[0].message.content
+                            _bear = client.chat.completions.create(
+                                model=ai_model, temperature=0.4, max_tokens=450,
+                                messages=[{"role": "user",
+                                           "content": asst.DEBATE_BEAR_PROMPT + "\n\n" + context}]
+                            ).choices[0].message.content
+                            context += ("\n\n=== 多空對辯（請在最終回答中裁決兩方論證的相對強度）===\n"
+                                        f"【多方最強論證】\n{_bull}\n【空方最強論證】\n{_bear}")
+                            st.caption("⚖️ 已完成單輪多空對辯")
+                        except Exception:
+                            pass   # 對辯失敗不影響基本回答
 
                     # 帶入近期對話（純文字）+ 當前資料
                     history = [{"role": m["role"], "content": m["content"]}

@@ -1719,6 +1719,16 @@ def daily_briefing(state: dict, force: bool = False) -> str | None:
     except Exception:
         pass
 
+    # AI 判斷回顧（反思記憶）
+    try:
+        import reflection as rfl
+        s_ref = rfl.summary_text(state)
+        if s_ref:
+            lines.append("")
+            lines.append(f"🪞 {s_ref}")
+    except Exception:
+        pass
+
     # 近期財報提醒
     try:
         earn = _upcoming_earnings(state)
@@ -1933,6 +1943,22 @@ def scan_and_report(state: dict, timestamp: str) -> tuple[str | None, list[dict]
                 lines.append(f"• *{t['ticker']}* 現價 {t['price']:.2f}，已{arrow} {float(t['level']):.2f}")
             alert_msg = "\n".join(lines)
             message = (message + "\n\n" + alert_msg) if message else alert_msg
+
+    # 反思記憶（FinMem 式）：記錄強判斷 → 5 日後結算命中率 → 晨報/助理回饋
+    try:
+        import reflection as rfl
+        today_s = (timestamp or "")[:10] or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        strong = sorted([x for x in results if abs(x.get("score", 0)) >= 0.5],
+                        key=lambda x: -abs(x.get("score", 0)))[:3]
+        for s_ in strong:
+            if s_.get("price"):
+                rfl.record_pick(state, s_["ticker"], float(s_["score"]),
+                                float(s_["price"]), today_s)
+        pend = {p["ticker"] for p in state.get("reflections", {}).get("pending", [])}
+        if pend:
+            rfl.evaluate_pending(state, _alert_prices(sorted(pend)), today_s)
+    except Exception as e:
+        print(f"reflection error: {e}")
     return message, results
 
 
