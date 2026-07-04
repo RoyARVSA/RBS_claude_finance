@@ -459,8 +459,17 @@ def page_portfolio_performance():
             st.markdown("##### 月報酬表")
             mt = pr.monthly_table(df["r_p"])
             if not mt.empty:
+                def _mcolor(v):
+                    # 手工紅綠漸層（±8% 飽和）——background_gradient 需要 matplotlib，
+                    # 而 requirements 已移除它（雲端會 ImportError）
+                    if pd.isna(v):
+                        return "color:#666"
+                    x = max(-0.08, min(0.08, float(v))) / 0.08
+                    if x >= 0:
+                        return f"background-color:rgba(76,175,80,{0.15 + 0.55 * x:.2f});color:#E8EAF0"
+                    return f"background-color:rgba(244,67,54,{0.15 - 0.55 * x:.2f});color:#E8EAF0"
                 st.dataframe(mt.style.format(lambda v: "—" if pd.isna(v) else f"{v:.1%}")
-                             .background_gradient(cmap="RdYlGn", axis=None, vmin=-0.08, vmax=0.08),
+                             .map(_mcolor),
                              use_container_width=True)
 
             st.markdown("##### 前五大回撤")
