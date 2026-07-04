@@ -1283,8 +1283,10 @@ def _trend_fields(close) -> dict:
     return out
 
 
+@st.cache_data(ttl=600, show_spinner=False)
 def _assistant_peer_note(ticker: str) -> str | None:
-    """把標的放進同產業對手中排名（近3月報酬 + P/E），回一句話。"""
+    """把標的放進同產業對手中排名（近3月報酬 + P/E），回一句話。快取 10 分鐘——
+    同產業的第二個前瞻問題不再重掃 12 檔。"""
     try:
         import sector_scan as ssc
         imap = _industry_ticker_map()
@@ -1727,13 +1729,38 @@ def _fetch_market_snapshot():
     return snapshot, sectors
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_market_rss(max_n: int = 5):
+    """MarketWatch 頭條快取 5 分鐘——別讓每次 rerun 都打 RSS。"""
+    import feedparser
+    feed = feedparser.parse("https://feeds.marketwatch.com/marketwatch/topstories/")
+    return [(e.get("title", ""), e.get("link", "#"), e.get("published", ""))
+            for e in feed.entries[:max_n]]
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _cached_price_data(tickers: tuple, start: str):
+    """風險管理頁的價格矩陣快取 10 分鐘——調滑桿（α/λ/名目值）不再重新下載 5 年數據。"""
+    return load_price_data(list(tickers), start=start)
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _cached_intraday(ticker: str, period: str, interval: str):
+    """盤中走勢快取 1 分鐘（「即時」頁允許的最小新鮮度）。"""
+    import yfinance as yf
+    return yf.download(ticker, period=period, interval=interval,
+                       auto_adjust=True, progress=False)
+
+
 def page_market_overview():
     st.title("🏠 市場總覽")
     now_str = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M")
     st.caption(f"全球市場概覽 · 資料快取 2 分鐘 · 更新：{now_str}")
 
     if st.button("🔄 刷新數據"):
-        st.cache_data.clear()
+        # 只清本頁的快取；st.cache_data.clear() 會把全 app（基本面/產業掃描/選擇權…）全部冷掉
+        _fetch_market_snapshot.clear()
+        _cached_market_rss.clear()
         st.rerun()
 
     with st.spinner("載入市場數據…"):
@@ -1857,13 +1884,11 @@ def page_market_overview():
     # ── Quick news ─────────────────────────────────────────────────
     section("市場快訊")
     try:
-        import feedparser
-        feed = feedparser.parse("https://feeds.marketwatch.com/marketwatch/topstories/")
         import html as _html
-        for entry in feed.entries[:5]:
+        for _t, _lk, _pub in _cached_market_rss(5):
             st.markdown(
-                f"**[{_html.escape(entry.get('title',''))}]({entry.get('link','#')})**  \n"
-                f"<small style='color:#B8C0D0'>{_html.escape(entry.get('published',''))}</small>",
+                f"**[{_html.escape(_t)}]({_lk})**  \n"
+                f"<small style='color:#B8C0D0'>{_html.escape(_pub)}</small>",
                 unsafe_allow_html=True,
             )
             st.markdown("---")
@@ -1995,7 +2020,7 @@ def page_risk_management():
 
     with st.spinner("載入市場數據…"):
         try:
-            px_df = load_price_data(tickers, start=str(start))
+            px_df = _cached_price_data(tuple(tickers), str(start))
         except Exception as e:
             st.error(f"資料載入失敗：{e}")
             return
@@ -2356,13 +2381,17 @@ def page_stock_research():
         if opt_sym and st.button("分析選擇權情緒", key="opt_go"):
             with st.spinner(f"抓取 {opt_sym} 選擇權鏈…"):
                 try:
-                    import options_sentiment as ops
                     summ = _cached_options(opt_sym)
                 except Exception as e:
                     summ = None
                     st.error(f"選擇權資料載入失敗：{e}")
+            # 存進 session_state，之後動其他 widget（Streamlit 會整頁重跑）結果不消失
+            st.session_state["opt_result"] = (opt_sym, summ)
+        if st.session_state.get("opt_result"):
+            import options_sentiment as ops
+            _opt_sym_r, summ = st.session_state["opt_result"]
             if not summ:
-                st.warning(f"找不到 {opt_sym} 的選擇權資料（可能非選擇權標的、外股或當前無報價）。")
+                st.warning(f"找不到 {_opt_sym_r} 的選擇權資料（可能非選擇權標的、外股或當前無報價）。")
             else:
                 sent = ops.sentiment(summ)
                 sc = sent.get("score")
@@ -3461,16 +3490,25 @@ def page_company_analysis():
     tkr_ins = data.get("ticker", "")
     if "." in tkr_ins:
         st.info("此標的非美股，SEC Form 4 僅涵蓋美國掛牌公司。")
-    elif st.button("查詢內部人交易", key="ins_go"):
-        with st.spinner(f"查詢 {tkr_ins} 的 SEC Form 4…"):
-            try:
-                ins = _cached_insider(tkr_ins)
-            except Exception as e:
-                ins = None
-                st.error(f"SEC 查詢失敗：{e}")
-        if not ins:
+    else:
+        if st.button("查詢內部人交易", key="ins_go"):
+            with st.spinner(f"查詢 {tkr_ins} 的 SEC Form 4…"):
+                try:
+                    ins = _cached_insider(tkr_ins)
+                except Exception as e:
+                    ins = None
+                    st.error(f"SEC 查詢失敗：{e}")
+            # session_state 保存，動其他 widget 不消失；換股票時舊結果標記代碼避免張冠李戴
+            st.session_state["ins_result"] = (tkr_ins, ins)
+        _ins_saved = st.session_state.get("ins_result")
+        if _ins_saved and _ins_saved[0] != tkr_ins:
+            st.caption(f"（下方為 {_ins_saved[0]} 的查詢結果；按上方按鈕更新為 {tkr_ins}）")
+        if _ins_saved is None:
+            pass
+        elif not _ins_saved[1]:
             st.warning("查無近期 Form 4（可能無內部人申報，或代碼無法對應 SEC CIK）。")
         else:
+            ins = _ins_saved[1]
             sc = ins.get("score")
             k1, k2, k3, k4 = st.columns(4)
             k1.metric("內部人情緒", f"{sc:+.2f}" if sc is not None else "—", ins.get("label"))
@@ -3583,15 +3621,12 @@ def page_alerts():
             )
 
         if st.button("🔄 刷新", key="intra_refresh"):
-            st.cache_data.clear()
+            _cached_intraday.clear()   # 只清盤中數據，別把全 app 快取一起冷掉
 
         if intra_t:
             with st.spinner(f"載入 {intra_t} 即時數據…"):
                 try:
-                    intra = yf.download(
-                        intra_t, period=intra_per, interval=intra_int,
-                        auto_adjust=True, progress=False,
-                    )
+                    intra = _cached_intraday(intra_t, intra_per, intra_int)
                     if isinstance(intra.columns, pd.MultiIndex):
                         intra.columns = intra.columns.droplevel(1)
                 except Exception as e:
