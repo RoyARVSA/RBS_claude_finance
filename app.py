@@ -270,6 +270,103 @@ def page_portfolio_performance():
 
     import yfinance as yf
 
+    # ── 📒 交易帳本（Ghostfolio 式：真實買賣紀錄 → 成本/損益/TWR/XIRR/股息）──
+    with st.expander("📒 交易帳本（輸入真實買賣紀錄 → 成本基礎 / 損益 / TWR / XIRR / 股息）",
+                     expanded=False):
+        import ledger as lg
+        if "ledger_rows" not in st.session_state:
+            st.session_state["ledger_rows"] = pd.DataFrame(
+                [{"date": "2025-01-02", "ticker": "AAPL", "side": "buy",
+                  "qty": 10.0, "price": 180.0, "fee": 0.0}])
+        up_led = st.file_uploader("匯入 CSV（欄位：date,ticker,side,qty,price,fee）",
+                                  type="csv", key="led_csv")
+        if up_led is not None:
+            try:
+                st.session_state["ledger_rows"] = pd.read_csv(up_led)
+                st.success(f"已匯入 {len(st.session_state['ledger_rows'])} 列")
+            except Exception as e:
+                st.error(f"CSV 解析失敗：{e}")
+        led_df = st.data_editor(st.session_state["ledger_rows"], num_rows="dynamic",
+                                use_container_width=True, key="led_editor")
+        st.download_button("⬇ 下載帳本 CSV",
+                           led_df.to_csv(index=False).encode("utf-8"),
+                           "trades.csv", "text/csv", key="led_dl")
+
+        if st.button("計算帳本績效", type="primary", key="led_go"):
+            trades, verrs = lg.validate_trades(led_df.to_dict("records"))
+            for _e in verrs:
+                st.warning(_e)
+            if not trades:
+                st.info("沒有合法交易列。")
+            else:
+                pos, perrs, trades = lg.positions_and_realized(trades)
+                for _e in perrs:
+                    st.warning(_e)
+                tks = tuple(sorted({t["ticker"] for t in trades}))
+                start_led = (min(t["date"] for t in trades) - pd.Timedelta(days=7))
+                with st.spinner("抓取價格與股息…"):
+                    try:
+                        raw_led = _cached_portfolio_prices(tks, str(start_led.date()))
+                        if isinstance(raw_led.columns, pd.MultiIndex):
+                            px_led = raw_led["Close"]
+                        else:
+                            px_led = raw_led[["Close"]].rename(columns={"Close": tks[0]})
+                        px_led.index = pd.DatetimeIndex(px_led.index).tz_localize(None)
+                        divs = _cached_dividends(tks)
+                    except Exception as e:
+                        st.error(f"價格抓取失敗：{e}")
+                        px_led, divs = pd.DataFrame(), {}
+                if not px_led.empty:
+                    curve = lg.equity_curve(trades, px_led)
+                    twr = lg.twr_returns(curve)
+                    inc = lg.dividend_income(trades, divs)
+                    cfs = [(t["date"], -(t["qty"] * t["price"] + t["fee"]) if t["side"] == "buy"
+                            else (t["qty"] * t["price"] - t["fee"])) for t in trades]
+                    if not curve.empty and curve["value"].iloc[-1] > 0:
+                        cfs.append((curve.index[-1], float(curve["value"].iloc[-1])))
+                    st.session_state["led_result"] = {
+                        "pos": pos, "px_last": px_led.ffill().iloc[-1].to_dict(),
+                        "curve": curve, "twr_cum": float((1 + twr).prod() - 1) if len(twr) else None,
+                        "xirr": lg.xirr(cfs), "div": inc}
+
+        _led = st.session_state.get("led_result")
+        if _led:
+            pos, px_last = _led["pos"], _led["px_last"]
+            rows_led, tot_mv, tot_cost, tot_real, tot_unreal = [], 0.0, 0.0, 0.0, 0.0
+            for tk, p in sorted(pos.items()):
+                last = px_last.get(tk)
+                mv = p["qty"] * last if (last and p["qty"]) else 0.0
+                unreal = mv - p["cost"] if p["qty"] else 0.0
+                tot_mv += mv; tot_cost += p["cost"]
+                tot_real += p["realized"]; tot_unreal += unreal
+                rows_led.append({"代碼": tk, "股數": p["qty"], "均價": p["avg_cost"],
+                                 "現價": last, "市值": mv, "未實現": unreal,
+                                 "已實現": p["realized"]})
+            l1, l2, l3, l4 = st.columns(4)
+            with l1: metric_card("總市值", f"${tot_mv:,.0f}")
+            with l2: metric_card("未實現損益", f"${tot_unreal:+,.0f}", positive=tot_unreal >= 0)
+            with l3: metric_card("已實現+股息",
+                                 f"${tot_real + _led['div'].get('_total', 0):+,.0f}",
+                                 positive=(tot_real + _led['div'].get('_total', 0)) >= 0)
+            with l4: metric_card("XIRR（年化）",
+                                 f"{_led['xirr']:.1%}" if _led["xirr"] is not None else "—",
+                                 positive=bool(_led["xirr"] and _led["xirr"] > 0))
+            if _led["twr_cum"] is not None:
+                st.caption(f"TWR 累積報酬（現金流調整）：**{_led['twr_cum']:+.1%}**"
+                           f"　·　股息收入 ${_led['div'].get('_total', 0):,.0f}")
+            st.dataframe(pd.DataFrame(rows_led).style.format(
+                {"股數": "{:g}", "均價": "{:.2f}", "現價": "{:.2f}",
+                 "市值": "{:,.0f}", "未實現": "{:+,.0f}", "已實現": "{:+,.0f}"}),
+                use_container_width=True, hide_index=True)
+            if not _led["curve"].empty:
+                fig_led = go.Figure(go.Scatter(x=_led["curve"].index,
+                                               y=_led["curve"]["value"],
+                                               fill="tozeroy", line=dict(color="#1E88E5")))
+                fig_led.update_layout(**PLOTLY_LAYOUT, height=300, title="持倉市值曲線")
+                st.plotly_chart(fig_led, use_container_width=True)
+            st.caption("平均成本法 · TWR=時間加權（排除出入金影響）· XIRR=資金加權（你實際的年化）"
+                       " · 股息以除息日持股計，未含稅 · 非投資建議。")
+
     DEFAULT_HOLDINGS = pd.DataFrame(
         {
             "Ticker": ["AGG", "BBH", "BND", "IVV", "KRE", "MBB", "SHY", "SMH", "SOXX", "VFH", "VOO", "XLF", "XLU", "XLV", "XSD"],
@@ -1843,6 +1940,21 @@ def _cached_intraday(ticker: str, period: str, interval: str):
     import yfinance as yf
     return yf.download(ticker, period=period, interval=interval,
                        auto_adjust=True, progress=False)
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def _cached_dividends(tickers: tuple):
+    """各代碼的歷史股息序列（快取 1 天；帳本股息收入用）。"""
+    import yfinance as yf
+    out = {}
+    for t in tickers:
+        try:
+            d = yf.Ticker(t).dividends
+            if d is not None and len(d):
+                out[t] = d
+        except Exception:
+            continue
+    return out
 
 
 @st.cache_data(ttl=300, show_spinner=False)
