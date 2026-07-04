@@ -3131,6 +3131,8 @@ def page_stock_research():
                             df_o = _bt2.normalize_ohlc(raw_o, opt_tkr)
                             opt = _bt2.optimize_params(df_o)
                             st.session_state["opt_result"] = (opt_tkr, opt)
+                            st.session_state["opt_raw_df"] = df_o          # 給 walk-forward 視覺化
+                            st.session_state.pop("wf_details", None)       # 換標的清舊快取
                     except Exception as e:
                         st.error(f"最佳化失敗：{e}")
 
@@ -3160,6 +3162,57 @@ def page_stock_research():
                     }),
                     use_container_width=True,
                 )
+
+                # 參數熱力圖（學自 backtesting.py plot_heatmaps）：
+                # 找「穩健高原」——整片亮的區域才可信，孤峰 = 過擬合
+                st.markdown("##### 參數熱力圖（停利 × 停損，取最佳持有期）")
+                _h_best = int(best["horizon"])
+                _hm = opt[opt["horizon"] == _h_best].pivot_table(
+                    index="sl", columns="tp", values="objective", aggfunc="max")
+                if not _hm.empty and _hm.size > 1:
+                    fig_hm = go.Figure(go.Heatmap(
+                        z=_hm.values,
+                        x=[f"{c:.0%}" for c in _hm.columns],
+                        y=[f"{r:.0%}" for r in _hm.index],
+                        colorscale="RdYlGn", colorbar=dict(title="綜合分")))
+                    fig_hm.update_layout(**PLOTLY_LAYOUT, height=360,
+                                         title=f"持有 {_h_best} 日 · 綜合分（期望值×獲利因子×穩健度）",
+                                         xaxis_title="停利", yaxis_title="停損")
+                    st.plotly_chart(fig_hm, use_container_width=True)
+                    st.caption("判讀：**整片亮區**（穩健高原）代表參數不敏感、較可信；"
+                               "**孤立亮點**通常是過擬合，實盤別指望。")
+
+                # Walk-forward 逐段明細（學自 vectorbt 的 IS/OOS 檢視）
+                st.markdown("##### Walk-forward 逐段檢視（最佳規則）")
+                try:
+                    import backtest as _btv
+                    _wfd = st.session_state.get("wf_details")
+                    if not _wfd or _wfd.get("key") != (o_tkr, best["best_rule"]):
+                        raw_wf = st.session_state.get("opt_raw_df")
+                        if raw_wf is not None:
+                            det = _btv.walk_forward_details(
+                                raw_wf, best["best_rule"], n_splits=4,
+                                tp=float(best["tp"]), sl=float(best["sl"]),
+                                horizon=int(best["horizon"]))
+                            _wfd = {"key": (o_tkr, best["best_rule"]), "det": det}
+                            st.session_state["wf_details"] = _wfd
+                    det = (_wfd or {}).get("det") or []
+                    if det:
+                        wf_df = pd.DataFrame(det)
+                        fig_wf = go.Figure(go.Bar(
+                            x=[f"第{d['fold']}段\n{d['start']}~{d['end']}" for d in det],
+                            y=[d["expectancy"] if d["expectancy"] is not None else 0 for d in det],
+                            marker_color=["#4CAF50" if (d["expectancy"] or 0) > 0 else "#F44336"
+                                          for d in det],
+                            text=[f"{d['trades']}筆" for d in det], textposition="outside"))
+                        fig_wf.update_layout(**PLOTLY_LAYOUT, height=320,
+                                             title="各時間段的每筆期望值（全綠=跨期穩定；有紅=僅特定時期有效）",
+                                             yaxis_title="期望值/筆", yaxis_tickformat="+.1%")
+                        st.plotly_chart(fig_wf, use_container_width=True)
+                    else:
+                        st.caption("（資料不足以切段，或該規則在部分時段無訊號）")
+                except Exception as _wf_e:
+                    st.caption(f"（walk-forward 檢視無法計算：{_wf_e}）")
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -3443,6 +3496,13 @@ def _cached_insider(ticker: str):
     return si.fetch_insider(ticker)
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def _cached_analyst(ticker: str):
+    """快取分析師共識 + EPS surprise（1 小時）。"""
+    import analyst_data as ad
+    return ad.fetch_analyst(ticker)
+
+
 def page_company_analysis():
     st.title("🏢 公司分析")
     st.caption("基本面體質分析 · 財務健康評分 · 估值 · 三表趨勢 · AI 解讀（資料來源 yfinance）")
@@ -3667,6 +3727,48 @@ def page_company_analysis():
                 f"{_html.escape(st.session_state['fa_ai_out']).replace(chr(10),'<br>')}</div>",
                 unsafe_allow_html=True,
             )
+
+    # ⑥.5 分析師共識與 EPS surprise ───────────────────────────────
+    section("分析師共識 · 財報 Beat 率")
+    if st.button("載入分析師數據", key="an_go"):
+        with st.spinner("抓取分析師評等/目標價/財報歷史…"):
+            try:
+                st.session_state["an_result"] = (data.get("ticker", ""),
+                                                 _cached_analyst(data.get("ticker", "")))
+            except Exception as e:
+                st.error(f"載入失敗：{e}")
+    _an_saved = st.session_state.get("an_result")
+    if _an_saved and _an_saved[0] == data.get("ticker"):
+        an = _an_saved[1]
+        a1, a2, a3, a4 = st.columns(4)
+        rat, tgt, sur = an.get("ratings"), an.get("targets"), an.get("surprises")
+        with a1:
+            metric_card("評等共識", f"{rat['score']:+.2f}" if rat else "—",
+                        positive=bool(rat and rat["score"] > 0))
+            if rat:
+                st.caption(f"{rat['label']}（{rat['total']} 位）")
+        with a2:
+            metric_card("目標價(均)", f"{tgt['mean']:.2f}" if tgt else "—")
+        with a3:
+            metric_card("上檔空間", f"{tgt['upside_mean']:+.1%}" if tgt else "—",
+                        positive=bool(tgt and tgt["upside_mean"] > 0))
+        with a4:
+            metric_card("EPS Beat 率", f"{sur['beat_rate']:.0%}（{sur['n']} 季）" if sur else "—",
+                        positive=bool(sur and sur["beat_rate"] >= 0.5))
+        if rat:
+            _d = rat["dist"]
+            st.caption(f"分佈：強買 {_d['strongBuy']}｜買 {_d['buy']}｜持有 {_d['hold']}"
+                       f"｜賣 {_d['sell']}｜強賣 {_d['strongSell']}")
+        if sur and sur.get("rows"):
+            st.markdown("**近季 EPS：預估 vs 實際**")
+            st.dataframe(pd.DataFrame(sur["rows"]).rename(
+                columns={"date": "日期", "estimate": "預估", "actual": "實際"}),
+                use_container_width=True, hide_index=True)
+        if an.get("upgrades"):
+            st.markdown("**近期評等調整**　" + "　".join(
+                f"{u['firm']}: {u['from'] or '—'}→{u['to']}（{u['date']}）"
+                for u in an["upgrades"][:4]))
+        st.caption("資料 yfinance + Finnhub 備援 · 分析師觀點僅供參考，非投資建議。")
 
     # ⑦ SEC 內部人交易（Form 4）─────────────────────────────────
     section("內部人交易（SEC Form 4）")

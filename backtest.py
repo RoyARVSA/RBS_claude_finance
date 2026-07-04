@@ -357,6 +357,40 @@ def walk_forward(df: pd.DataFrame, n_splits: int = 4, **kw) -> dict[str, float]:
     return consistency
 
 
+def walk_forward_details(df: pd.DataFrame, rule: str, n_splits: int = 4,
+                         **kw) -> list[dict]:
+    """
+    單一規則的逐段 walk-forward 明細（給視覺化用）：
+    [{fold, start, end, trades, win_rate, expectancy}, ...]。資料太短回 []。
+    """
+    close = df["Close"].dropna()
+    if len(close) < n_splits * 40:
+        return []
+    bounds = np.linspace(0, len(df), n_splits + 1).astype(int)
+    out = []
+    for s in range(n_splits):
+        seg = df.iloc[bounds[s]:bounds[s + 1]]
+        if len(seg) < 40:
+            continue
+        seg_close = seg["Close"].dropna()
+        entries = signal_rules(seg).get(rule)
+        if entries is None:
+            continue
+        trades = triple_barrier(seg_close, entries.reindex(seg_close.index),
+                                short=("(空)" in rule),
+                                tp=kw.get("tp", 0.05), sl=kw.get("sl", 0.03),
+                                horizon=kw.get("horizon", 10), cost=kw.get("cost", 0.001))
+        m = evaluate(trades) if len(trades) else {"trades": 0, "win_rate": np.nan,
+                                                  "expectancy": np.nan}
+        out.append({"fold": s + 1,
+                    "start": str(seg.index[0].date()) if hasattr(seg.index[0], "date") else str(seg.index[0]),
+                    "end": str(seg.index[-1].date()) if hasattr(seg.index[-1], "date") else str(seg.index[-1]),
+                    "trades": int(m.get("trades", 0)),
+                    "win_rate": float(m["win_rate"]) if np.isfinite(m.get("win_rate", np.nan)) else None,
+                    "expectancy": float(m["expectancy"]) if np.isfinite(m.get("expectancy", np.nan)) else None})
+    return out
+
+
 # ── 參數最佳化（mini-hyperopt）─────────────────────────────────────────────────
 
 def optimize_params(
