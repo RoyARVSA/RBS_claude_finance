@@ -1676,8 +1676,6 @@ def page_ai_assistant():
 
 @st.cache_data(ttl=120)
 def _fetch_market_snapshot():
-    import yfinance as yf
-
     INDICES = {
         "^GSPC":     ("S&P 500",    "index"),
         "^IXIC":     ("NASDAQ",     "index"),
@@ -2739,6 +2737,9 @@ def page_stock_research():
                     import backtest as _bt
                     from sector_scan import _batch_closes as _bc
                     closes_sc = _bc(screen_tickers, sc_period, min_len=10)
+                    if not closes_sc:
+                        st.warning("全部代碼都抓不到資料，請確認代碼或稍後再試。")
+                        st.stop()
                     rows_sc = []
                     for tkr_s in screen_tickers:
                         s_s = closes_sc.get(tkr_s)
@@ -4135,7 +4136,6 @@ def page_trading_tools():
         )
         try:
             import quant_tools as _qt
-            import yfinance as _yf
         except ImportError:
             _qt = None
             st.error("找不到 quant_tools.py，請確認已同步（Colab 需更新 Cell 2）。")

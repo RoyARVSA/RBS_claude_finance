@@ -121,6 +121,14 @@
 - **原因**：對話必須以 user 訊息開頭。
 - **修法**：組 messages 前把開頭的 assistant 訊息 pop 掉（見 `page_ai_assistant`）。
 
+### D8. Streamlit session_state 的 key 是全域命名空間
+- **症狀**：2026-07 優化時把選擇權結果存成 `st.session_state["opt_result"]`——同頁「參數最佳化」
+  早就用同名 key（存 DataFrame vs 存 dict），兩個功能都用過後整頁崩潰。
+- **原因**：session_state 全 app 共享，`st.tabs` 每個 tab 每次 rerun 都會執行。
+- **修法**：key 一律帶功能前綴（`optsent_`、`ins_`、`pp_`…）；新增 key 前先
+  `grep 'session_state\["'` 查衝突。另一教訓：改一段程式時，被刪變數（如 `r_s`）
+  可能在下方 30 行外還有人用——刪前 grep 該變數名。
+
 ### D7. 內嵌 widget 高度為零
 - **症狀**：TradingView iframe「太扁」看不到。
 - **原因**：`autosize: true` 在零高度容器裡就是 0。
