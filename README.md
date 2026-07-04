@@ -17,11 +17,11 @@ Streamlit 網頁應用 + 獨立的訊號掃描 Bot（GitHub Actions 排程版 / 
 |------|------|
 | 💬 AI 助理 | **資深分析師模式：論點導向、事實vs推論分開、催化劑/情境/觀察指標；前瞻問題自動跑回測+選擇權+內部人+同業比較；可自主呼叫回測/風險/選股/選擇權/內部人工具取客觀數據** |
 | 🏠 市場總覽 | 即時指數/板塊/宏觀指標、**總經數據(FRED)**、市場快訊、**AI 自主市場分析** |
-| 📈 持倉分析 | 多資產組合：權益曲線、回撤、Sharpe、IR、Beta |
-| ⚠️ 風險管理 | VaR/CVaR、蒙地卡羅、Kupiec 回測、壓力測試、**風險平價配置** |
+| 📈 持倉分析 | 多資產組合：權益曲線、回撤、Sharpe、IR、Beta、**績效報告（CAGR/Sortino/Calmar/月報酬熱力圖/回撤期間）** |
+| ⚠️ 風險管理 | VaR/CVaR、蒙地卡羅、Kupiec 回測、壓力測試、**風險平價配置 + 效率前緣（MPT）** |
 | 🔍 股票研究 | K 線+RSI、AI 深度報告、市場篩選器、**訊號回測 + 參數最佳化**、TradingView、**選擇權情緒(Put/Call、IV 偏斜)** |
 | 🏢 公司分析 | **基本面體質：財務健康評分、估值旗標、三表趨勢、AI 解讀、SEC 內部人交易(Form 4)** |
-| 🗂️ 產業總覽 | **一次掃描整個市場：產業強弱 vs 風險散佈、鑽取個股（可加基本面）** |
+| 🗂️ 產業總覽 | **一次掃描整個市場：產業強弱 vs 風險散佈、鑽取個股（可加基本面）、RRG 板塊輪動象限圖** |
 | 🚨 即時警報 | 監控清單、盤中走勢、訊號掃描、Telegram/Email 推播 |
 | 🛠️ 交易工具 | 部位大小、**波動率目標部位**、Kelly、風險報酬比、複利 |
 | 📉 模擬交易 | **Alpaca 紙上交易：帳戶績效、持倉、權益曲線 vs SPY、交易日誌（原因）、訊號實測勝率** |
@@ -39,6 +39,7 @@ Streamlit 網頁應用 + 獨立的訊號掃描 Bot（GitHub Actions 排程版 / 
 - **防護機制**（freqtrade 式）：訊號冷卻去重、大盤風險濾網
 - **部位建議**：每個訊號附 ATR 風險基準的建議股數
 - **財報行事曆提醒**：觀察清單標的財報前 N 天自動提醒（晨報 + `/earnings`）
+- **到價警報**：`/alert AAPL 200` 突破/跌破即推播，觸發後自動移除（上限 20 個）
 - **Alpaca 模擬交易**：訊號自動下模擬單驗證策略實效（預設關閉，`/autotrade on` 啟用）
 - **Telegram 指令**：清單 `/add /remove /list`、分析 `/rank /fundamentals /options /insider /earnings /briefing`、
   風控 `/risk /protections /calibrate`、模擬交易 `/autotrade /positions /pnl /journal /closeall`（`/help` 看全部）
@@ -113,6 +114,8 @@ assistant.py            對話式 AI 助理：代碼/意圖解析 + grounded con
 assistant_tools.py      AI 助理工具編排：規劃(plan)/解析/格式化，讓助理自跑回測/風險/選股/選擇權
 options_sentiment.py    選擇權情緒：Put/Call 比、ATM 隱含波動、賣買權偏斜 + 情緒評分
 sec_insider.py          SEC 內部人交易：Form 4 XML 解析 + 買賣彙總（cluster buy）+ 情緒
+perf_report.py          績效報告（quantstats 風格）：CAGR/Sortino/Calmar/月報酬表/回撤期間
+portfolio_opt.py        效率前緣（MPT）：最小波動/最大 Sharpe 權重 + 前緣曲線（scipy）
 alpaca_trader.py        Alpaca 紙上交易：下單決策(decide_orders) + REST client
 stock_db.py             選股資料庫（5 市場、30+ 產業、200+ 標的，含 AI 供應鏈瓶頸主題）
 rbs_lib.py              風險計算函式庫（VaR/CVaR/共變異數/情境）

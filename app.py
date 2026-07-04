@@ -387,7 +387,8 @@ def page_portfolio_performance():
         metric_card("Treynor", f"{treynor:.4f}" if pd.notna(treynor) else "N/A")
 
     # ── Charts ──────────────────────────────────────────────────────
-    tab1, tab2, tab3, tab4 = st.tabs(["Equity Curve", "Drawdown", "Risk vs Return", "Rolling Sharpe"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(
+        ["Equity Curve", "Drawdown", "Risk vs Return", "Rolling Sharpe", "📑 績效報告"])
 
     with tab1:
         fig = go.Figure()
@@ -429,6 +430,51 @@ def page_portfolio_performance():
             fig.add_hline(y=0, line_dash="solid", line_color="gray")
             fig.update_layout(**PLOTLY_LAYOUT, title=f"Rolling Sharpe (window={default_w})", height=380)
             st.plotly_chart(fig, use_container_width=True)
+
+    with tab5:
+        # QuantStats 風格 tearsheet（perf_report.py 純邏輯）
+        try:
+            import perf_report as pr
+        except ImportError:
+            st.error("找不到 perf_report.py，請確認已同步（Colab 需更新 Cell 2）。")
+        else:
+            stats = pr.perf_stats(df["r_p"], df["r_b"], ppy=ppy)
+
+            def _pnum(v, pct=False, dp=2):
+                if v is None:
+                    return "—"
+                return f"{v*100:.{dp}f}%" if pct else f"{v:.{dp}f}"
+
+            g1, g2, g3, g4 = st.columns(4)
+            with g1: metric_card("CAGR",     _pnum(stats["cagr"], pct=True))
+            with g2: metric_card("Sortino",  _pnum(stats["sortino"]))
+            with g3: metric_card("Calmar",   _pnum(stats["calmar"]))
+            with g4: metric_card("勝率(期)", _pnum(stats["win_rate"], pct=True, dp=1))
+            g5, g6, g7, g8 = st.columns(4)
+            with g5: metric_card("年化 Alpha", _pnum(stats["alpha_ann"], pct=True))
+            with g6: metric_card("偏態",       _pnum(stats["skew"]))
+            with g7: metric_card("VaR95(期)",  _pnum(stats["var95"], pct=True))
+            with g8: metric_card("與基準相關", _pnum(stats["corr_bench"]))
+
+            st.markdown("##### 月報酬表")
+            mt = pr.monthly_table(df["r_p"])
+            if not mt.empty:
+                st.dataframe(mt.style.format(lambda v: "—" if pd.isna(v) else f"{v:.1%}")
+                             .background_gradient(cmap="RdYlGn", axis=None, vmin=-0.08, vmax=0.08),
+                             use_container_width=True)
+
+            st.markdown("##### 前五大回撤")
+            dps = pr.drawdown_periods(df["r_p"], top_n=5)
+            if dps:
+                dp_df = pd.DataFrame([{
+                    "高點": p["start"].date(), "谷底": p["trough"].date(),
+                    "回復": p["end"].date() if p["end"] is not None else "尚未回復",
+                    "深度": f"{p['depth']:.1%}", "天數": p["days"],
+                } for p in dps])
+                st.dataframe(dp_df, use_container_width=True, hide_index=True)
+            else:
+                st.info("期間內無回撤。")
+            st.caption("指標慣例參考 quantstats；α/β 以所選基準回歸。分析用途，非投資建議。")
 
     # ── Download ────────────────────────────────────────────────────
     out_df = pd.concat([port_val.rename("Portfolio_Value"), bench_px.rename("Benchmark"), port_ret.rename("Port_Return"), bench_ret.rename("Bench_Return")], axis=1)
@@ -2267,6 +2313,50 @@ def page_risk_management():
                     "💡 **等權重**下，高波動標的會貢獻過多風險（看「風險貢獻%(等權)」欄差異）；"
                     "**等風險貢獻**讓每檔貢獻接近一致，降低單一標的主導組合波動。"
                 )
+
+                # ── 效率前緣（Markowitz MPT，學習自 PyPortfolioOpt）────────
+                st.markdown("---")
+                section("效率前緣（均值-變異數最適化）")
+                try:
+                    import portfolio_opt as po
+                    ef = po.efficient_frontier(r_df, n_points=25)
+                    w_mv = po.min_vol_weights(r_df)
+                    w_ms = po.max_sharpe_weights(r_df)
+                    if ef.empty or w_mv is None or w_ms is None:
+                        st.warning("最適化無解（標的過少或資料異常）。")
+                    else:
+                        mu_a, cov_a = po._annualize(r_df)
+                        pts = {
+                            "最小波動": po.port_perf(w_mv.to_numpy(), mu_a, cov_a),
+                            "最大 Sharpe": po.port_perf(w_ms.to_numpy(), mu_a, cov_a),
+                            "等權": po.port_perf(np.full(r_df.shape[1], 1 / r_df.shape[1]), mu_a, cov_a),
+                            "風險平價": po.port_perf(np.asarray(w_erc, dtype=float), mu_a, cov_a),
+                        }
+                        fig_ef = go.Figure()
+                        fig_ef.add_trace(go.Scatter(
+                            x=ef["vol"], y=ef["ret"], mode="lines",
+                            name="效率前緣", line=dict(color="#1E88E5", width=2)))
+                        for nm, (rt, vl) in pts.items():
+                            fig_ef.add_trace(go.Scatter(
+                                x=[vl], y=[rt], mode="markers+text", name=nm,
+                                text=[nm], textposition="top center",
+                                marker=dict(size=11)))
+                        fig_ef.update_layout(**PLOTLY_LAYOUT, height=430,
+                                             title="效率前緣（年化）",
+                                             xaxis_title="年化波動", yaxis_title="年化報酬")
+                        st.plotly_chart(fig_ef, use_container_width=True)
+
+                        ef_alloc = pd.DataFrame({
+                            "最小波動": w_mv, "最大 Sharpe": w_ms,
+                        }).fillna(0.0)
+                        st.dataframe(ef_alloc.style.format("{:.1%}"),
+                                     use_container_width=True)
+                        st.caption("以歷史報酬估計期望值——歷史非未來，最適權重對輸入極敏感，"
+                                   "僅供與等權/風險平價對照，非投資建議。")
+                except ImportError:
+                    st.info("找不到 portfolio_opt.py，請同步後重試（Colab 需更新 Cell 2）。")
+                except Exception as _ef_e:
+                    st.warning(f"效率前緣計算失敗：{_ef_e}")
             elif _qt is not None:
                 st.warning("請在 Tickers 加入至少 2 檔標的。")
 
@@ -3138,6 +3228,15 @@ def _cached_sector_scan(market: str, industries: tuple, period: str, with_fund: 
     return ss.scan_universe(industry_map, period=period, with_fundamentals=with_fund)
 
 
+@st.cache_data(ttl=900, show_spinner=False)
+def _cached_rrg_data():
+    """RRG 用的 11 檔 SPDR 板塊 ETF + SPY 一年收盤（快取 15 分鐘）。"""
+    from sector_scan import _batch_closes
+    etfs = ["XLK", "XLF", "XLE", "XLV", "XLY", "XLP",
+            "XLI", "XLU", "XLRE", "XLB", "XLC", "SPY"]
+    return _batch_closes(etfs, "1y", min_len=60)
+
+
 def page_sector_overview():
     st.title("🗂️ 產業總覽")
     st.caption("一次掃描整個市場/產業的標的 · 產業強弱輪動 + 風險分佈 · 可鑽取個股")
@@ -3147,6 +3246,62 @@ def page_sector_overview():
     except Exception:
         st.error("找不到 stock_db.py，請確認已同步（Colab 需更新 Cell 2）。")
         return
+
+    # ── RRG 相對輪動象限圖（板塊 ETF vs SPY，學習自 JdK RRG）──────────
+    with st.expander("🔄 RRG 板塊輪動象限圖（11 大 SPDR 板塊 vs SPY）", expanded=False):
+        st.caption("右上=領先(強且加速)、右下=轉弱、左下=落後、左上=轉強。"
+                   "採公開 z-score 近似公式（原版 JdK 未公開），週線視窗 10 週，軌跡為近 5 週。")
+        if st.button("計算 RRG", key="rrg_go"):
+            with st.spinner("抓取板塊 ETF 一年數據…"):
+                try:
+                    closes_rrg = _cached_rrg_data()
+                except Exception as e:
+                    closes_rrg = {}
+                    st.error(f"資料抓取失敗：{e}")
+            st.session_state["rrg_result"] = closes_rrg
+        _SECTOR_NAMES = {"XLK": "科技", "XLF": "金融", "XLE": "能源", "XLV": "醫療",
+                         "XLY": "非必需消費", "XLP": "必需消費", "XLI": "工業",
+                         "XLU": "公用事業", "XLRE": "房地產", "XLB": "原物料", "XLC": "通訊"}
+        closes_rrg = st.session_state.get("rrg_result")
+        if closes_rrg is not None:
+            bench_rrg = closes_rrg.get("SPY")
+            if bench_rrg is None:
+                st.warning("抓不到 SPY 基準資料，稍後再試。")
+            else:
+                import sector_scan as _ssc
+                fig_rrg = go.Figure()
+                q_colors = {"領先": "#4CAF50", "轉弱": "#FF9800",
+                            "落後": "#F44336", "轉強": "#1E88E5"}
+                summary_rows = []
+                for etf, name in _SECTOR_NAMES.items():
+                    m = _ssc.rrg_metrics(closes_rrg.get(etf), bench_rrg)
+                    if not m:
+                        continue
+                    xs = [p[0] for p in m["trail"]]
+                    ys = [p[1] for p in m["trail"]]
+                    fig_rrg.add_trace(go.Scatter(
+                        x=xs, y=ys, mode="lines+markers+text",
+                        text=[""] * (len(xs) - 1) + [name],
+                        textposition="top center", name=name,
+                        line=dict(color=q_colors[m["quadrant"]], width=1.5),
+                        marker=dict(size=[5] * (len(xs) - 1) + [11])))
+                    summary_rows.append({"板塊": name, "ETF": etf,
+                                         "RS-Ratio": round(m["rs_ratio"], 1),
+                                         "RS-Mom": round(m["rs_mom"], 1),
+                                         "象限": m["quadrant"]})
+                if summary_rows:
+                    fig_rrg.add_hline(y=100, line_color="#888", line_width=1)
+                    fig_rrg.add_vline(x=100, line_color="#888", line_width=1)
+                    fig_rrg.update_layout(**PLOTLY_LAYOUT, height=560, showlegend=False,
+                                          title="RRG — 相對強度 vs 相對動能（vs SPY，週線）",
+                                          xaxis_title="RS-Ratio（>100 相對強）",
+                                          yaxis_title="RS-Momentum（>100 加速中）")
+                    st.plotly_chart(fig_rrg, use_container_width=True)
+                    _rrg_df = pd.DataFrame(summary_rows).sort_values("RS-Ratio", ascending=False)
+                    st.dataframe(_rrg_df, use_container_width=True, hide_index=True)
+                    st.caption("經典用法：資金輪動順時針走（轉強→領先→轉弱→落後）。僅供判讀輪動位置，非投資建議。")
+                else:
+                    st.warning("資料不足，無法計算 RRG（各 ETF 需至少約 25 週資料）。")
 
     c1, c2, c3 = st.columns([1.2, 2, 1])
     with c1:
