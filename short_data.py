@@ -100,7 +100,9 @@ def short_summary(sv: dict | None, info: dict | None, ftd: list | None) -> dict:
             return None
 
     spf = _f(info.get("shortPercentOfFloat"))
-    if spf is not None and spf > 1:            # 有些版本給百分比數字
+    if spf is not None and spf > 1:            # 有些版本給百分比數字（3.2=3.2%）
+        # 取捨：GME 2021 級的 >100% 短倉（小數慣例下 >1）會被誤除——
+        # 但那是十年一遇；百分比慣例值 >1 天天都有。選擇讓常見情況正確。
         spf /= 100
     cur, prior = _f(info.get("sharesShort")), _f(info.get("sharesShortPriorMonth"))
     chg = (cur / prior - 1) if (cur and prior) else None
