@@ -1801,7 +1801,7 @@ def page_ai_assistant():
                     except Exception:
                         _ss = None
                     tech_secs, fund_secs, chips_secs, level_secs = [], [], [], []
-                    quants, ok_tks, vol_worst = {}, [], None
+                    quants, ok_tks, vol_worst, all_heads = {}, [], None, []
                     for tk in cmt_tks:
                         prog.update(label=f"蒐集 {tk} 資料中…")
                         try:
@@ -1925,9 +1925,8 @@ def page_ai_assistant():
                         except Exception:
                             pass
                         try:
-                            _heads = [n.get("title", "") for n in (_n_c or [])[:4] if n.get("title")]
-                            if _heads:
-                                _cp.append("近期新聞標題：" + "／".join(_heads))
+                            for _h in [n.get("title", "") for n in (_n_c or [])[:4] if n.get("title")]:
+                                all_heads.append((tk, _h))   # 收集後統一逐篇標注多空
                         except Exception:
                             pass
                         chips_secs.append(f"【{tk}】\n" + ("\n".join(_cp) or "籌碼資料暫缺"))
@@ -1963,9 +1962,29 @@ def page_ai_assistant():
                             messages=[{"role": "user", "content": ptext}],
                         ).choices[0].message.content
 
+                    # 新聞逐篇多空標注（學自 TradingAgents：明確指出哪篇對標的利多/利空）
+                    news_tag_txt, news_tags_view = "", []
+                    if all_heads:
+                        prog.update(label="新聞逐篇多空標注中…")
+                        try:
+                            import analyst_data as _ad2
+                            _hl = [f"({t}) {h}" for t, h in all_heads]
+                            _tag_raw = _llm_call(
+                                _ad2.build_news_tag_prompt("、".join(ok_tks), _hl), 320)
+                            _tags = _ad2.parse_news_tags(_tag_raw, len(_hl))
+                            if _tags:
+                                news_tag_txt = _ad2.format_tagged_news(_hl, _tags)
+                                news_tags_view = [
+                                    {"標的": all_heads[t["i"]][0], "方向": t["tag"],
+                                     "標題": all_heads[t["i"]][1][:70],
+                                     "理由": t["reason"]} for t in _tags]
+                        except Exception:
+                            pass
+
                     domains = {"technical": "\n".join(tech_secs),
                                "fundamental": "\n".join(fund_secs),
-                               "chips": "\n\n".join(chips_secs),
+                               "chips": "\n\n".join(chips_secs)
+                               + (f"\n\n【新聞逐篇多空標注】\n{news_tag_txt}" if news_tag_txt else ""),
                                "macro": macro_dom}
                     analysts_out = {}
                     for _d, _dtxt in domains.items():
@@ -2052,7 +2071,8 @@ def page_ai_assistant():
                         "rm": rm_c, "raggr": raggr_c, "rcons": rcons_c,
                         "hard": hard_c, "risk": risk_c, "pm": pm_c,
                         "verdict": verdict_c, "mres": mres, "crosses": crosses,
-                        "quants": quants, "cross": cross_c}
+                        "quants": quants, "cross": cross_c,
+                        "news_tags": news_tags_view}
                     prog.update(label="✅ 決策會議完成", state="complete")
                 except Exception as e:
                     prog.update(label=f"失敗：{e}", state="error")
@@ -2110,7 +2130,15 @@ def page_ai_assistant():
                 st.caption("分析師立場：" + "　".join(
                     f"{cmt.ANALYST_ROLES[d][0]} {(f'{s:+.1f}' if s is not None else '—')}"
                     for d, s in _cmt["stances"].items()))
+            if _cmt.get("news_tags"):
+                st.markdown("**📰 新聞逐篇多空標注**")
+                st.dataframe(pd.DataFrame(_cmt["news_tags"]),
+                             use_container_width=True, hide_index=True)
             _minutes = [f"# 投資決策會議紀錄（{'、'.join(_tks_r)}）\n"]
+            if _cmt.get("news_tags"):
+                _minutes.append("## 新聞逐篇多空標注\n" + "\n".join(
+                    f"- [{t['方向']}] ({t['標的']}) {t['標題']} — {t['理由']}"
+                    for t in _cmt["news_tags"]) + "\n")
             with st.expander("📋 完整會議紀錄（分析師×4 / 對辯 / 交易員 / 風控 / 裁決）"):
                 for _d, _t in _cmt["analysts"].items():
                     st.markdown(f"**【{cmt.ANALYST_ROLES[_d][0]}】**\n\n{_t}")
