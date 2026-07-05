@@ -35,6 +35,7 @@ Streamlit 網頁應用 + 獨立的訊號掃描 Bot（GitHub Actions 排程版 / 
 - **綜合評分**：趨勢/MACD/RSI/布林/動量合成 -1~+1 分數，5 級評級
 - **多時間框架確認**：日線分數與週線同向加強、背離減弱（軟性調整）
 - **每日 AI 晨報**：每交易日 ET 08:30 推送大盤+排名+訊號+內部人亮點+AI 判斷回顧+**本週總經發布日（CPI/非農/GDP）**
+- **每週深度週報**：週日 ET 晚間自動推送——指數週表現、清單強弱、**決策計分板**、RRG 板塊輪動、下週財報/總經行事曆（`/weekly` 隨時手動）
 - **自我優化迴圈**：回測各訊號歷史勝率 → 動態調整評分權重（每週校準）
 - **防護機制**（freqtrade 式）：訊號冷卻去重、大盤風險濾網
 - **部位建議**：每個訊號附 ATR 風險基準的建議股數
@@ -120,7 +121,8 @@ analyst_data.py         分析師共識：評等分佈/目標價上檔/EPS surpr
 short_data.py           做空籌碼：FINRA 日做空量 + 短倉/回補天數 + SEC 失券 FTD（免 key）
 whales_13f.py           超級投資人 13F：EDGAR 13F-HR 解析 + 兩季增減倉比較（免 key）
 ledger.py               交易帳本：平均成本/已未實現損益/TWR/XIRR/股息收入（Ghostfolio 式）
-reflection.py           AI 反思記憶：判斷 vs N 日後結果 → 命中率回饋（FinMem 式）
+reflection.py           AI 反思記憶：判斷 vs N 日後結果 → 命中率 + 決策者計分板（FinMem 式）
+tw_flows.py             台股三大法人買賣超（TWSE T86 免 key）：外資/投信/自營 + 連買天數
 committee.py            機構決策委員會：角色提示/立場解析/硬風控閘門/量化交叉比較（TradingAgents 式）
 alpaca_trader.py        Alpaca 紙上交易：下單決策(decide_orders) + REST client
 stock_db.py             選股資料庫（5 市場、30+ 產業、200+ 標的，含 AI 供應鏈瓶頸主題）

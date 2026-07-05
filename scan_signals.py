@@ -32,6 +32,7 @@ Telegram 指令（傳給 Bot）：
   /positions /pnl /closeall – 模擬持倉 / 帳戶報酬 / 一鍵平倉
   /journal [N]            – 交易日誌（每筆自動交易的評分與原因）
   /briefing               – 立即生成每日 AI 晨報（每交易日 ET 08:30 自動推送）
+  /weekly                 – 立即生成每週深度週報（每週日 ET 18:00 後自動推送）
   /set mtf_enabled on/off – 週線同向確認（日線分數與週線同向加強、背離減弱）
   /scan                   – 立即掃描（忽略靜音與市場狀態）
   /clear                  – 清空觀察清單
@@ -284,7 +285,8 @@ def _cmd_help() -> str:
         "`/whales [編號]` — 超級投資人 13F 季度增減倉（巴菲特/Burry…）\n"
         "`/alert AAPL 200` — 到價警報（`/alert` 看清單、`/alert del AAPL` 刪）\n"
         "`/earnings [天數]` — 觀察清單近期財報日\n"
-        "`/briefing` — 立即生成每日晨報\n\n"
+        "`/briefing` — 立即生成每日晨報\n"
+        "`/weekly` — 立即生成每週深度週報（指數/強弱/計分板/RRG/下週行事曆）\n\n"
         "🤖 *模擬交易（Alpaca paper）*\n"
         "`/autotrade on|off` — 自動下模擬單（預設關）\n"
         "`/positions` — 目前持倉 + 損益\n"
@@ -838,6 +840,14 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
             reply = "☀️ 生成晨報中，約需 20-40 秒…"
             _tg_send(token, src_chat or chat_id, reply)
             reply = daily_briefing(state, force=True) or "晨報生成失敗"
+
+        elif cmd == "/weekly":
+            reply = "📒 生成週報中，約需 30-60 秒…"
+            _tg_send(token, src_chat or chat_id, reply)
+            try:
+                reply = weekly_report(state) or "週報生成失敗"
+            except Exception as e:
+                reply = f"❌ 週報生成失敗：{e}"
 
         elif cmd == "/earnings":
             days = int(args[0]) if args and args[0].isdigit() else 14
@@ -1759,6 +1769,108 @@ def daily_briefing(state: dict, force: bool = False) -> str | None:
     return "\n".join(lines)
 
 
+def weekly_report(state: dict) -> str:
+    """
+    每週深度週報：指數週漲跌 + 觀察清單強弱 + 決策計分板 + RRG 板塊輪動
+    + 下週財報/總經行事曆。組件全走既有模組；任何區塊失敗都跳過不擋整報。
+    """
+    from sector_scan import _batch_closes
+    now_et = datetime.now(ET)
+    lines = [f"📒 *RBS 每週深度週報* — {now_et.strftime('%Y-%m-%d')}（週）"]
+
+    # 指數本週表現
+    try:
+        idx_map = {"^GSPC": "S&P500", "^IXIC": "NASDAQ", "^DJI": "道瓊", "^VIX": "VIX"}
+        closes = _batch_closes(list(idx_map), "5d", min_len=2)
+        segs = []
+        for tk, name in idx_map.items():
+            s = closes.get(tk)
+            if s is not None and len(s) >= 2:
+                segs.append(f"{name} {float(s.iloc[-1] / s.iloc[0] - 1):+.1%}")
+        if segs:
+            lines.append("📈 本週：" + "　".join(segs))
+    except Exception:
+        pass
+
+    # 觀察清單本週最強/最弱（綜合評分）
+    try:
+        results = scan(state["watchlist"], state["thresholds"],
+                       calibration=_calibration_weights(state))
+        ranked = sorted(results, key=lambda r: -r.get("score", 0))
+        if ranked:
+            top = "、".join(f"{r['ticker']}({r['score']:+.2f})" for r in ranked[:3])
+            bot = "、".join(f"{r['ticker']}({r['score']:+.2f})" for r in ranked[-3:][::-1])
+            lines.append(f"🏆 最強：{top}\n🥶 最弱：{bot}")
+    except Exception:
+        pass
+
+    # 決策計分板（反思記憶）
+    try:
+        import reflection as rfl
+        sb = rfl.scoreboard(state.get("reflections", {}).get("history", []))
+        for r_ in sb:
+            if r_["hit_rate"] is not None:
+                lines.append(f"🎯 {rfl.SOURCE_LABELS.get(r_['source'], r_['source'])}"
+                             f"近 {r_['n']} 次命中率 {r_['hit_rate']:.0%}"
+                             + (f"、平均5日對齊報酬 {r_['avg_fwd']:+.1%}"
+                                if r_["avg_fwd"] is not None else ""))
+    except Exception:
+        pass
+
+    # RRG 板塊輪動（週線象限）
+    try:
+        from sector_scan import rrg_metrics
+        _SEC = {"XLK": "科技", "XLF": "金融", "XLE": "能源", "XLV": "醫療",
+                "XLY": "非必需", "XLP": "必需", "XLI": "工業", "XLU": "公用",
+                "XLRE": "房產", "XLB": "原物料", "XLC": "通訊"}
+        closes = _batch_closes(list(_SEC) + ["SPY"], "1y", min_len=60)
+        bench = closes.get("SPY")
+        quad: dict = {}
+        if bench is not None:
+            for etf, nm in _SEC.items():
+                m = rrg_metrics(closes.get(etf), bench)
+                if m:
+                    quad.setdefault(m["quadrant"], []).append(nm)
+        segs = [f"{q}：{'、'.join(v)}" for q, v in quad.items() if v]
+        if segs:
+            lines.append("🔄 *板塊輪動（RRG vs SPY）*\n" + "\n".join(f"　{s}" for s in segs))
+    except Exception:
+        pass
+
+    # 下週財報 + 總經
+    try:
+        earn = _upcoming_earnings(state, max_days=7)
+        if earn:
+            lines.append("📅 下週財報：" + "、".join(
+                f"{tk}({ed.strftime('%m/%d')})" for tk, ed, _dd in earn[:6]))
+    except Exception:
+        pass
+    try:
+        _fk = os.environ.get("FRED_API_KEY", "")
+        if _fk:
+            import macro as _mc
+            rel = _mc.fetch_release_calendar(_fk, days_ahead=7)
+            if rel:
+                lines.append("🗓 下週總經：" + "、".join(f"{n}({d[5:]})" for d, n in rel[:6]))
+    except Exception:
+        pass
+
+    lines.append("_每週日推送 · /weekly 隨時手動 · /set weekly_enabled off 關閉 · 非投資建議_")
+    return "\n\n".join(lines)
+
+
+def _should_send_weekly(state: dict) -> bool:
+    """週日 ET 18:00 後、本週未發過、未靜音、開關開啟。"""
+    th = state["thresholds"]
+    if not th.get("weekly_enabled", True) or _is_muted(state):
+        return False
+    now_et = datetime.now(ET)
+    if now_et.weekday() != 6 or now_et.hour < 18:      # 週日=6
+        return False
+    week_id = f"{now_et.isocalendar().year}-W{now_et.isocalendar().week}"
+    return state.get("last_weekly") != week_id
+
+
 def _should_send_briefing(state: dict) -> bool:
     """判斷現在是否該發晨報：啟用 + 交易日 + 過了設定時間 + 今天還沒發 + 未靜音。"""
     th = state["thresholds"]
@@ -2090,6 +2202,20 @@ def main() -> int:
             _tg_send(TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, bmsg)
             print("Daily briefing sent.")
         state["last_briefing_date"] = datetime.now(ET).strftime("%Y-%m-%d")
+        save_state(state)
+
+    # Step 1.6: 每週深度週報（週日 ET 晚間）
+    if _should_send_weekly(state):
+        print("── Sending weekly report ──")
+        try:
+            wmsg = weekly_report(state)
+            if wmsg and TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
+                _tg_send(TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, wmsg)
+                print("Weekly report sent.")
+        except Exception as e:
+            print(f"Weekly report error: {e}")
+        _now_w = datetime.now(ET)
+        state["last_weekly"] = f"{_now_w.isocalendar().year}-W{_now_w.isocalendar().week}"
         save_state(state)
 
     # Step 2: Check mute & market hours
