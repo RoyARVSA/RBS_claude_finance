@@ -228,8 +228,9 @@ def _fetch_cboe(ticker: str) -> dict | None:
     import datetime as _dt
 
     import requests
+    import re as _re
     sym = ticker.upper().strip()
-    if not sym.isalpha() or len(sym) > 6:
+    if not _re.fullmatch(r"[A-Z]{1,5}(\.[A-Z])?", sym):   # 允許 BRK.B 型類股代碼
         return None
     try:
         r = requests.get(f"https://cdn.cboe.com/api/global/delayed_quotes/options/{sym}.json",

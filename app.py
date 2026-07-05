@@ -1776,6 +1776,7 @@ def page_ai_assistant():
             if not ai_key:
                 st.error("請先在上方「⚙️ 設定」填入 LLM API Key。")
             else:
+                st.session_state.pop("cmt_result", None)   # 失敗時不殘留上一檔的結論誤導
                 import json as _json
 
                 import committee as cmt
@@ -1935,7 +1936,7 @@ def page_ai_assistant():
             v, q, x = _cmt["verdict"], _cmt["quant"], _cmt["cross"]
             k1, k2, k3, k4 = st.columns(4)
             with k1:
-                metric_card("委員會結論", v.get("verdict") or "—")
+                metric_card(f"委員會結論（{_cmt['ticker']}）", v.get("verdict") or "—")
             with k2:
                 metric_card("信心", v.get("confidence") or "—")
             with k3:
@@ -2918,8 +2919,9 @@ def page_stock_research():
                 for n in sent.get("notes", []):
                     st.markdown(f"- {n}")
                 if summ.get("expiries"):
-                    st.caption("到期日：" + "、".join(summ["expiries"])
-                               + f"　·　現價 {summ.get('spot')}")
+                    _spot_s = f"　·　現價 {summ['spot']:.2f}" if summ.get("spot") else ""
+                    _src_s = f"　·　{summ['source']}" if summ.get("source") else ""
+                    st.caption("到期日：" + "、".join(summ["expiries"]) + _spot_s + _src_s)
                 st.caption("⚠️ 選擇權情緒反映當前定位與避險成本，需搭配趨勢與基本面判讀，非投資建議。")
 
     # ── Tab 4: TradingView 互動圖表（免費嵌入 widget，無需 key）──────
