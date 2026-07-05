@@ -2725,6 +2725,9 @@ def page_risk_management():
                             "等權": po.port_perf(np.full(r_df.shape[1], 1 / r_df.shape[1]), mu_a, cov_a),
                             "風險平價": po.port_perf(np.asarray(w_erc, dtype=float), mu_a, cov_a),
                         }
+                        w_hrp = po.hrp_weights(r_df)      # Riskfolio 招牌：階層風險平價
+                        if w_hrp is not None:
+                            pts["HRP"] = po.port_perf(w_hrp.to_numpy(), mu_a, cov_a)
                         fig_ef = go.Figure()
                         fig_ef.add_trace(go.Scatter(
                             x=ef["vol"], y=ef["ret"], mode="lines",
@@ -2741,6 +2744,7 @@ def page_risk_management():
 
                         ef_alloc = pd.DataFrame({
                             "最小波動": w_mv, "最大 Sharpe": w_ms,
+                            **({"HRP": w_hrp} if w_hrp is not None else {}),
                         }).fillna(0.0)
                         st.dataframe(ef_alloc.style.format("{:.1%}"),
                                      use_container_width=True)

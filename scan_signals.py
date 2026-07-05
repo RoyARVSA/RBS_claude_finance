@@ -1729,6 +1729,18 @@ def daily_briefing(state: dict, force: bool = False) -> str | None:
     except Exception:
         pass
 
+    # 本週重要總經數據發布日（FRED 行事曆；CPI/非農/GDP/PCE…）
+    try:
+        _fred_k = os.environ.get("FRED_API_KEY", "")
+        if _fred_k:
+            import macro as _mc
+            _rel = _mc.fetch_release_calendar(_fred_k, days_ahead=7)
+            if _rel:
+                lines.append("")
+                lines.append("🗓 *本週總經*：" + "、".join(f"{n}({d[5:]})" for d, n in _rel[:5]))
+    except Exception:
+        pass
+
     # 近期財報提醒
     try:
         earn = _upcoming_earnings(state)
