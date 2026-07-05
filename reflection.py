@@ -26,16 +26,18 @@ def _refl(state: dict) -> dict:
 
 
 def record_pick(state: dict, ticker: str, score: float, price: float,
-                date: str) -> bool:
-    """記錄一筆方向判斷（同日同代碼去重）。score 正=偏多、負=偏空。"""
+                date: str, source: str = "quant") -> bool:
+    """記錄一筆方向判斷（同日同代碼同來源去重）。score 正=偏多、負=偏空。
+    source：quant=量化訊號、committee=委員會、analyst=單分析師…（計分板分組用）。"""
     if not ticker or price is None or price <= 0:
         return False
     ticker = ticker.upper()          # 先正規化再去重，小寫呼叫端才不會繞過
     r = _refl(state)
-    if any(p["ticker"] == ticker and p["date"] == date for p in r["pending"]):
+    if any(p["ticker"] == ticker and p["date"] == date
+           and p.get("source", "quant") == source for p in r["pending"]):
         return False
     r["pending"].append({"ticker": ticker, "score": round(float(score), 2),
-                         "price": float(price), "date": date})
+                         "price": float(price), "date": date, "source": source})
     r["pending"] = r["pending"][-PENDING_CAP:]
     return True
 
@@ -83,6 +85,37 @@ def summary_text(state: dict, n: int = 20) -> str | None:
     return "；".join(parts)
 
 
+def scoreboard(history: list) -> list[dict]:
+    """
+    決策者計分板（純函數）。history：已結算清單（可混多來源）。
+    回 [{source, n, hits, hit_rate, avg_fwd}]，依 hit_rate 排序；無資料回 []。
+    """
+    by_src: dict = {}
+    for h in history or []:
+        if h.get("hit") is None:
+            continue
+        s = h.get("source", "quant")
+        g = by_src.setdefault(s, {"n": 0, "hits": 0, "fwd": []})
+        g["n"] += 1
+        g["hits"] += 1 if h["hit"] else 0
+        # 統一成「方向對齊報酬」：看多時 fwd、看空時 -fwd
+        try:
+            aligned = h["fwd_ret"] * (1 if h["score"] > 0 else -1)
+            g["fwd"].append(aligned)
+        except (KeyError, TypeError):
+            pass
+    out = []
+    for s, g in by_src.items():
+        out.append({"source": s, "n": g["n"], "hits": g["hits"],
+                    "hit_rate": g["hits"] / g["n"] if g["n"] else None,
+                    "avg_fwd": (sum(g["fwd"]) / len(g["fwd"])) if g["fwd"] else None})
+    out.sort(key=lambda x: -(x["hit_rate"] or 0))
+    return out
+
+
+SOURCE_LABELS = {"quant": "量化訊號", "committee": "委員會", "analyst": "AI 分析師"}
+
+
 # ── CLI 自我測試 ──────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -116,5 +149,28 @@ if __name__ == "__main__":
     evaluate_pending(state2, {}, "2026-07-04")
     tick = [p["ticker"] for p in state2["reflections"]["pending"]]
     assert "WAIT" in tick and "OLD" not in tick
+
+    # 計分板：兩來源分組、方向對齊報酬
+    hist = [
+        {"ticker": "A", "score": 0.6, "fwd_ret": 0.05, "hit": True,  "source": "quant"},
+        {"ticker": "B", "score": -0.5, "fwd_ret": 0.03, "hit": False, "source": "quant"},
+        {"ticker": "C", "score": 0.8, "fwd_ret": 0.04, "hit": True,  "source": "committee"},
+        {"ticker": "D", "score": 0.8, "fwd_ret": -0.02, "hit": False, "source": "committee"},
+        {"ticker": "E", "score": 0.8, "fwd_ret": 0.06, "hit": True,  "source": "committee"},
+        {"ticker": "F", "score": 0.1, "fwd_ret": 0.01, "hit": None},          # 未結算略過
+    ]
+    sb = scoreboard(hist)
+    cm = next(x for x in sb if x["source"] == "committee")
+    qt = next(x for x in sb if x["source"] == "quant")
+    assert cm["n"] == 3 and abs(cm["hit_rate"] - 2 / 3) < 1e-9
+    assert qt["n"] == 2 and abs(qt["hit_rate"] - 0.5) < 1e-9
+    assert abs(qt["avg_fwd"] - (0.05 + (-0.03)) / 2) < 1e-9    # 看空 B 的 +3% → 對齊 -3%
+    assert sb[0]["source"] == "committee"                       # 命中率排序
+    # 同日同代碼不同來源 → 不互相去重
+    st2: dict = {}
+    assert record_pick(st2, "NVDA", 0.8, 100, "2026-07-05", source="quant")
+    assert record_pick(st2, "NVDA", 0.8, 100, "2026-07-05", source="committee")
+    assert not record_pick(st2, "NVDA", 0.8, 100, "2026-07-05", source="committee")
+    print("scoreboard OK:", [(x['source'], round(x['hit_rate'], 2)) for x in sb])
 
     print("✅ reflection 純邏輯測試通過")

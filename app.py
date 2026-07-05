@@ -1802,6 +1802,7 @@ def page_ai_assistant():
                         _ss = None
                     tech_secs, fund_secs, chips_secs, level_secs = [], [], [], []
                     quants, ok_tks, vol_worst, all_heads = {}, [], None, []
+                    prices_c = {}
                     for tk in cmt_tks:
                         prog.update(label=f"蒐集 {tk} 資料中…")
                         try:
@@ -1814,6 +1815,7 @@ def page_ai_assistant():
                         ok_tks.append(tk)
                         tech_c = _ssc.price_metrics(hist_c["Close"]) or {}
                         tech_c.update(_trend_fields(hist_c["Close"]))
+                        prices_c[tk] = tech_c.get("price")
                         if tech_c.get("ann_vol") is not None:
                             vol_worst = max(vol_worst or 0, tech_c["ann_vol"])
                         quant_c = None
@@ -2073,6 +2075,28 @@ def page_ai_assistant():
                         "verdict": verdict_c, "mres": mres, "crosses": crosses,
                         "quants": quants, "cross": cross_c,
                         "news_tags": news_tags_view}
+                    # 決策入檔（買進/迴避才記，5 日後結算進計分板；觀望不計方向）
+                    try:
+                        import reflection as _rfl2
+                        _vmap = {"買進": 0.8, "迴避": -0.8}
+                        _verds = (mres["verdicts"] if multi
+                                  else {ok_tks[0]: verdict_c.get("verdict")})
+                        log = _load_cmt_log()
+                        _today_c = pd.Timestamp.now().strftime("%Y-%m-%d")
+                        n_rec = 0
+                        for _tk_v, _vd in _verds.items():
+                            _sc_v = _vmap.get(_vd)
+                            _px_v = prices_c.get(_tk_v)
+                            if _sc_v is not None and _px_v:
+                                if _rfl2.record_pick(log, _tk_v, _sc_v, float(_px_v),
+                                                     _today_c, source="committee"):
+                                    n_rec += 1
+                        if n_rec:
+                            _where = _save_cmt_log(log)
+                            st.caption(f"📝 已記錄 {n_rec} 筆委員會決策（{_where}）"
+                                       "→ 5 個交易日後在計分板結算")
+                    except Exception:
+                        pass
                     prog.update(label="✅ 決策會議完成", state="complete")
                 except Exception as e:
                     prog.update(label=f"失敗：{e}", state="error")
@@ -2161,6 +2185,53 @@ def page_ai_assistant():
                                f"committee_{'_'.join(_tks_r)}.md", "text/markdown",
                                key="cmt_dl")
             st.caption("⚠️ 模擬機構決策流程屬研究輔助；LLM 委員會無經驗證的長期實績，非投資建議。")
+
+        # ── 📊 決策者計分板：量化 vs 委員會，誰過去比較準（5 日結算）──────
+        st.markdown("---")
+        if st.button("📊 更新決策者計分板", key="sb_go",
+                     help="結算已滿 5 日的委員會決策，合併 Bot 量化訊號的反思紀錄，比較各決策者命中率"):
+            try:
+                import json as _json2
+
+                import reflection as _rfl3
+                from sector_scan import _batch_closes as _bc2
+                log = _load_cmt_log()
+                _pend_tks = {p["ticker"] for p in
+                             log.get("reflections", {}).get("pending", [])}
+                _today_s2 = pd.Timestamp.now().strftime("%Y-%m-%d")
+                if _pend_tks:
+                    _cls = _bc2(sorted(_pend_tks), "5d", min_len=1)
+                    _pxs = {t: float(s.iloc[-1]) for t, s in _cls.items() if len(s)}
+                    if _rfl3.evaluate_pending(log, _pxs, _today_s2):
+                        _save_cmt_log(log)
+                hist_all = list(log.get("reflections", {}).get("history", []))
+                try:
+                    _sf3 = Path("watchlist_state.json")
+                    if _sf3.exists():
+                        hist_all += (_json2.loads(_sf3.read_text(encoding="utf-8"))
+                                     .get("reflections", {}).get("history", []))
+                except Exception:
+                    pass
+                st.session_state["sb_result"] = (
+                    _rfl3.scoreboard(hist_all),
+                    len(log.get("reflections", {}).get("pending", [])))
+            except Exception as e:
+                st.error(f"計分板更新失敗：{e}")
+        _sb = st.session_state.get("sb_result")
+        if _sb:
+            import reflection as _rfl4
+            sb_rows, n_pend = _sb
+            if sb_rows:
+                st.dataframe(pd.DataFrame([{
+                    "決策者": _rfl4.SOURCE_LABELS.get(r["source"], r["source"]),
+                    "已結算": r["n"],
+                    "命中率": f"{r['hit_rate']:.0%}" if r["hit_rate"] is not None else "—",
+                    "平均5日對齊報酬": f"{r['avg_fwd']:+.2%}" if r["avg_fwd"] is not None else "—",
+                } for r in sb_rows]), use_container_width=True, hide_index=True)
+                st.caption(f"待結算 {n_pend} 筆　·　量化=Bot 掃描強訊號、委員會=本模式裁決"
+                           "　·　樣本少時勿過度解讀；這張表是「找出最佳決策方向」的長期證據")
+            else:
+                st.info("尚無已結算的決策——開幾場會議，5 個交易日後回來按此鈕結算。")
 
     if "asst_chat" not in st.session_state:
         st.session_state["asst_chat"] = []
@@ -4114,6 +4185,86 @@ def _cached_whale(cik: str, name: str):
     """快取單一機構 13F 兩季比較（6 小時；季度資料本就低頻）。"""
     import whales_13f as wf
     return wf.fetch_whale(cik, name)
+
+
+# ── 委員會決策紀錄的持久化 ─────────────────────────────────────────────────────
+# Streamlit Cloud 容器在每次 repo 有新 commit 時重啟（Bot 每 15 分鐘就會 push 狀態檔），
+# 本地檔案活不久 → 有 GITHUB_TOKEN 時直接 commit 進 repo，跨重啟持久。
+_CMT_LOG_PATH = "committee_log.json"
+_GH_REPO = "RoyARVSA/RBS_claude_finance"
+_GH_BRANCH = "claude/optimize-analysis-dashboard-NZUKB"
+
+
+def _gh_token() -> str:
+    import os as _os
+    tk = _os.environ.get("GITHUB_TOKEN", "")
+    if not tk:
+        try:
+            tk = st.secrets.get("GITHUB_TOKEN", "") or ""
+        except Exception:
+            tk = ""
+    return tk
+
+
+def _load_cmt_log() -> dict:
+    import json as _json
+    tk = _gh_token()
+    if tk:
+        try:
+            import base64
+
+            import requests as _rq
+            r = _rq.get(f"https://api.github.com/repos/{_GH_REPO}/contents/{_CMT_LOG_PATH}",
+                        params={"ref": _GH_BRANCH},
+                        headers={"Authorization": f"Bearer {tk}",
+                                 "Accept": "application/vnd.github+json"}, timeout=15)
+            if r.ok:
+                j = r.json()
+                data = _json.loads(base64.b64decode(j["content"]).decode("utf-8"))
+                data["_sha"] = j.get("sha")
+                return data
+            if r.status_code == 404:
+                return {}
+        except Exception:
+            pass
+    try:
+        p = Path(_CMT_LOG_PATH)
+        if p.exists():
+            return _json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return {}
+
+
+def _save_cmt_log(log: dict) -> str:
+    """存決策紀錄，回存放位置描述。"""
+    import json as _json
+    sha = log.pop("_sha", None)
+    payload = _json.dumps(log, ensure_ascii=False, indent=1)
+    tk = _gh_token()
+    if tk:
+        try:
+            import base64
+
+            import requests as _rq
+            body = {"message": "Update committee decision log",
+                    "branch": _GH_BRANCH,
+                    "content": base64.b64encode(payload.encode("utf-8")).decode()}
+            if sha:
+                body["sha"] = sha
+            r = _rq.put(f"https://api.github.com/repos/{_GH_REPO}/contents/{_CMT_LOG_PATH}",
+                        headers={"Authorization": f"Bearer {tk}",
+                                 "Accept": "application/vnd.github+json"},
+                        json=body, timeout=20)
+            if r.ok:
+                return "GitHub（跨重啟持久）"
+        except Exception:
+            pass
+    try:
+        Path(_CMT_LOG_PATH).write_text(payload, encoding="utf-8")
+        return "本地暫存（app 重啟會消失；設 GITHUB_TOKEN secret 可持久化）"
+    except Exception:
+        return "保存失敗"
 
 
 def page_company_analysis():
