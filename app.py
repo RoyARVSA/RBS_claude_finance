@@ -1771,55 +1771,141 @@ def page_ai_assistant():
         st.caption("模擬一家金融機構的完整決策鏈（約 9 次 LLM 呼叫、30-90 秒），"
                    "硬性風控由系統規則判定、LLM 不可推翻，最後與量化評分交叉比較。"
                    "文獻註記：LLM 委員會無經驗證的長期實績——價值在多視角決策紀律，非預測。")
-        cmt_tkr = st.text_input("標的（美股）", "NVDA", key="cmt_tkr").upper().strip()
-        if st.button("🏛 召開投資決策會議", key="cmt_go") and cmt_tkr:
+        cmt_in = st.text_input("標的（美股，可逗號分隔多檔、最多 4 檔——同場會議比較取捨）",
+                               "NVDA", key="cmt_tkr").upper().strip()
+        if st.button("🏛 召開投資決策會議", key="cmt_go") and cmt_in:
             if not ai_key:
                 st.error("請先在上方「⚙️ 設定」填入 LLM API Key。")
             else:
-                st.session_state.pop("cmt_result", None)   # 失敗時不殘留上一檔的結論誤導
+                st.session_state.pop("cmt_result", None)   # 失敗時不殘留上一輪的結論誤導
                 import json as _json
+                import re as _re2
 
                 import committee as cmt
                 import sector_scan as _ssc
+                cmt_tks = [t for t in _re2.split(r"[,\s]+", cmt_in) if t][:4]
                 prog = st.status("蒐集資料中（走既有快取層）…", expanded=False)
                 try:
-                    # ① 資料層：全部重用既有快取/工具執行器
-                    _info_c, hist_c, _n_c = _cached_ticker_data(cmt_tkr, "1y")
-                    if hist_c is None or hist_c.empty:
-                        raise RuntimeError(f"抓不到 {cmt_tkr} 的歷史資料")
-                    tech_c = _ssc.price_metrics(hist_c["Close"]) or {}
-                    tech_c.update(_trend_fields(hist_c["Close"]))
-                    quant_c = None
+                    def _fmtv(v, pct=False):
+                        if v is None:
+                            return "無資料"
+                        return f"{v * 100:.1f}%" if pct else f"{v:.2f}"
+
+                    # ① 資料層：逐檔重用既有快取/工具執行器
                     try:
                         import scan_signals as _ss
-                        quant_c = _ss._composite_score(hist_c["Close"], hist_c.get("High"),
-                                                       hist_c.get("Low"), hist_c.get("Volume"))
                     except Exception:
-                        pass
+                        _ss = None
+                    tech_secs, fund_secs, chips_secs, level_secs = [], [], [], []
+                    quants, ok_tks, vol_worst = {}, [], None
+                    for tk in cmt_tks:
+                        prog.update(label=f"蒐集 {tk} 資料中…")
+                        try:
+                            _info_c, hist_c, _n_c = _cached_ticker_data(tk, "1y")
+                        except Exception:
+                            hist_c = None
+                        if hist_c is None or hist_c.empty:
+                            tech_secs.append(f"【{tk}】抓不到歷史資料——本檔僅能觀望")
+                            continue
+                        ok_tks.append(tk)
+                        tech_c = _ssc.price_metrics(hist_c["Close"]) or {}
+                        tech_c.update(_trend_fields(hist_c["Close"]))
+                        if tech_c.get("ann_vol") is not None:
+                            vol_worst = max(vol_worst or 0, tech_c["ann_vol"])
+                        quant_c = None
+                        if _ss is not None:
+                            try:
+                                quant_c = _ss._composite_score(
+                                    hist_c["Close"], hist_c.get("High"),
+                                    hist_c.get("Low"), hist_c.get("Volume"))
+                            except Exception:
+                                pass
+                        quants[tk] = quant_c
+                        _td = (f"【{tk}】現價 {_fmtv(tech_c.get('price'))}　"
+                               f"近1月 {_fmtv(tech_c.get('return_1m'), 1)}　近3月 {_fmtv(tech_c.get('return_3m'), 1)}　"
+                               f"年化波動 {_fmtv(tech_c.get('ann_vol'), 1)}　RSI {_fmtv(tech_c.get('rsi'))}\n"
+                               f"　距52週高 {_fmtv(tech_c.get('pct_from_52w_high'), 1)}　"
+                               f"vs MA200 {_fmtv(tech_c.get('vs_ma200'), 1)}　"
+                               f"量化評分 {(quant_c or {}).get('score', '無')}（{(quant_c or {}).get('rating', '')}）")
+                        try:
+                            bt_c = _run_backtest_tool(tk)
+                            if bt_c and bt_c.get("ok") and bt_c.get("top"):
+                                _b0 = bt_c["top"][0]
+                                _td += (f"\n　回測最佳「{_b0['rule']}」勝率 {_b0['win_rate']:.0%}、"
+                                        f"PF {_b0['profit_factor']:.2f}")
+                        except Exception:
+                            pass
+                        tech_secs.append(_td)
+                        # ATR 參考價位（給交易員的系統基準）
+                        try:
+                            _cl, _hi, _lo = hist_c["Close"], hist_c["High"], hist_c["Low"]
+                            _tr = pd.concat([_hi - _lo, (_hi - _cl.shift()).abs(),
+                                             (_lo - _cl.shift()).abs()], axis=1).max(axis=1)
+                            _atr = float(_tr.rolling(14).mean().iloc[-1])
+                            _px = float(_cl.iloc[-1])
+                            level_secs.append(
+                                f"{tk}: 現價 {_px:.2f}、ATR14 {_atr:.2f}、"
+                                f"系統停損參考(1.5×ATR) {_px - 1.5 * _atr:.2f}、"
+                                f"上檔參考(2×ATR) {_px + 2 * _atr:.2f}")
+                        except Exception:
+                            pass
+                        try:
+                            fund_c, _ed_c = _cached_fundamentals(tk)
+                        except Exception:
+                            fund_c, _ed_c = {}, None
+                        _hsF = None
+                        try:
+                            import fundamentals as _fa2
+                            _hsF = _fa2.health_score(fund_c).get("score") if fund_c.get("ok") else None
+                        except Exception:
+                            pass
+                        try:
+                            an_c = _cached_analyst(tk)
+                        except Exception:
+                            an_c = {}
+                        _tgt, _rat, _sur = (an_c.get("targets"), an_c.get("ratings"),
+                                            an_c.get("surprises"))
+                        _beat_s = f"{_sur['beat_rate']:.0%}（{_sur['n']}季）" if _sur else "無資料"
+                        _ed_s = _ed_c.isoformat() if _ed_c else "無資料"
+                        fund_secs.append(
+                            f"【{tk}】財務健康 {_hsF if _hsF is not None else '無資料'}　"
+                            f"P/E {_fmtv((fund_c or {}).get('pe'))}　ROE {_fmtv((fund_c or {}).get('roe'), 1)}　"
+                            f"營收成長 {_fmtv((fund_c or {}).get('revenue_growth'), 1)}\n"
+                            f"　分析師共識 {(_rat or {}).get('score', '無')}（{(_rat or {}).get('label', '')}）　"
+                            f"目標價上檔 {_fmtv((_tgt or {}).get('upside_mean'), 1)}　"
+                            f"EPS Beat 率 {_beat_s}　下次財報 {_ed_s}")
+                        _cp = []
+                        try:
+                            opt_c = _cached_options(tk)
+                            if opt_c:
+                                import options_sentiment as _ops2
+                                _cp.append(_ops2.format_options_text(opt_c))
+                        except Exception:
+                            pass
+                        try:
+                            ins_c = _cached_insider(tk)
+                            if ins_c:
+                                import sec_insider as _si3
+                                _cp.append(_si3.format_insider_text(ins_c))
+                        except Exception:
+                            pass
+                        try:
+                            sh_c = _cached_shorts(tk)
+                            if sh_c and sh_c.get("notes"):
+                                _cp.append("做空面：" + "；".join(sh_c["notes"]))
+                        except Exception:
+                            pass
+                        chips_secs.append(f"【{tk}】\n" + ("\n".join(_cp) or "籌碼資料暫缺"))
+
+                    if not ok_tks:
+                        raise RuntimeError(f"全部標的（{', '.join(cmt_tks)}）都抓不到歷史資料")
+                    multi = len(ok_tks) > 1
                     regime_c = None
-                    try:
-                        regime_c = _ss.market_regime()
-                    except Exception:
-                        pass
-                    fund_c, _ed_c = _cached_fundamentals(cmt_tkr)
-                    an_c = _cached_analyst(cmt_tkr)
-                    try:
-                        opt_c = _cached_options(cmt_tkr)
-                    except Exception:
-                        opt_c = None
-                    try:
-                        ins_c = _cached_insider(cmt_tkr)
-                    except Exception:
-                        ins_c = None
-                    try:
-                        sh_c = _cached_shorts(cmt_tkr)
-                    except Exception:
-                        sh_c = None
-                    bt_c = None
-                    try:
-                        bt_c = _run_backtest_tool(cmt_tkr)
-                    except Exception:
-                        pass
+                    if _ss is not None:
+                        try:
+                            regime_c = _ss.market_regime()
+                        except Exception:
+                            pass
                     macro_dom = "（無 FRED key 或抓取失敗，總經資料缺）"
                     if fred_key:
                         try:
@@ -1827,78 +1913,45 @@ def page_ai_assistant():
                             _md = _m.fetch_macro(fred_key)
                             if _md:
                                 macro_dom = _m.macro_summary_text(_md)
+                            _rel = _m.fetch_release_calendar(fred_key, 7)
+                            if _rel:
+                                macro_dom += "\n本週發布：" + "、".join(f"{n}({d[5:]})" for d, n in _rel)
                         except Exception:
                             pass
 
-                    def _fmtv(v, pct=False):
-                        if v is None:
-                            return "無資料"
-                        return f"{v * 100:.1f}%" if pct else f"{v:.2f}"
-
-                    tech_dom = (
-                        f"現價 {_fmtv(tech_c.get('price'))}　近1月 {_fmtv(tech_c.get('return_1m'), 1)}　"
-                        f"近3月 {_fmtv(tech_c.get('return_3m'), 1)}　年化波動 {_fmtv(tech_c.get('ann_vol'), 1)}　"
-                        f"RSI {_fmtv(tech_c.get('rsi'))}　最大回撤 {_fmtv(tech_c.get('max_dd'), 1)}\n"
-                        f"距52週高 {_fmtv(tech_c.get('pct_from_52w_high'), 1)}　vs MA200 {_fmtv(tech_c.get('vs_ma200'), 1)}\n"
-                        f"量化綜合評分 {(quant_c or {}).get('score', '無')}（{(quant_c or {}).get('rating', '')}）")
-                    if bt_c and bt_c.get("ok") and bt_c.get("top"):
-                        _b0 = bt_c["top"][0]
-                        tech_dom += (f"\n回測最佳規則「{_b0['rule']}」勝率 {_b0['win_rate']:.0%}、"
-                                     f"獲利因子 {_b0['profit_factor']:.2f}（已扣成本無前視）")
-                    _hsF = None
-                    try:
-                        import fundamentals as _fa2
-                        _hsF = _fa2.health_score(fund_c).get("score") if fund_c.get("ok") else None
-                    except Exception:
-                        pass
-                    _tgt, _rat, _sur = an_c.get("targets"), an_c.get("ratings"), an_c.get("surprises")
-                    _beat_s = f"{_sur['beat_rate']:.0%}（{_sur['n']}季）" if _sur else "無資料"
-                    fund_dom = (
-                        f"財務健康 {_hsF if _hsF is not None else '無資料'}　P/E {_fmtv(fund_c.get('pe'))}　"
-                        f"ROE {_fmtv(fund_c.get('roe'), 1)}　營收成長 {_fmtv(fund_c.get('revenue_growth'), 1)}\n"
-                        f"分析師共識 {(_rat or {}).get('score', '無')}（{(_rat or {}).get('label', '')}，"
-                        f"{(_rat or {}).get('total', 0)} 位）　目標價上檔 "
-                        f"{_fmtv((_tgt or {}).get('upside_mean'), 1)}\n"
-                        f"EPS Beat 率 {_beat_s}")
-                    chips_parts = []
-                    if opt_c:
-                        import options_sentiment as _ops2
-                        chips_parts.append(_ops2.format_options_text(opt_c))
-                    if ins_c:
-                        import sec_insider as _si3
-                        chips_parts.append(_si3.format_insider_text(ins_c))
-                    if sh_c and sh_c.get("notes"):
-                        chips_parts.append("做空面：" + "；".join(sh_c["notes"]))
-                    chips_dom = "\n".join(chips_parts) or "（籌碼資料暫缺：選擇權/內部人/做空皆抓不到）"
-
-                    # ② 委員會流程（9 次小型 LLM 呼叫）
+                    # ② 委員會流程（9 次小型 LLM 呼叫，多檔同場比較）
                     client = _llm_client(ai_key, ai_base, ai_model)
 
-                    def _llm_call(ptext, mt=380):
+                    def _llm_call(ptext, mt=420):
                         return client.chat.completions.create(
                             model=ai_model, temperature=0.3, max_tokens=mt,
                             messages=[{"role": "user", "content": ptext}],
                         ).choices[0].message.content
 
-                    domains = {"technical": tech_dom, "fundamental": fund_dom,
-                               "chips": chips_dom, "macro": macro_dom}
+                    domains = {"technical": "\n".join(tech_secs),
+                               "fundamental": "\n".join(fund_secs),
+                               "chips": "\n\n".join(chips_secs),
+                               "macro": macro_dom}
                     analysts_out = {}
                     for _d, _dtxt in domains.items():
                         prog.update(label=f"{cmt.ANALYST_ROLES[_d][0]} 分析中…")
                         analysts_out[_d] = _llm_call(
-                            cmt.analyst_prompt(_d) + f"\n\n=== {cmt_tkr} 資料 ===\n" + _dtxt)
+                            cmt.analyst_prompt(_d, ok_tks)
+                            + f"\n\n=== 資料（{'、'.join(ok_tks)}）===\n" + _dtxt,
+                            mt=(480 if multi else 380))
                     all_rep = "\n\n".join(f"【{cmt.ANALYST_ROLES[d][0]}】\n{t}"
                                           for d, t in analysts_out.items())
                     prog.update(label="多空研究員對辯中…")
                     bull_c = _llm_call(cmt.RESEARCHER_BULL + "\n\n" + all_rep, 420)
                     bear_c = _llm_call(cmt.RESEARCHER_BEAR + "\n\n" + all_rep, 420)
                     prog.update(label="交易員提案中…")
-                    trader_c = _llm_call(cmt.TRADER_PROMPT + "\n\n" + all_rep
-                                         + f"\n\n【多方】{bull_c}\n【空方】{bear_c}", 380)
+                    _levels = "【系統參考價位（ATR 基準）】\n" + "\n".join(level_secs)
+                    _t_prompt = cmt.trader_prompt_multi(ok_tks) if multi else cmt.TRADER_PROMPT
+                    trader_c = _llm_call(_t_prompt + "\n\n" + all_rep
+                                         + f"\n\n{_levels}"
+                                         + f"\n\n【多方】{bull_c}\n【空方】{bear_c}", 460)
                     # ③ 硬風控（確定性規則，LLM 不可推翻）
-                    facts = {"regime_label": (regime_c or {}).get("label"),
-                             "ann_vol": tech_c.get("ann_vol"),
-                             "quant_score": (quant_c or {}).get("score")}
+                    gfacts = {"regime_label": (regime_c or {}).get("label")}
                     try:
                         _sf2 = Path("watchlist_state.json")
                         if _sf2.exists():
@@ -1906,26 +1959,46 @@ def page_ai_assistant():
                                    .get("reflections", {}).get("history", [])
                                    if h.get("hit") is not None][-20:]
                             if _hh:
-                                facts["reflection_hit_rate"] = sum(1 for h in _hh if h["hit"]) / len(_hh)
-                                facts["reflection_n"] = len(_hh)
+                                gfacts["reflection_hit_rate"] = sum(1 for h in _hh if h["hit"]) / len(_hh)
+                                gfacts["reflection_n"] = len(_hh)
                     except Exception:
                         pass
-                    hard_c = cmt.hard_risk_check(facts)
+                    hard_c = cmt.hard_risk_check(gfacts)
+                    for tk in ok_tks:
+                        per = cmt.hard_risk_check(
+                            {"quant_score": (quants.get(tk) or {}).get("score")})
+                        hard_c += [f"{tk}：{c}" for c in per]
+                    if vol_worst is not None and vol_worst > 0.8:
+                        hard_c.append(f"最高年化波動 {vol_worst:.0%} > 80%：該檔部位上限 5%")
                     prog.update(label="風控主管審查中…")
-                    risk_c = _llm_call(cmt.risk_prompt(hard_c) + "\n\n【交易員提案】\n" + trader_c, 320)
+                    risk_c = _llm_call(cmt.risk_prompt(hard_c) + "\n\n【交易員提案】\n" + trader_c, 340)
                     prog.update(label="投資經理裁決中…")
-                    pm_c = _llm_call(cmt.PM_PROMPT + "\n\n" + all_rep
+                    _pm_prompt = cmt.pm_prompt_multi(ok_tks) if multi else cmt.PM_PROMPT
+                    pm_c = _llm_call(_pm_prompt + "\n\n" + all_rep
                                      + f"\n\n【多方】{bull_c}\n【空方】{bear_c}"
-                                     + f"\n\n【交易員】{trader_c}\n\n【風控】{risk_c}", 450)
-                    verdict_c = cmt.parse_verdict(pm_c)
-                    cross_c = cmt.compare_with_quant(verdict_c.get("verdict"),
-                                                     (quant_c or {}).get("score"))
+                                     + f"\n\n【交易員】{trader_c}\n\n【風控】{risk_c}",
+                                     mt=(560 if multi else 480))
+                    if multi:
+                        mres = cmt.parse_multi_verdict(pm_c, ok_tks)
+                        crosses = {tk: cmt.compare_with_quant(
+                            mres["verdicts"].get(tk), (quants.get(tk) or {}).get("score"))
+                            for tk in ok_tks}
+                        verdict_c = {"verdict": mres.get("top_pick") or "觀望",
+                                     "confidence": mres.get("confidence")}
+                    else:
+                        mres, crosses = None, None
+                        verdict_c = cmt.parse_verdict(pm_c)
+                    cross_c = (cmt.compare_with_quant(verdict_c.get("verdict"),
+                                                      (quants.get(ok_tks[0]) or {}).get("score"))
+                               if not multi else None)
                     st.session_state["cmt_result"] = {
-                        "ticker": cmt_tkr, "analysts": analysts_out,
-                        "stances": {d: cmt.parse_stance(t) for d, t in analysts_out.items()},
+                        "tickers": ok_tks, "multi": multi, "analysts": analysts_out,
+                        "stances": ({d: cmt.parse_stance(t) for d, t in analysts_out.items()}
+                                    if not multi else {}),
                         "bull": bull_c, "bear": bear_c, "trader": trader_c,
                         "hard": hard_c, "risk": risk_c, "pm": pm_c,
-                        "verdict": verdict_c, "quant": quant_c, "cross": cross_c}
+                        "verdict": verdict_c, "mres": mres, "crosses": crosses,
+                        "quants": quants, "cross": cross_c}
                     prog.update(label="✅ 決策會議完成", state="complete")
                 except Exception as e:
                     prog.update(label=f"失敗：{e}", state="error")
@@ -1933,25 +2006,52 @@ def page_ai_assistant():
         _cmt = st.session_state.get("cmt_result")
         if _cmt:
             import committee as cmt
-            v, q, x = _cmt["verdict"], _cmt["quant"], _cmt["cross"]
-            k1, k2, k3, k4 = st.columns(4)
-            with k1:
-                metric_card(f"委員會結論（{_cmt['ticker']}）", v.get("verdict") or "—")
-            with k2:
-                metric_card("信心", v.get("confidence") or "—")
-            with k3:
-                metric_card("量化評分", f"{q['score']:+.2f}（{q.get('rating', '')}）" if q else "—")
-            with k4:
-                metric_card("交叉比較", x.get("agreement", "—"))
-            st.info(f"**交叉判讀**：{x.get('note', '')}")
-            st.markdown(f"**🎯 投資經理裁決（{_cmt['ticker']}）**\n\n{_cmt['pm']}")
+            _tks_r = _cmt["tickers"]
+            if _cmt["multi"]:
+                mres, crosses, quants = _cmt["mres"], _cmt["crosses"], _cmt["quants"]
+                k1, k2, k3 = st.columns(3)
+                with k1:
+                    metric_card("首選", mres.get("top_pick") or "無（全觀望）")
+                with k2:
+                    metric_card("信心", mres.get("confidence") or "—")
+                with k3:
+                    metric_card("討論檔數", str(len(_tks_r)))
+                rows_cmt = []
+                for tk in _tks_r:
+                    _q = quants.get(tk)
+                    rows_cmt.append({
+                        "標的": tk,
+                        "委員會": mres["verdicts"].get(tk) or "—",
+                        "量化評分": f"{_q['score']:+.2f}（{_q.get('rating', '')}）" if _q else "—",
+                        "一致性": (crosses.get(tk) or {}).get("agreement", "—"),
+                    })
+                st.dataframe(pd.DataFrame(rows_cmt), use_container_width=True, hide_index=True)
+                _div = [f"{tk}：{(crosses.get(tk) or {}).get('note', '')}"
+                        for tk in _tks_r
+                        if "分歧" in (crosses.get(tk) or {}).get("agreement", "")]
+                if _div:
+                    st.info("**分歧提醒**\n\n" + "\n".join(f"- {d}" for d in _div))
+            else:
+                v, x = _cmt["verdict"], _cmt["cross"]
+                q = _cmt["quants"].get(_tks_r[0])
+                k1, k2, k3, k4 = st.columns(4)
+                with k1:
+                    metric_card(f"委員會結論（{_tks_r[0]}）", v.get("verdict") or "—")
+                with k2:
+                    metric_card("信心", v.get("confidence") or "—")
+                with k3:
+                    metric_card("量化評分", f"{q['score']:+.2f}（{q.get('rating', '')}）" if q else "—")
+                with k4:
+                    metric_card("交叉比較", (x or {}).get("agreement", "—"))
+                st.info(f"**交叉判讀**：{(x or {}).get('note', '')}")
+            st.markdown(f"**🎯 投資經理裁決（{'、'.join(_tks_r)}）**\n\n{_cmt['pm']}")
             if _cmt["hard"]:
                 st.warning("**系統硬性風控限制（LLM 不可推翻）**\n\n"
                            + "\n".join(f"- {c}" for c in _cmt["hard"]))
-            _st_map = _cmt["stances"]
-            st.caption("分析師立場：" + "　".join(
-                f"{cmt.ANALYST_ROLES[d][0]} {(f'{s:+.1f}' if s is not None else '—')}"
-                for d, s in _st_map.items()))
+            if _cmt["stances"]:
+                st.caption("分析師立場：" + "　".join(
+                    f"{cmt.ANALYST_ROLES[d][0]} {(f'{s:+.1f}' if s is not None else '—')}"
+                    for d, s in _cmt["stances"].items()))
             with st.expander("📋 完整會議紀錄（分析師×4 / 多空對辯 / 交易員 / 風控）"):
                 for _d, _t in _cmt["analysts"].items():
                     st.markdown(f"**【{cmt.ANALYST_ROLES[_d][0]}】**\n\n{_t}")
@@ -2006,12 +2106,13 @@ def page_ai_assistant():
                     if use_tools and atools:
                         try:
                             plan = []
-                            # 前瞻問題：主動對主要美股跑回測+選擇權+內部人（有證據才有遠見）
-                            prim = next((t for t in tickers if "." not in t), None)
-                            if "outlook" in intents and prim:
-                                plan = [{"tool": "backtest", "args": {"ticker": prim}},
-                                        {"tool": "options", "args": {"ticker": prim}},
-                                        {"tool": "insider", "args": {"ticker": prim}}]
+                            # 前瞻問題：對「每一檔」美股跑回測+選擇權+內部人（最多 3 檔——
+                            # 工具是確定性計算非 LLM，成本只有網路且有快取+並行）
+                            us_tks = [t for t in tickers if "." not in t][:3]
+                            if "outlook" in intents and us_tks:
+                                plan = [{"tool": tl, "args": {"ticker": t}}
+                                        for t in us_tks
+                                        for tl in ("backtest", "options", "insider")]
                             # 否則（或無美股主標的）交給規劃器判斷
                             if not plan and atools.might_need_tools(q):
                                 inds = list(_industry_ticker_map().keys())
@@ -2033,6 +2134,13 @@ def page_ai_assistant():
                                     context += "\n\n" + tctx
                         except Exception:
                             pass   # 工具失敗不影響基本回答
+
+                    # 多檔前瞻：強制逐檔作答+排序，避免回答只聚焦第一檔
+                    if "outlook" in intents and len(tickers) > 1:
+                        context += (f"\n\n【回答要求】使用者同時問了 {len(tickers)} 檔："
+                                    f"{'、'.join(tickers)}。請對**每一檔**分別給出方向結論"
+                                    "（各含關鍵數字與風險一句），最後把全部標的互相排序並說明取捨，"
+                                    "不要只深入其中一檔。")
 
                     # 反思記憶：把 Bot 過去判斷的命中率/近期失誤餵回 context（FinMem 式）
                     try:

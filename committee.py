@@ -26,13 +26,18 @@ ANALYST_ROLES = {
 }
 
 
-def analyst_prompt(domain: str) -> str:
+def analyst_prompt(domain: str, tickers: list[str] | None = None) -> str:
     title, scope = ANALYST_ROLES[domain]
-    return (f"你是機構裡的{title}，負責領域：{scope}。\n"
-            "只根據下方資料發表專業觀點（≤120字，引用具體數字）；"
-            "資料缺漏就明說觀點受限，不得編造。\n"
-            "最後獨立一行必須是「立場: <數字>」，數字介於 -1（極空）到 +1（極多），"
-            "資料不足時給 0。")
+    base = (f"你是機構裡的{title}，負責領域：{scope}。\n"
+            "只根據下方資料發表專業觀點，引用具體數字，並盡可能給出**關鍵價位或關鍵門檻**"
+            "（例如：跌破哪個價位/數據惡化到什麼程度會改變你的看法）；"
+            "資料缺漏就明說觀點受限，不得編造。\n")
+    if tickers and len(tickers) > 1:
+        return base + (f"本次會議討論多檔標的：{'、'.join(tickers)}。"
+                       "請逐檔簡評（各 ≤60 字），並在最後一行指出你領域內"
+                       "「最看好」與「最不看好」的各一檔。")
+    return base + ("（≤120字）最後獨立一行必須是「立場: <數字>」，"
+                   "數字介於 -1（極空）到 +1（極多），資料不足時給 0。")
 
 
 RESEARCHER_BULL = (
@@ -44,9 +49,18 @@ RESEARCHER_BEAR = (
     "必須引用至少兩位分析師的具體數據，並指出下檔情境的觸發條件。不得編造。")
 
 TRADER_PROMPT = (
-    "你是交易員。根據分析師報告與多空對辯，提出交易計畫（≤120字）：\n"
-    "方向、進場條件、持有週期、認錯出場條件（什麼情況證明看錯）。\n"
+    "你是交易員。根據分析師報告、多空對辯與下方的**系統參考價位（ATR 基準）**，"
+    "提出可執行的交易計畫（≤150字）：\n"
+    "方向、進場區間（具體價位）、停損價（可採用系統 ATR 停損或說明為何調整）、"
+    "目標/持有週期、認錯條件（什麼情況證明看錯）。\n"
     "最後獨立一行必須是「方向: 做多」或「方向: 觀望」或「方向: 迴避」。")
+
+
+def trader_prompt_multi(tickers: list[str]) -> str:
+    return (f"你是交易員。本次會議討論 {len(tickers)} 檔標的：{'、'.join(tickers)}。\n"
+            "根據分析師報告、多空對辯與系統參考價位，對**每一檔**提出方向與關鍵價位（各 ≤50 字），"
+            "並給出資金配置優先序（最想買的排最前，可以全部觀望）。\n"
+            "最後獨立一行必須是「優先序: 代碼1 > 代碼2 > …」（觀望/迴避者可不列）。")
 
 
 def risk_prompt(hard_constraints: list[str]) -> str:
@@ -60,8 +74,33 @@ def risk_prompt(hard_constraints: list[str]) -> str:
 
 PM_PROMPT = (
     "你是投資經理，做最終裁決。你收到：四位分析師報告、多空對辯、交易員提案、風控意見。\n"
-    "用 ≤150 字裁決：採納或修正交易員提案？部位建議依風控限制調整。點出你最重視的一個分歧點。\n"
+    "用 ≤180 字裁決，必須包含：(1) 採納或修正交易員提案及理由 "
+    "(2) 部位建議（占組合 %，依風控硬限制調整）(3) 你最重視的一個分歧點 "
+    "(4) 再評估時點（什麼日期或什麼事件後重審此決策）。\n"
     "最後兩行獨立為：\n「結論: 買進」或「結論: 觀望」或「結論: 迴避」\n「信心: 低」或「信心: 中」或「信心: 高」")
+
+
+def pm_prompt_multi(tickers: list[str]) -> str:
+    lines_req = "\n".join(f"「{t}: 買進」或「{t}: 觀望」或「{t}: 迴避」" for t in tickers)
+    return ("你是投資經理，做最終裁決。你收到：四位分析師逐檔報告、多空對辯、交易員排序、風控意見。\n"
+            f"用 ≤200 字裁決這 {len(tickers)} 檔的取捨：哪檔值得配置、各占組合多少 %（依風控硬限制）、"
+            "最重要的一個跨標的分歧點、再評估時點。\n"
+            "最後幾行獨立為（每檔一行，然後首選與信心）：\n"
+            f"{lines_req}\n「首選: <代碼或 無>」\n「信心: 低」或「信心: 中」或「信心: 高」")
+
+
+def parse_multi_verdict(text: str, tickers: list[str]) -> dict:
+    """逐檔結論 + 首選。回 {"verdicts": {tk: 買進/觀望/迴避|None}, "top_pick", "confidence"}。"""
+    out = {"verdicts": {}, "top_pick": None, "confidence": None}
+    for tk in tickers:
+        m = re.findall(rf"{re.escape(tk)}\s*[:：]\s*(買進|觀望|迴避)", text or "")
+        out["verdicts"][tk] = m[-1] if m else None
+    p = re.findall(r"首選\s*[:：]\s*([A-Z0-9.\-]+|無)", text or "")
+    if p:
+        out["top_pick"] = None if p[-1] == "無" else p[-1]
+    c = re.findall(r"信心\s*[:：]\s*(低|中|高)", text or "")
+    out["confidence"] = c[-1] if c else None
+    return out
 
 
 # ── 純解析 ─────────────────────────────────────────────────────────────────────
@@ -177,5 +216,17 @@ if __name__ == "__main__":
 
     for d in ANALYST_ROLES:
         assert "立場" in analyst_prompt(d)
+        assert "逐檔簡評" in analyst_prompt(d, ["NVDA", "VRT"])
     assert "不可推翻" in risk_prompt(["測試限制"])
-    print("\n✅ committee 純邏輯測試通過")
+
+    # 多檔裁決解析
+    mv = parse_multi_verdict(
+        "考量後配置如下…\nNVDA: 買進\nVRT: 觀望\nGLD: 迴避\n首選: NVDA\n信心: 中",
+        ["NVDA", "VRT", "GLD", "DRAM"])
+    assert mv["verdicts"] == {"NVDA": "買進", "VRT": "觀望", "GLD": "迴避", "DRAM": None}
+    assert mv["top_pick"] == "NVDA" and mv["confidence"] == "中"
+    mv2 = parse_multi_verdict("全部觀望\nNVDA: 觀望\n首選: 無\n信心: 低", ["NVDA"])
+    assert mv2["top_pick"] is None and mv2["verdicts"]["NVDA"] == "觀望"
+    assert "優先序" in trader_prompt_multi(["A", "B"])
+    assert "NVDA: 買進" in pm_prompt_multi(["NVDA"])
+    print("\n✅ committee 純邏輯測試通過（含多檔模式）")
