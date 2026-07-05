@@ -71,6 +71,41 @@ def summarize_surprises(rows: list) -> dict | None:
             "rows": done[:8]}
 
 
+# ── 新聞逐篇多空標注（學自 TradingAgents 情緒分析師的輸出形式）────────────────
+
+def build_news_tag_prompt(ticker: str, headlines: list[str]) -> str:
+    """組出「逐篇標注利多/利空」的 LLM 提示。headlines 最多取 8 則。"""
+    items = "\n".join(f"{i + 1}. {h}" for i, h in enumerate(headlines[:8]))
+    return (f"你是新聞分析師。逐篇判斷下列新聞標題對 {ticker} 的方向性影響。\n"
+            "每則輸出一行，格式嚴格為：「<編號>. [利多|利空|中性] <15字內理由>」。\n"
+            "只看標題資訊，不得腦補內文；與該標的無關的標題標為中性。\n\n" + items)
+
+
+def parse_news_tags(text: str, n: int) -> list[dict]:
+    """解析標注輸出 → [{"i", "tag", "reason"}]（i 為 0-based，超出 n 或格式壞的行略過）。"""
+    import re as _re
+    out = []
+    for m in _re.finditer(r"(\d+)\s*[.、]\s*[\[【（(]?(利多|利空|中性)[\]】）)]?\s*(.*)",
+                          text or ""):
+        i = int(m.group(1)) - 1
+        if 0 <= i < n:
+            out.append({"i": i, "tag": m.group(2), "reason": m.group(3).strip()[:40]})
+    return out
+
+
+def format_tagged_news(headlines: list[str], tags: list[dict]) -> str:
+    """把標注結果組回「[利多] 標題 — 理由」清單文字（給分析師 context / 顯示用）。"""
+    tag_map = {t["i"]: t for t in tags}
+    lines = []
+    for i, h in enumerate(headlines[:8]):
+        t = tag_map.get(i)
+        if t:
+            lines.append(f"[{t['tag']}] {h}" + (f" — {t['reason']}" if t["reason"] else ""))
+        else:
+            lines.append(f"[未標注] {h}")
+    return "\n".join(lines)
+
+
 # ── 抓取層（需網路）───────────────────────────────────────────────────────────
 
 def _yf_analyst(ticker: str) -> dict:
@@ -194,4 +229,18 @@ if __name__ == "__main__":
     assert abs(s["beat_rate"] - 2 / 3) < 1e-9
     assert summarize_surprises([]) is None
 
+    heads = ["Foxconn Q2 revenue jumps 39.8% on AI demand",
+             "Michael Burry bets against Nvidia and Micron",
+             "Fed holds rates steady"]
+    p = build_news_tag_prompt("NVDA", heads)
+    assert "1. Foxconn" in p and "利多|利空|中性" in p
+    tags = parse_news_tags("1. [利多] AI需求驗證\n2. [利空] 知名空頭做空\n3. [中性] 與個股無直接關係\n9. [利多] 超出範圍", 3)
+    assert len(tags) == 3 and tags[0]["tag"] == "利多" and tags[1]["tag"] == "利空"
+    ftxt = format_tagged_news(heads, tags)
+    assert "[利多] Foxconn" in ftxt and "[利空] Michael Burry" in ftxt
+    # 容錯：全形括號與頓號
+    t2 = parse_news_tags("1、【利空】財報不如預期", 1)
+    assert t2 and t2[0]["tag"] == "利空"
+    assert parse_news_tags("亂七八糟沒格式", 3) == []
+    print("news tagging OK")
     print("\n✅ analyst_data 純彙總測試通過")
