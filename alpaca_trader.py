@@ -192,7 +192,13 @@ def _f(x):
 # ── HTTP 層（需網路 + key；此環境代理擋 Alpaca，需部署後實測）──────────────────
 
 def _base() -> str:
-    return os.environ.get("ALPACA_BASE_URL", PAPER_BASE).rstrip("/")
+    # 安全鎖：只接受 paper API。若有人把 ALPACA_BASE_URL 設成正式盤（真錢），
+    # 靜默退回 paper——本專案的 /autotrade、/closeall 絕不允許碰真實帳戶。
+    b = os.environ.get("ALPACA_BASE_URL", PAPER_BASE).rstrip("/")
+    if "paper-api" not in b:
+        print(f"ALPACA_BASE_URL '{b}' 非 paper API，已強制退回 {PAPER_BASE}")
+        return PAPER_BASE
+    return b
 
 
 def _headers(key: str, secret: str) -> dict:

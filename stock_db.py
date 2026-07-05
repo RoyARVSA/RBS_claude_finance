@@ -62,8 +62,11 @@ MACRO_BOOST: dict[str, list[str]] = {
     "景氣衰退":   ["公用事業", "醫療設備", "固定收益ETF", "黃金/貴金屬ETF", "防禦型ETF"],
     "強美元":     ["美國大型股ETF", "金融銀行", "公用事業"],
     "弱美元":     ["新興市場ETF", "能源油氣", "黃金/貴金屬ETF", "台股科技", "港股科技"],
-    "AI 浪潮":    ["半導體", "大型科技", "雲端/SaaS", "AI應用", "科技ETF"],
-    "科技週期上行": ["半導體", "IC設計", "半導體製造", "科技ETF"],
+    "AI 浪潮":    ["半導體", "大型科技", "雲端/SaaS", "AI應用", "科技ETF",
+                  "AI光學/CPO/矽光子", "AI連接/Serdes", "化合物半導體/基板",
+                  "HBM/記憶儲存", "AI電力/散熱"],
+    "科技週期上行": ["半導體", "IC設計", "半導體製造", "科技ETF",
+                  "AI光學/CPO/矽光子", "AI連接/Serdes", "化合物半導體/基板", "HBM/記憶儲存"],
     "地緣風險":   ["國防工業", "黃金/貴金屬ETF", "能源油氣", "公用事業"],
     "能源危機":   ["能源油氣", "再生能源", "農業ETF"],
     "信用緊縮":   ["固定收益ETF", "公用事業", "黃金/貴金屬ETF", "防禦型ETF"],
@@ -217,6 +220,44 @@ ADB: dict[str, dict[str, dict]] = {
             "macro":   ["景氣衰退", "升息環境", "降息環境", "地緣風險", "高通膨"],
             "asset_type": "ETF",
             "desc": "債券/商品ETF，作為股票組合的對沖或穩定收益來源",
+        },
+        # ── AI 供應鏈「瓶頸/咽喉點」主題（靈感來源：公開的 AI 供應鏈研究框架）──
+        # 邏輯：不買最顯眼的贏家，買其不可取代的上游節點。名單僅為「候選」，
+        # 請用本平台的回測/風險/基本面/內部人/選擇權客觀驗證，非跟單建議。
+        "AI光學/CPO/矽光子": {
+            "tickers": ["LITE", "COHR", "AAOI", "POET", "MTSI", "CIEN"],
+            "strats":  ["growth", "momentum", "macro"],
+            "macro":   ["AI 浪潮", "科技週期上行"],
+            "asset_type": "股票",
+            "desc": "光通訊/共封裝光學(CPO)/矽光子，AI 資料中心頻寬瓶頸的關鍵節點",
+        },
+        "AI連接/Serdes": {
+            "tickers": ["ALAB", "CRDO", "MRVL", "ANET", "SITM"],
+            "strats":  ["growth", "momentum", "macro"],
+            "macro":   ["AI 浪潮", "科技週期上行"],
+            "asset_type": "股票",
+            "desc": "高速連接/SerDes/交換與時脈，GPU 互連與擴展的咽喉",
+        },
+        "化合物半導體/基板": {
+            "tickers": ["AXTI", "WOLF", "ONTO", "TSEM", "IQE.L", "SOI.PA"],
+            "strats":  ["growth", "momentum", "macro"],
+            "macro":   ["AI 浪潮", "科技週期上行", "地緣風險"],
+            "asset_type": "股票",
+            "desc": "InP/SiC 基板、磊晶、SOI 與特殊製程代工，光子與功率元件的上游材料",
+        },
+        "HBM/記憶儲存": {
+            "tickers": ["MU", "WDC", "STX", "SNDK"],
+            "strats":  ["growth", "momentum", "macro"],
+            "macro":   ["AI 浪潮", "科技週期上行", "景氣擴張"],
+            "asset_type": "股票",
+            "desc": "HBM 高頻寬記憶體與 NAND/儲存，AI 訓練與推論的資料瓶頸",
+        },
+        "AI電力/散熱": {
+            "tickers": ["VRT", "CEG", "VST", "GEV", "ETN", "SMCI", "POWL", "NVT"],
+            "strats":  ["growth", "momentum", "macro"],
+            "macro":   ["AI 浪潮", "景氣擴張", "能源危機"],
+            "asset_type": "股票",
+            "desc": "資料中心電力、配電、液冷與電網供應，AI 算力擴張的實體瓶頸",
         },
     },
 

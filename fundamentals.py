@@ -430,7 +430,8 @@ def fetch_fundamentals(ticker: str) -> dict:
 
 
 def quick_valuation(ticker: str) -> dict:
-    """輕量抓 P/E + ROE（只讀 .info，不抓三表）供規模化掃描用。缺則 None。"""
+    """輕量抓 P/E + ROE（只讀 .info，不抓三表）供規模化掃描用。缺則 None。
+    .info 在雲端常被限流 → 有 FINNHUB_API_KEY 時自動備援（同 fetch_fundamentals）。"""
     out = {"pe": None, "roe": None}
     try:
         import yfinance as yf
@@ -439,6 +440,18 @@ def quick_valuation(ticker: str) -> dict:
         out["roe"] = _num(info.get("returnOnEquity"))
     except Exception:
         pass
+    if out["pe"] is None or out["roe"] is None:
+        _fh_key = os.environ.get("FINNHUB_API_KEY", "")
+        if _fh_key:
+            try:
+                import finnhub_data as _fh
+                fh = _fh.fetch(ticker, _fh_key)
+                if out["pe"] is None:
+                    out["pe"] = fh.get("pe")
+                if out["roe"] is None:
+                    out["roe"] = fh.get("roe")
+            except Exception:
+                pass
     return out
 
 

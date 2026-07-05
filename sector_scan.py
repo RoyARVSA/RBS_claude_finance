@@ -76,10 +76,52 @@ def aggregate_by_industry(rows: list[dict]) -> list[dict]:
     return out
 
 
+def rrg_metrics(close: pd.Series, bench: pd.Series,
+                window: int = 10, trail: int = 5) -> dict | None:
+    """
+    RRG（相對輪動圖）指標——JdK RS-Ratio/RS-Momentum 的公開近似
+    （原始公式未公開；此為常見 z-score 標準化版，趨勢判讀等價）。
+    週線計算：RS=100×(標的/基準)，RS-Ratio=100+z(RS)，RS-Momentum=100+z(ΔRS-Ratio)。
+    回 {"rs_ratio","rs_mom","quadrant","trail":[(ratio,mom),...]}；資料不足回 None。
+    象限：>100/>100 領先、>100/<100 轉弱、<100/<100 落後、<100/>100 轉強。
+    """
+    if close is None or bench is None:
+        return None
+    df = pd.concat([close, bench], axis=1).dropna()
+    if df.empty or not isinstance(df.index, pd.DatetimeIndex):
+        return None
+    px = df.iloc[:, 0].resample("W-FRI").last().dropna()
+    bx = df.iloc[:, 1].resample("W-FRI").last().dropna()
+    common = px.index.intersection(bx.index)
+    px, bx = px.loc[common], bx.loc[common]
+    if len(px) < window * 2 + trail:
+        return None
+
+    rs = 100 * px / bx
+    sd = rs.rolling(window).std(ddof=0)
+    rsr = 100 + (rs - rs.rolling(window).mean()) / sd.replace(0, np.nan)
+    mom = rsr.diff()
+    sdm = mom.rolling(window).std(ddof=0)
+    rsm = 100 + (mom - mom.rolling(window).mean()) / sdm.replace(0, np.nan)
+
+    pair = pd.concat([rsr, rsm], axis=1).dropna()
+    if pair.empty:
+        return None
+    ratio, momentum = float(pair.iloc[-1, 0]), float(pair.iloc[-1, 1])
+    quadrant = ("領先" if ratio >= 100 and momentum >= 100 else
+                "轉弱" if ratio >= 100 else
+                "轉強" if momentum >= 100 else "落後")
+    tail_pts = [(float(a), float(b)) for a, b in
+                pair.tail(trail).itertuples(index=False)]
+    return {"rs_ratio": ratio, "rs_mom": momentum,
+            "quadrant": quadrant, "trail": tail_pts}
+
+
 # ── 抓取層（需網路；此環境代理擋 yfinance，需部署後實測）────────────────────────
 
-def _batch_closes(tickers: list[str], period: str) -> dict:
-    """批次下載多檔收盤序列，穩健處理 MultiIndex 兩種版面。"""
+def _batch_closes(tickers: list[str], period: str, min_len: int = 20) -> dict:
+    """批次下載多檔收盤序列，穩健處理 MultiIndex 兩種版面。
+    全專案共用的唯一實作（app.py 市場快照/篩選器皆 import 此函數）。"""
     import yfinance as yf
     try:
         raw = yf.download(tickers, period=period, auto_adjust=True,
@@ -103,7 +145,7 @@ def _batch_closes(tickers: list[str], period: str) -> dict:
                 if len(tickers) != 1:   # 平面欄位只在單檔時才對應該 ticker
                     continue
                 s = raw["Close"].squeeze().dropna()
-            if len(s) >= 20:
+            if len(s) >= min_len:
                 out[tkr] = s
         except Exception:
             continue
@@ -181,3 +223,21 @@ if __name__ == "__main__":
     ]
     for a in aggregate_by_industry(rows):
         print(" ", {k: (round(v, 3) if isinstance(v, float) else v) for k, v in a.items()})
+
+    print("\n=== rrg_metrics ===")
+    idx2 = pd.date_range("2023-06-01", periods=400, freq="B")
+    bench2 = pd.Series(np.linspace(100, 120, 400), index=idx2)
+    # 相對強勢加速的標的 → 應落在偏「領先」側
+    strong = bench2 * pd.Series(np.linspace(1.0, 1.6, 400) ** 1.5, index=idx2)
+    weak   = bench2 * pd.Series(np.linspace(1.0, 0.7, 400), index=idx2)
+    r_strong = rrg_metrics(strong, bench2)
+    r_weak   = rrg_metrics(weak, bench2)
+    print("  strong:", {k: (round(v, 2) if isinstance(v, float) else v)
+                        for k, v in r_strong.items() if k != "trail"})
+    print("  weak:  ", {k: (round(v, 2) if isinstance(v, float) else v)
+                        for k, v in r_weak.items() if k != "trail"})
+    assert r_strong["rs_ratio"] > 100                  # 持續跑贏 → 相對強度高
+    assert r_weak["rs_ratio"] < 100                    # 持續跑輸 → 相對強度低
+    assert len(r_strong["trail"]) == 5
+    assert rrg_metrics(strong.iloc[:30], bench2.iloc[:30]) is None   # 資料不足安全
+    print("\n✅ sector_scan 純邏輯測試通過（含 RRG）")

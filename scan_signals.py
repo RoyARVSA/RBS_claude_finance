@@ -25,6 +25,8 @@ Telegram 指令（傳給 Bot）：
   /fundamentals TICKER    – 查公司基本面摘要（健康評分/ROE/估值，快取一天）（別名 /f）
   /options TICKER         – 選擇權情緒：Put/Call 比、隱含波動偏斜、情緒分數（別名 /opt）
   /insider TICKER         – SEC 內部人交易（Form 4，僅美股，買賣/cluster buy）（別名 /ins）
+  /whales [編號]           – 超級投資人 13F 季度持倉增減（巴菲特/Burry/Ackman…）
+  /alert TICKER 價位      – 到價警報：突破/跌破時推播，觸發後自動移除（/alert 看清單）
   /earnings [天數]        – 觀察清單近期財報日（晨報也會自動提醒 N 天內財報）
   /autotrade on|off       – Alpaca 模擬自動交易總開關（預設關）
   /positions /pnl /closeall – 模擬持倉 / 帳戶報酬 / 一鍵平倉
@@ -183,6 +185,7 @@ def load_state() -> dict:
                 th.setdefault(k, v)
             state.setdefault("signal_history", {})
             state.setdefault("last_update_id", 0)
+            state.setdefault("watchlist", DEFAULT_WATCHLIST.copy())
             return state
         except Exception as e:
             print(f"State load error: {e}, using defaults")
@@ -198,7 +201,17 @@ def load_state() -> dict:
 
 
 def save_state(state: dict) -> None:
-    STATE_FILE.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
+    # 修剪只增不減的每日快取（fund/earnings）：留 35 天內的，移除的標的不再永久佔位
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=35)).strftime("%Y-%m-%d")
+    for ck, datekey in (("fund_cache", "date"), ("earnings_cache", "checked")):
+        c = state.get(ck)
+        if isinstance(c, dict):
+            state[ck] = {k: v for k, v in c.items()
+                         if isinstance(v, dict) and str(v.get(datekey, "")) >= cutoff}
+    # 原子寫入：先寫暫存檔再 os.replace，中途被砍不會留下截斷的 JSON
+    tmp = STATE_FILE.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
+    os.replace(tmp, STATE_FILE)
     print(f"State saved → {STATE_FILE}")
 
 
@@ -206,8 +219,12 @@ def save_state(state: dict) -> None:
 
 def _tg_get(token: str, method: str, params: dict | None = None) -> dict:
     url = f"https://api.telegram.org/bot{token}/{method}"
-    r = requests.get(url, params=params, timeout=15)
-    return r.json() if r.ok else {}
+    try:
+        r = requests.get(url, params=params, timeout=15)
+        return r.json() if r.ok else {}
+    except Exception as e:          # Telegram 瞬斷不該廢掉整輪掃描
+        print(f"_tg_get {method} error: {e}")
+        return {}
 
 
 def _tg_send(token: str, chat_id: str, text: str) -> bool:
@@ -264,6 +281,8 @@ def _cmd_help() -> str:
         "`/fundamentals AAPL`（或 `/f`）— 公司基本面摘要\n"
         "`/options AAPL`（或 `/opt`）— 選擇權情緒（Put/Call、IV 偏斜）\n"
         "`/insider AAPL`（或 `/ins`）— SEC 內部人交易（Form 4，僅美股）\n"
+        "`/whales [編號]` — 超級投資人 13F 季度增減倉（巴菲特/Burry…）\n"
+        "`/alert AAPL 200` — 到價警報（`/alert` 看清單、`/alert del AAPL` 刪）\n"
         "`/earnings [天數]` — 觀察清單近期財報日\n"
         "`/briefing` — 立即生成每日晨報\n\n"
         "🤖 *模擬交易（Alpaca paper）*\n"
@@ -551,6 +570,11 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
         text = msg.get("text", "").strip()
         src_chat = str(msg.get("chat", {}).get("id", ""))
 
+        # 安全：只接受授權聊天室（任何人都找得到 bot username；未授權者可下 /closeall 等指令）
+        if src_chat != str(chat_id):
+            print(f"Ignored message from unauthorized chat {src_chat}")
+            continue
+
         if not text.startswith("/"):
             continue
 
@@ -601,8 +625,55 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
             changed = True
             reply = f"🗑 已清空觀察清單（共 {count} 支）"
 
+        elif cmd == "/alert":
+            alerts = state.setdefault("price_alerts", [])
+            if not args:
+                if not alerts:
+                    reply = ("🎯 尚無到價警報。\n用法：`/alert AAPL 200`（依現價自動判斷突破/跌破）\n"
+                             "`/alert AAPL >200`、`/alert AAPL <150` 指定方向；`/alert del AAPL` 刪除")
+                else:
+                    lines = ["🎯 *到價警報*"]
+                    for a in alerts:
+                        arrow = "≥" if a.get("op") == ">=" else "≤"
+                        lines.append(f"• {a['ticker']} {arrow} {float(a['level']):.2f}")
+                    lines.append("_觸發後自動移除 · `/alert del AAPL` 刪除_")
+                    reply = "\n".join(lines)
+            elif args[0].lower() in ("del", "delete", "rm") and len(args) >= 2:
+                tk = args[1].upper()
+                before = len(alerts)
+                state["price_alerts"] = [a for a in alerts if a.get("ticker") != tk]
+                changed = True
+                reply = f"🗑 已刪除 {tk} 的 {before - len(state['price_alerts'])} 個警報"
+            elif len(args) >= 2:
+                tk = args[0].upper()
+                lvl_s = args[1]
+                op = None
+                if lvl_s.startswith(">"):
+                    op, lvl_s = ">=", lvl_s[1:]
+                elif lvl_s.startswith("<"):
+                    op, lvl_s = "<=", lvl_s[1:]
+                try:
+                    level = float(lvl_s)
+                except ValueError:
+                    level = None
+                if level is None or level <= 0:
+                    reply = "用法：`/alert AAPL 200` 或 `/alert AAPL >200`、`/alert AAPL <150`"
+                elif len(alerts) >= 20:
+                    reply = "⚠️ 警報上限 20 個，請先用 `/alert del TICKER` 清理"
+                else:
+                    if op is None:                       # 依現價自動判方向
+                        px = _alert_prices([tk]).get(tk)
+                        op = ">=" if (px is None or px < level) else "<="
+                    alerts.append({"ticker": tk, "op": op, "level": level})
+                    changed = True
+                    arrow = "向上突破 ≥" if op == ">=" else "向下跌破 ≤"
+                    reply = f"🎯 已設定：{tk} {arrow} {level:.2f} 時通知（觸發後自動移除）"
+            else:
+                reply = "用法：`/alert AAPL 200`、`/alert`（看清單）、`/alert del AAPL`"
+
         elif cmd == "/mute":
             hours = int(args[0]) if args and args[0].isdigit() else 8
+            hours = max(1, min(hours, 720))   # clamp：超大數字會讓 timedelta 溢位、毒掉之後每輪 cron
             until = datetime.now(timezone.utc) + timedelta(hours=hours)
             state["mute_until"] = until.isoformat()
             changed = True
@@ -732,6 +803,28 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                 tkr = args[0].upper()
                 _tg_send(token, src_chat or chat_id, f"🎭 查詢 {tkr} 選擇權情緒中…")
                 reply = _cmd_options(tkr)
+
+        elif cmd == "/whales":
+            try:
+                import whales_13f as wf
+                whales = list(wf.WHALES.items())          # [(cik, name), ...]
+                if not args or not args[0].isdigit():
+                    lines = ["🐋 *超級投資人 13F*（`/whales 編號` 查詢季度增減倉）"]
+                    lines += [f"{i+1}. {name}" for i, (_c, name) in enumerate(whales)]
+                    reply = "\n".join(lines)
+                else:
+                    i = int(args[0]) - 1
+                    if not (0 <= i < len(whales)):
+                        reply = f"編號範圍 1-{len(whales)}"
+                    else:
+                        cik, name = whales[i]
+                        _tg_send(token, src_chat or chat_id, f"🐋 抓取 {name} 的 13F 中…")
+                        res = wf.fetch_whale(cik, name)
+                        reply = (wf.format_whale_text(name, res, res.get("period", ""))
+                                 + "\n_SEC 13F · 45天延遲 · 非投資建議_") if res else \
+                            f"⚠️ 查無 {name} 的 13F（EDGAR 暫時無回應或無申報）"
+            except Exception as e:
+                reply = f"❌ 13F 查詢失敗：{e}"
 
         elif cmd in ("/insider", "/ins"):
             if not args:
@@ -1164,13 +1257,16 @@ def calibrate(tickers: list[str], period: str = "2y") -> dict:
     這是較重的操作（每支下載 2 年資料），建議每天/每週跑一次，不要每次掃描都跑。
     """
     print(f"校準 {len(tickers)} 支標的的訊號權重（回測 {period}）…")
+    import backtest as bt
     result = {}
     for tk in tickers:
         try:
             raw = yf.download(tk, period=period, auto_adjust=True, progress=False)
             if raw.empty or len(raw) < 60:
                 continue
-            df = raw if "Close" in raw.columns else raw.xs(tk, axis=1, level=1)
+            # MultiIndex 下 `"Close" in raw.columns` 是部分鍵比對、恆為 True，
+            # 舊寫法會讓 MultiIndex 直接漏過去 → 校準悄悄算出垃圾。統一用 normalize_ohlc。
+            df = bt.normalize_ohlc(raw, tk)
             mult = calibrate_ticker(df)
             if mult:
                 result[tk] = mult
@@ -1454,9 +1550,15 @@ def _llm_complete(prompt: str, max_tokens: int = 900) -> str | None:
     可選 LLM_BASE_URL、LLM_MODEL。失敗回 None（晨報退回純數據版）。
     """
     key = os.environ.get("LLM_API_KEY", "")
+    # 清掉貼上金鑰時混入的隱形/全形字元（同 app.py _clean_secret；HTTP header 只吃 ASCII）
+    for _ch in ("​", "‌", "‍", "﻿", " ", "　"):
+        key = key.replace(_ch, "")
+    key = key.strip()
     if not key:
         return None
-    base = os.environ.get("LLM_BASE_URL", "").rstrip("/")
+    base = os.environ.get("LLM_BASE_URL", "").strip().rstrip("/")
+    if base.endswith("/v1"):
+        base = base[:-3].rstrip("/")   # 容忍帶 /v1 的 base（app.py 的 SDK 慣例），這裡自己補路徑
     model = os.environ.get("LLM_MODEL", "")
     is_anthropic = ("anthropic" in base.lower()) or key.startswith("sk-ant") or model.startswith("claude")
     if not model:
@@ -1472,7 +1574,7 @@ def _llm_complete(prompt: str, max_tokens: int = 900) -> str | None:
             if r.ok:
                 return r.json()["content"][0]["text"]
         else:
-            url = (base or "https://api.openai.com/v1") + "/chat/completions"
+            url = ((base + "/v1") if base else "https://api.openai.com/v1") + "/chat/completions"
             r = requests.post(url, timeout=45,
                               headers={"Authorization": f"Bearer {key}"},
                               json={"model": model, "max_tokens": max_tokens, "temperature": 0.3,
@@ -1617,6 +1719,16 @@ def daily_briefing(state: dict, force: bool = False) -> str | None:
     except Exception:
         pass
 
+    # AI 判斷回顧（反思記憶）
+    try:
+        import reflection as rfl
+        s_ref = rfl.summary_text(state)
+        if s_ref:
+            lines.append("")
+            lines.append(f"🪞 {s_ref}")
+    except Exception:
+        pass
+
     # 近期財報提醒
     try:
         earn = _upcoming_earnings(state)
@@ -1755,6 +1867,38 @@ def _calibration_weights(state: dict) -> dict:
 
 # ── 自動掃描循環（main 與 daemon 共用，確保兩邊行為一致）─────────────────────────
 
+def evaluate_price_alerts(alerts: list, prices: dict) -> tuple[list, list]:
+    """檢查到價警報（純函數，離線可測）。回 (觸發清單, 保留清單)。
+    prices 缺該標的時保留警報等下次；壞資料（level 非數字）直接丟棄。"""
+    triggered, remaining = [], []
+    for a in alerts:
+        try:
+            level = float(a["level"])
+            op = a.get("op", ">=")
+            tk = a["ticker"]
+        except Exception:
+            continue
+        px = prices.get(tk)
+        if px is None:
+            remaining.append(a)
+        elif (op == ">=" and px >= level) or (op == "<=" and px <= level):
+            triggered.append({**a, "price": float(px)})
+        else:
+            remaining.append(a)
+    return triggered, remaining
+
+
+def _alert_prices(tickers: list) -> dict:
+    """批次抓警報標的最新收盤。失敗回 {}（警報保留到下次）。"""
+    try:
+        from sector_scan import _batch_closes
+        closes = _batch_closes(sorted(set(tickers)), "5d", min_len=1)
+        return {tk: float(s.iloc[-1]) for tk, s in closes.items() if len(s)}
+    except Exception as e:
+        print(f"alert price fetch error: {e}")
+        return {}
+
+
 def scan_and_report(state: dict, timestamp: str) -> tuple[str | None, list[dict]]:
     """
     執行一次完整的自動掃描：校準 → 掃描 → 大盤濾網 → 冷卻去重 → 組訊息。
@@ -1784,6 +1928,37 @@ def scan_and_report(state: dict, timestamp: str) -> tuple[str | None, list[dict]
             print(f"Cooldown suppressed {suppressed} duplicate signals.")
 
     message = _build_message(results, timestamp, regime=regime, suppressed=suppressed)
+
+    # 到價警報（/alert 設定；觸發即通知並自動移除，不受靜音/冷卻影響）
+    alerts = state.get("price_alerts") or []
+    if alerts:
+        trig, remain = evaluate_price_alerts(alerts, _alert_prices(
+            [a.get("ticker") for a in alerts if a.get("ticker")]))
+        if trig or len(remain) != len(alerts):
+            state["price_alerts"] = remain
+        if trig:
+            lines = ["🎯 *到價警報觸發*"]
+            for t in trig:
+                arrow = "≥" if t.get("op") == ">=" else "≤"
+                lines.append(f"• *{t['ticker']}* 現價 {t['price']:.2f}，已{arrow} {float(t['level']):.2f}")
+            alert_msg = "\n".join(lines)
+            message = (message + "\n\n" + alert_msg) if message else alert_msg
+
+    # 反思記憶（FinMem 式）：記錄強判斷 → 5 日後結算命中率 → 晨報/助理回饋
+    try:
+        import reflection as rfl
+        today_s = (timestamp or "")[:10] or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        strong = sorted([x for x in results if abs(x.get("score", 0)) >= 0.5],
+                        key=lambda x: -abs(x.get("score", 0)))[:3]
+        for s_ in strong:
+            if s_.get("price"):
+                rfl.record_pick(state, s_["ticker"], float(s_["score"]),
+                                float(s_["price"]), today_s)
+        pend = {p["ticker"] for p in state.get("reflections", {}).get("pending", [])}
+        if pend:
+            rfl.evaluate_pending(state, _alert_prices(sorted(pend)), today_s)
+    except Exception as e:
+        print(f"reflection error: {e}")
     return message, results
 
 
@@ -1878,7 +2053,13 @@ def main() -> int:
     # Step 1: Process incoming Telegram commands
     if TELEGRAM_TOKEN:
         print("── Processing Telegram commands ──")
-        state, changed = process_commands(TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, state)
+        try:
+            state, changed = process_commands(TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, state)
+        except Exception as e:
+            # 毒訊息防護：state 是就地修改，last_update_id 已前進——照樣存檔，
+            # 讓壞訊息被消耗掉，而不是讓之後每 15 分鐘的 cron 重複崩潰
+            print(f"Command processing error: {e}")
+            changed = True
         if changed:
             state_changed = True
             save_state(state)

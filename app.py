@@ -2,7 +2,7 @@
 app.py – RBS Finance Dashboard (Streamlit)
 
 Local:  streamlit run app.py
-Colab:  see colab_setup.py (handles pip, pyngrok, Drive path, tunnel)
+Colab:  see RBS_Finance_Colab.ipynb (Cell 1-3: Drive, sync, launch)
 """
 from __future__ import annotations
 
@@ -270,6 +270,103 @@ def page_portfolio_performance():
 
     import yfinance as yf
 
+    # ── 📒 交易帳本（Ghostfolio 式：真實買賣紀錄 → 成本/損益/TWR/XIRR/股息）──
+    with st.expander("📒 交易帳本（輸入真實買賣紀錄 → 成本基礎 / 損益 / TWR / XIRR / 股息）",
+                     expanded=False):
+        import ledger as lg
+        if "ledger_rows" not in st.session_state:
+            st.session_state["ledger_rows"] = pd.DataFrame(
+                [{"date": "2025-01-02", "ticker": "AAPL", "side": "buy",
+                  "qty": 10.0, "price": 180.0, "fee": 0.0}])
+        up_led = st.file_uploader("匯入 CSV（欄位：date,ticker,side,qty,price,fee）",
+                                  type="csv", key="led_csv")
+        if up_led is not None:
+            try:
+                st.session_state["ledger_rows"] = pd.read_csv(up_led)
+                st.success(f"已匯入 {len(st.session_state['ledger_rows'])} 列")
+            except Exception as e:
+                st.error(f"CSV 解析失敗：{e}")
+        led_df = st.data_editor(st.session_state["ledger_rows"], num_rows="dynamic",
+                                use_container_width=True, key="led_editor")
+        st.download_button("⬇ 下載帳本 CSV",
+                           led_df.to_csv(index=False).encode("utf-8"),
+                           "trades.csv", "text/csv", key="led_dl")
+
+        if st.button("計算帳本績效", type="primary", key="led_go"):
+            trades, verrs = lg.validate_trades(led_df.to_dict("records"))
+            for _e in verrs:
+                st.warning(_e)
+            if not trades:
+                st.info("沒有合法交易列。")
+            else:
+                pos, perrs, trades = lg.positions_and_realized(trades)
+                for _e in perrs:
+                    st.warning(_e)
+                tks = tuple(sorted({t["ticker"] for t in trades}))
+                start_led = (min(t["date"] for t in trades) - pd.Timedelta(days=7))
+                with st.spinner("抓取價格與股息…"):
+                    try:
+                        raw_led = _cached_portfolio_prices(tks, str(start_led.date()))
+                        if isinstance(raw_led.columns, pd.MultiIndex):
+                            px_led = raw_led["Close"]
+                        else:
+                            px_led = raw_led[["Close"]].rename(columns={"Close": tks[0]})
+                        px_led.index = pd.DatetimeIndex(px_led.index).tz_localize(None)
+                        divs = _cached_dividends(tks)
+                    except Exception as e:
+                        st.error(f"價格抓取失敗：{e}")
+                        px_led, divs = pd.DataFrame(), {}
+                if not px_led.empty:
+                    curve = lg.equity_curve(trades, px_led)
+                    twr = lg.twr_returns(curve)
+                    inc = lg.dividend_income(trades, divs)
+                    cfs = [(t["date"], -(t["qty"] * t["price"] + t["fee"]) if t["side"] == "buy"
+                            else (t["qty"] * t["price"] - t["fee"])) for t in trades]
+                    if not curve.empty and curve["value"].iloc[-1] > 0:
+                        cfs.append((curve.index[-1], float(curve["value"].iloc[-1])))
+                    st.session_state["led_result"] = {
+                        "pos": pos, "px_last": px_led.ffill().iloc[-1].to_dict(),
+                        "curve": curve, "twr_cum": float((1 + twr).prod() - 1) if len(twr) else None,
+                        "xirr": lg.xirr(cfs), "div": inc}
+
+        _led = st.session_state.get("led_result")
+        if _led:
+            pos, px_last = _led["pos"], _led["px_last"]
+            rows_led, tot_mv, tot_cost, tot_real, tot_unreal = [], 0.0, 0.0, 0.0, 0.0
+            for tk, p in sorted(pos.items()):
+                last = px_last.get(tk)
+                mv = p["qty"] * last if (last and p["qty"]) else 0.0
+                unreal = mv - p["cost"] if p["qty"] else 0.0
+                tot_mv += mv; tot_cost += p["cost"]
+                tot_real += p["realized"]; tot_unreal += unreal
+                rows_led.append({"代碼": tk, "股數": p["qty"], "均價": p["avg_cost"],
+                                 "現價": last, "市值": mv, "未實現": unreal,
+                                 "已實現": p["realized"]})
+            l1, l2, l3, l4 = st.columns(4)
+            with l1: metric_card("總市值", f"${tot_mv:,.0f}")
+            with l2: metric_card("未實現損益", f"${tot_unreal:+,.0f}", positive=tot_unreal >= 0)
+            with l3: metric_card("已實現+股息",
+                                 f"${tot_real + _led['div'].get('_total', 0):+,.0f}",
+                                 positive=(tot_real + _led['div'].get('_total', 0)) >= 0)
+            with l4: metric_card("XIRR（年化）",
+                                 f"{_led['xirr']:.1%}" if _led["xirr"] is not None else "—",
+                                 positive=bool(_led["xirr"] and _led["xirr"] > 0))
+            if _led["twr_cum"] is not None:
+                st.caption(f"TWR 累積報酬（現金流調整）：**{_led['twr_cum']:+.1%}**"
+                           f"　·　股息收入 ${_led['div'].get('_total', 0):,.0f}")
+            st.dataframe(pd.DataFrame(rows_led).style.format(
+                {"股數": "{:g}", "均價": "{:.2f}", "現價": "{:.2f}",
+                 "市值": "{:,.0f}", "未實現": "{:+,.0f}", "已實現": "{:+,.0f}"}),
+                use_container_width=True, hide_index=True)
+            if not _led["curve"].empty:
+                fig_led = go.Figure(go.Scatter(x=_led["curve"].index,
+                                               y=_led["curve"]["value"],
+                                               fill="tozeroy", line=dict(color="#1E88E5")))
+                fig_led.update_layout(**PLOTLY_LAYOUT, height=300, title="持倉市值曲線")
+                st.plotly_chart(fig_led, use_container_width=True)
+            st.caption("平均成本法 · TWR=時間加權（排除出入金影響）· XIRR=資金加權（你實際的年化）"
+                       " · 股息以除息日持股計，未含稅 · 非投資建議。")
+
     DEFAULT_HOLDINGS = pd.DataFrame(
         {
             "Ticker": ["AGG", "BBH", "BND", "IVV", "KRE", "MBB", "SHY", "SMH", "SOXX", "VFH", "VOO", "XLF", "XLU", "XLV", "XSD"],
@@ -290,7 +387,11 @@ def page_portfolio_performance():
         twd_cash = st.number_input("TWD Cash", value=27426.0, step=1000.0)
         run = st.button("Calculate", use_container_width=True, type="primary")
 
-    if not run:
+    # 按過一次就保持啟用：之後調整側欄（頻率/基準/現金）即時重算而不是整頁塌回空白。
+    # 下載已有快取（_cached_portfolio_prices），重算只花毫秒級計算成本。
+    if run:
+        st.session_state["pp_active"] = True
+    if not st.session_state.get("pp_active"):
         st.info("Configure holdings in the sidebar and click **Calculate**.")
         return
 
@@ -304,7 +405,7 @@ def page_portfolio_performance():
         try:
             fx_pair = "TWD=X"
             dl = tickers + [benchmark, fx_pair]
-            raw = yf.download(dl, start=pd.to_datetime(start), auto_adjust=True, progress=False)
+            raw = _cached_portfolio_prices(tuple(dl), str(start))
             if isinstance(raw.columns, pd.MultiIndex):
                 data = raw["Close"]
             elif "Close" in raw.columns:
@@ -335,7 +436,7 @@ def page_portfolio_performance():
     ppy = {"M": 12, "W": 52, "D": 252}[freq]
     if rf_choice.startswith("^IRX"):
         try:
-            rf_raw = yf.download("^IRX", start=pd.to_datetime(start), progress=False)["Close"].ffill()
+            rf_raw = _cached_portfolio_prices(("^IRX",), str(start))["Close"].squeeze().ffill()
             if freq in ["W", "M"]:
                 rf_raw = rf_raw.resample(_RESAMPLE_ALIAS[freq]).last()
             rf = (1 + rf_raw / 100) ** (1 / ppy) - 1
@@ -383,7 +484,8 @@ def page_portfolio_performance():
         metric_card("Treynor", f"{treynor:.4f}" if pd.notna(treynor) else "N/A")
 
     # ── Charts ──────────────────────────────────────────────────────
-    tab1, tab2, tab3, tab4 = st.tabs(["Equity Curve", "Drawdown", "Risk vs Return", "Rolling Sharpe"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(
+        ["Equity Curve", "Drawdown", "Risk vs Return", "Rolling Sharpe", "📑 績效報告"])
 
     with tab1:
         fig = go.Figure()
@@ -425,6 +527,60 @@ def page_portfolio_performance():
             fig.add_hline(y=0, line_dash="solid", line_color="gray")
             fig.update_layout(**PLOTLY_LAYOUT, title=f"Rolling Sharpe (window={default_w})", height=380)
             st.plotly_chart(fig, use_container_width=True)
+
+    with tab5:
+        # QuantStats 風格 tearsheet（perf_report.py 純邏輯）
+        try:
+            import perf_report as pr
+        except ImportError:
+            st.error("找不到 perf_report.py，請確認已同步（Colab 需更新 Cell 2）。")
+        else:
+            stats = pr.perf_stats(df["r_p"], df["r_b"], ppy=ppy)
+
+            def _pnum(v, pct=False, dp=2):
+                if v is None:
+                    return "—"
+                return f"{v*100:.{dp}f}%" if pct else f"{v:.{dp}f}"
+
+            g1, g2, g3, g4 = st.columns(4)
+            with g1: metric_card("CAGR",     _pnum(stats["cagr"], pct=True))
+            with g2: metric_card("Sortino",  _pnum(stats["sortino"]))
+            with g3: metric_card("Calmar",   _pnum(stats["calmar"]))
+            with g4: metric_card("勝率(期)", _pnum(stats["win_rate"], pct=True, dp=1))
+            g5, g6, g7, g8 = st.columns(4)
+            with g5: metric_card("年化 Alpha", _pnum(stats["alpha_ann"], pct=True))
+            with g6: metric_card("偏態",       _pnum(stats["skew"]))
+            with g7: metric_card("VaR95(期)",  _pnum(stats["var95"], pct=True))
+            with g8: metric_card("與基準相關", _pnum(stats["corr_bench"]))
+
+            st.markdown("##### 月報酬表")
+            mt = pr.monthly_table(df["r_p"])
+            if not mt.empty:
+                def _mcolor(v):
+                    # 手工紅綠漸層（±8% 飽和）——background_gradient 需要 matplotlib，
+                    # 而 requirements 已移除它（雲端會 ImportError）
+                    if pd.isna(v):
+                        return "color:#666"
+                    x = max(-0.08, min(0.08, float(v))) / 0.08
+                    if x >= 0:
+                        return f"background-color:rgba(76,175,80,{0.15 + 0.55 * x:.2f});color:#E8EAF0"
+                    return f"background-color:rgba(244,67,54,{0.15 - 0.55 * x:.2f});color:#E8EAF0"
+                st.dataframe(mt.style.format(lambda v: "—" if pd.isna(v) else f"{v:.1%}")
+                             .map(_mcolor),
+                             use_container_width=True)
+
+            st.markdown("##### 前五大回撤")
+            dps = pr.drawdown_periods(df["r_p"], top_n=5)
+            if dps:
+                dp_df = pd.DataFrame([{
+                    "高點": p["start"].date(), "谷底": p["trough"].date(),
+                    "回復": p["end"].date() if p["end"] is not None else "尚未回復",
+                    "深度": f"{p['depth']:.1%}", "天數": p["days"],
+                } for p in dps])
+                st.dataframe(dp_df, use_container_width=True, hide_index=True)
+            else:
+                st.info("期間內無回撤。")
+            st.caption("指標慣例參考 quantstats；α/β 以所選基準回歸。分析用途，非投資建議。")
 
     # ── Download ────────────────────────────────────────────────────
     out_df = pd.concat([port_val.rename("Portfolio_Value"), bench_px.rename("Benchmark"), port_ret.rename("Port_Return"), bench_ret.rename("Bench_Return")], axis=1)
@@ -523,20 +679,24 @@ def page_news_sentiment():
                             except Exception as _e:
                                 st.warning(f"{src} 載入失敗：{_e}")
                     if articles:
-                        st.success(f"共取得 {len(articles)} 篇（{', '.join(selected_feeds)}）")
                         st.session_state["news_articles"] = articles
                         st.session_state["news_source"] = " + ".join(selected_feeds)
-                        for a in articles:
-                            with st.expander(f"[{a['Source']}] {a['Title']}"):
-                                st.caption(a["Published"])
-                                st.write(a["Summary"])
-                                st.markdown(f"[Read more]({a['Link']})")
                     else:
                         st.warning("No articles found. Try different sources.")
                 except ImportError:
                     st.error("feedparser not installed.")
                 except Exception as e:
                     st.error(f"Feed error: {e}")
+
+        # 從 session_state 渲染——改篩選/來源等 widget 後文章列表不再消失
+        if st.session_state.get("news_articles"):
+            _arts = st.session_state["news_articles"]
+            st.success(f"共取得 {len(_arts)} 篇（{st.session_state.get('news_source','')}）")
+            for a in _arts:
+                with st.expander(f"[{a['Source']}] {a['Title']}"):
+                    st.caption(a["Published"])
+                    st.write(a["Summary"])
+                    st.markdown(f"[Read more]({a['Link']})")
 
     # ── Tab 2: Sentiment ──────────────────────────────────────────────
     with tab2:
@@ -728,6 +888,49 @@ def page_stock_selector():
 
     st.title("🏦 機構選股模型")
     st.caption("六步驟系統化篩選流程，結合宏觀環境、策略偏好與產業輪動")
+
+    # ── 🐋 超級投資人 13F 動向（SEC EDGAR，免 key）────────────────
+    with st.expander("🐋 超級投資人 13F 持倉動向（巴菲特/Burry/Ackman…季度增減倉）", expanded=False):
+        import whales_13f as _wf
+        _whale_names = {v: k for k, v in _wf.WHALES.items()}
+        wsel = st.selectbox("選擇投資人", list(_whale_names.keys()), key="whale_sel")
+        if st.button("查詢 13F", key="whale_go"):
+            with st.spinner(f"抓取 {wsel} 最近兩季 13F（SEC EDGAR）…"):
+                try:
+                    st.session_state["whale_result"] = (
+                        wsel, _cached_whale(_whale_names[wsel], wsel))
+                except Exception as e:
+                    st.error(f"查詢失敗：{e}")
+        _w_saved = st.session_state.get("whale_result")
+        if _w_saved and _w_saved[0] == wsel:
+            wres = _w_saved[1]
+            if not wres:
+                st.warning("查無 13F 申報（或 EDGAR 暫時無回應）。")
+            else:
+                st.caption(f"申報期：{wres.get('period', '?')}　·　持倉 {wres.get('n_holdings')} 檔"
+                           "　·　45 天申報延遲，看到時倉位可能已變動")
+                if wres.get("top"):
+                    st.markdown("**前十大持倉（占組合權重）**")
+                    st.dataframe(pd.DataFrame([
+                        {"發行人": t["issuer"], "權重": f"{t['weight']:.1%}",
+                         "股數": f"{t['shares']:,.0f}"} for t in wres["top"]]),
+                        use_container_width=True, hide_index=True)
+                wc1, wc2 = st.columns(2)
+                with wc1:
+                    if wres.get("new"):
+                        st.markdown("**🆕 本季新進**　" + "、".join(
+                            n["issuer"] for n in wres["new"][:6]))
+                    if wres.get("added"):
+                        st.markdown("**➕ 加碼**　" + "、".join(
+                            f"{a['issuer']}({a['chg']:+.0%})" for a in wres["added"][:6]))
+                with wc2:
+                    if wres.get("reduced"):
+                        st.markdown("**➖ 減碼**　" + "、".join(
+                            f"{r_['issuer']}({r_['chg']:+.0%})" for r_ in wres["reduced"][:6]))
+                    if wres.get("exited"):
+                        st.markdown("**🚪 清倉**　" + "、".join(
+                            e["issuer"] for e in wres["exited"][:6]))
+                st.caption("資料 SEC EDGAR 13F-HR · 只含美股多頭（無空單/債券）· 非投資建議。")
 
     # ── Persistent step state ────────────────────────────────────────
     if "ss_step" not in st.session_state:
@@ -996,10 +1199,9 @@ def page_stock_selector():
         section("即時行情")
         with st.spinner(f"抓取 {len(candidates)} 檔即時報價…"):
             try:
-                import yfinance as yf
-                raw = yf.download(
-                    candidates, period="1y", auto_adjust=True, progress=False
-                )
+                # 快取 5 分鐘：下方「選擇標的對比」multiselect 每動一下都會 rerun，
+                # 舊版每次都把全部候選股的一年歷史重新下載
+                raw = _cached_candidates_prices(tuple(candidates))
                 if isinstance(raw.columns, pd.MultiIndex):
                     px_close = raw["Close"].dropna(how="all")
                 else:
@@ -1283,8 +1485,10 @@ def _trend_fields(close) -> dict:
     return out
 
 
+@st.cache_data(ttl=600, show_spinner=False)
 def _assistant_peer_note(ticker: str) -> str | None:
-    """把標的放進同產業對手中排名（近3月報酬 + P/E），回一句話。"""
+    """把標的放進同產業對手中排名（近3月報酬 + P/E），回一句話。快取 10 分鐘——
+    同產業的第二個前瞻問題不再重掃 12 檔。"""
     try:
         import sector_scan as ssc
         imap = _industry_ticker_map()
@@ -1298,13 +1502,15 @@ def _assistant_peer_note(ticker: str) -> str | None:
         by_ret = sorted(rows, key=lambda r: r["return_3m"], reverse=True)
         n = len(by_ret)
         pos_ret = next((i + 1 for i, r in enumerate(by_ret) if r["ticker"] == ticker), None)
+        pes = sorted([r for r in rows if r.get("pe") and r["pe"] > 0], key=lambda r: r["pe"])
+        pos_pe = next((i + 1 for i, r in enumerate(pes) if r["ticker"] == ticker), None)
+        if not pos_ret and not pos_pe:
+            return None                       # 標的不在排名中，這句話沒有資訊量
         note = f"{ind} {n} 檔中"
         if pos_ret:
             note += f"，近3月報酬排 {pos_ret}/{n}"
-        pes = sorted([r for r in rows if r.get("pe")], key=lambda r: r["pe"])
-        pos_pe = next((i + 1 for i, r in enumerate(pes) if r["ticker"] == ticker), None)
         if pos_pe:
-            note += f"、P/E 排 {pos_pe}/{len(pes)}（越前越便宜）"
+            note += f"、P/E 排 {pos_pe}/{len(pes)}（越前越便宜，僅計正 P/E）"
         return note
     except Exception:
         return None
@@ -1484,22 +1690,39 @@ def _run_insider_tool(ticker):
 
 
 def _assistant_run_tools(plan):
-    """執行規劃器產生的工具計畫，回結構化結果（每個工具各自防呆）。"""
+    """執行規劃器產生的工具計畫，回結構化結果（每個工具各自防呆）。
+    多工具時並行執行（回測/選擇權/內部人互不相依、各自等網路），
+    outlook 一題可省 10-25 秒；Streamlit 執行緒需掛 ScriptRunContext，掛不上就退回序列。"""
     dispatch = {"backtest": lambda a: _run_backtest_tool(a["ticker"]),
                 "risk":     lambda a: _run_risk_tool(a["tickers"]),
                 "screen":   lambda a: _run_screen_tool(a["industry"]),
                 "options":  lambda a: _run_options_tool(a["ticker"]),
                 "insider":  lambda a: _run_insider_tool(a["ticker"])}
-    results = []
-    for step in plan:
-        fn = dispatch.get(step["tool"])
-        if not fn:
-            continue
+    steps = [s for s in plan if s["tool"] in dispatch]
+
+    def _run_one(step):
         try:
-            results.append(fn(step["args"]))
+            return dispatch[step["tool"]](step["args"])
         except Exception as e:
-            results.append({"tool": step["tool"], "ok": False, "error": str(e)})
-    return results
+            return {"tool": step["tool"], "ok": False, "error": str(e)}
+
+    if len(steps) <= 1:
+        return [_run_one(s) for s in steps]
+
+    try:
+        import threading
+        from concurrent.futures import ThreadPoolExecutor
+        from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
+        ctx = get_script_run_ctx()
+
+        def _with_ctx(step):
+            add_script_run_ctx(threading.current_thread(), ctx)
+            return _run_one(step)
+
+        with ThreadPoolExecutor(max_workers=min(4, len(steps))) as ex:
+            return list(ex.map(_with_ctx, steps))
+    except Exception:
+        return [_run_one(s) for s in steps]   # Streamlit 內部 API 變動時退回序列
 
 
 def page_ai_assistant():
@@ -1532,6 +1755,9 @@ def page_ai_assistant():
     force_syms = st.text_input(
         "指定股票代碼（選填，逗號分隔）— 冷門/新標的抓不到時用這個強制納入",
         "", key="asst_force", placeholder="VRT, PLTR, 2454.TW")
+    debate_on = st.checkbox(
+        "⚖️ 前瞻問題啟用多空對辯（單輪；多 2 次 LLM 呼叫，換取去偏見的正反論證）",
+        value=True, key="asst_debate")
     use_tools = st.checkbox(
         "🛠 允許 AI 自己跑分析工具（回測 / 風險 / 選股）", value=True, key="asst_tools",
         help="開啟後，遇到「回測勝率/風險多大/某產業有哪些強勢股」這類問題，"
@@ -1539,6 +1765,200 @@ def page_ai_assistant():
     st.caption("範例：「NVDA 未來前景怎麼看」（前瞻→自動回測+選擇權+內部人+同業比較）"
                "「AAPL+MSFT 組合風險多大」「半導體有哪些強勢股」「比較 AAPL 和 MSFT 的財務體質」"
                "　·　代碼前加 `$`（如 `$VRT`）也能強制辨識。")
+
+    # ── 🏛 機構決策模式（TradingAgents 式委員會；約 9 次 LLM 呼叫的高成本模式）──
+    with st.expander("🏛 機構決策模式：分析師×4 → 多空對辯 → 交易員 → 風控 → 投資經理", expanded=False):
+        st.caption("模擬一家金融機構的完整決策鏈（約 9 次 LLM 呼叫、30-90 秒），"
+                   "硬性風控由系統規則判定、LLM 不可推翻，最後與量化評分交叉比較。"
+                   "文獻註記：LLM 委員會無經驗證的長期實績——價值在多視角決策紀律，非預測。")
+        cmt_tkr = st.text_input("標的（美股）", "NVDA", key="cmt_tkr").upper().strip()
+        if st.button("🏛 召開投資決策會議", key="cmt_go") and cmt_tkr:
+            if not ai_key:
+                st.error("請先在上方「⚙️ 設定」填入 LLM API Key。")
+            else:
+                import json as _json
+
+                import committee as cmt
+                import sector_scan as _ssc
+                prog = st.status("蒐集資料中（走既有快取層）…", expanded=False)
+                try:
+                    # ① 資料層：全部重用既有快取/工具執行器
+                    _info_c, hist_c, _n_c = _cached_ticker_data(cmt_tkr, "1y")
+                    if hist_c is None or hist_c.empty:
+                        raise RuntimeError(f"抓不到 {cmt_tkr} 的歷史資料")
+                    tech_c = _ssc.price_metrics(hist_c["Close"]) or {}
+                    tech_c.update(_trend_fields(hist_c["Close"]))
+                    quant_c = None
+                    try:
+                        import scan_signals as _ss
+                        quant_c = _ss._composite_score(hist_c["Close"], hist_c.get("High"),
+                                                       hist_c.get("Low"), hist_c.get("Volume"))
+                    except Exception:
+                        pass
+                    regime_c = None
+                    try:
+                        regime_c = _ss.market_regime()
+                    except Exception:
+                        pass
+                    fund_c, _ed_c = _cached_fundamentals(cmt_tkr)
+                    an_c = _cached_analyst(cmt_tkr)
+                    try:
+                        opt_c = _cached_options(cmt_tkr)
+                    except Exception:
+                        opt_c = None
+                    try:
+                        ins_c = _cached_insider(cmt_tkr)
+                    except Exception:
+                        ins_c = None
+                    try:
+                        sh_c = _cached_shorts(cmt_tkr)
+                    except Exception:
+                        sh_c = None
+                    bt_c = None
+                    try:
+                        bt_c = _run_backtest_tool(cmt_tkr)
+                    except Exception:
+                        pass
+                    macro_dom = "（無 FRED key 或抓取失敗，總經資料缺）"
+                    if fred_key:
+                        try:
+                            import macro as _m
+                            _md = _m.fetch_macro(fred_key)
+                            if _md:
+                                macro_dom = _m.macro_summary_text(_md)
+                        except Exception:
+                            pass
+
+                    def _fmtv(v, pct=False):
+                        if v is None:
+                            return "無資料"
+                        return f"{v * 100:.1f}%" if pct else f"{v:.2f}"
+
+                    tech_dom = (
+                        f"現價 {_fmtv(tech_c.get('price'))}　近1月 {_fmtv(tech_c.get('return_1m'), 1)}　"
+                        f"近3月 {_fmtv(tech_c.get('return_3m'), 1)}　年化波動 {_fmtv(tech_c.get('ann_vol'), 1)}　"
+                        f"RSI {_fmtv(tech_c.get('rsi'))}　最大回撤 {_fmtv(tech_c.get('max_dd'), 1)}\n"
+                        f"距52週高 {_fmtv(tech_c.get('pct_from_52w_high'), 1)}　vs MA200 {_fmtv(tech_c.get('vs_ma200'), 1)}\n"
+                        f"量化綜合評分 {(quant_c or {}).get('score', '無')}（{(quant_c or {}).get('rating', '')}）")
+                    if bt_c and bt_c.get("ok") and bt_c.get("top"):
+                        _b0 = bt_c["top"][0]
+                        tech_dom += (f"\n回測最佳規則「{_b0['rule']}」勝率 {_b0['win_rate']:.0%}、"
+                                     f"獲利因子 {_b0['profit_factor']:.2f}（已扣成本無前視）")
+                    _hsF = None
+                    try:
+                        import fundamentals as _fa2
+                        _hsF = _fa2.health_score(fund_c).get("score") if fund_c.get("ok") else None
+                    except Exception:
+                        pass
+                    _tgt, _rat, _sur = an_c.get("targets"), an_c.get("ratings"), an_c.get("surprises")
+                    _beat_s = f"{_sur['beat_rate']:.0%}（{_sur['n']}季）" if _sur else "無資料"
+                    fund_dom = (
+                        f"財務健康 {_hsF if _hsF is not None else '無資料'}　P/E {_fmtv(fund_c.get('pe'))}　"
+                        f"ROE {_fmtv(fund_c.get('roe'), 1)}　營收成長 {_fmtv(fund_c.get('revenue_growth'), 1)}\n"
+                        f"分析師共識 {(_rat or {}).get('score', '無')}（{(_rat or {}).get('label', '')}，"
+                        f"{(_rat or {}).get('total', 0)} 位）　目標價上檔 "
+                        f"{_fmtv((_tgt or {}).get('upside_mean'), 1)}\n"
+                        f"EPS Beat 率 {_beat_s}")
+                    chips_parts = []
+                    if opt_c:
+                        import options_sentiment as _ops2
+                        chips_parts.append(_ops2.format_options_text(opt_c))
+                    if ins_c:
+                        import sec_insider as _si3
+                        chips_parts.append(_si3.format_insider_text(ins_c))
+                    if sh_c and sh_c.get("notes"):
+                        chips_parts.append("做空面：" + "；".join(sh_c["notes"]))
+                    chips_dom = "\n".join(chips_parts) or "（籌碼資料暫缺：選擇權/內部人/做空皆抓不到）"
+
+                    # ② 委員會流程（9 次小型 LLM 呼叫）
+                    client = _llm_client(ai_key, ai_base, ai_model)
+
+                    def _llm_call(ptext, mt=380):
+                        return client.chat.completions.create(
+                            model=ai_model, temperature=0.3, max_tokens=mt,
+                            messages=[{"role": "user", "content": ptext}],
+                        ).choices[0].message.content
+
+                    domains = {"technical": tech_dom, "fundamental": fund_dom,
+                               "chips": chips_dom, "macro": macro_dom}
+                    analysts_out = {}
+                    for _d, _dtxt in domains.items():
+                        prog.update(label=f"{cmt.ANALYST_ROLES[_d][0]} 分析中…")
+                        analysts_out[_d] = _llm_call(
+                            cmt.analyst_prompt(_d) + f"\n\n=== {cmt_tkr} 資料 ===\n" + _dtxt)
+                    all_rep = "\n\n".join(f"【{cmt.ANALYST_ROLES[d][0]}】\n{t}"
+                                          for d, t in analysts_out.items())
+                    prog.update(label="多空研究員對辯中…")
+                    bull_c = _llm_call(cmt.RESEARCHER_BULL + "\n\n" + all_rep, 420)
+                    bear_c = _llm_call(cmt.RESEARCHER_BEAR + "\n\n" + all_rep, 420)
+                    prog.update(label="交易員提案中…")
+                    trader_c = _llm_call(cmt.TRADER_PROMPT + "\n\n" + all_rep
+                                         + f"\n\n【多方】{bull_c}\n【空方】{bear_c}", 380)
+                    # ③ 硬風控（確定性規則，LLM 不可推翻）
+                    facts = {"regime_label": (regime_c or {}).get("label"),
+                             "ann_vol": tech_c.get("ann_vol"),
+                             "quant_score": (quant_c or {}).get("score")}
+                    try:
+                        _sf2 = Path("watchlist_state.json")
+                        if _sf2.exists():
+                            _hh = [h for h in _json.loads(_sf2.read_text(encoding="utf-8"))
+                                   .get("reflections", {}).get("history", [])
+                                   if h.get("hit") is not None][-20:]
+                            if _hh:
+                                facts["reflection_hit_rate"] = sum(1 for h in _hh if h["hit"]) / len(_hh)
+                                facts["reflection_n"] = len(_hh)
+                    except Exception:
+                        pass
+                    hard_c = cmt.hard_risk_check(facts)
+                    prog.update(label="風控主管審查中…")
+                    risk_c = _llm_call(cmt.risk_prompt(hard_c) + "\n\n【交易員提案】\n" + trader_c, 320)
+                    prog.update(label="投資經理裁決中…")
+                    pm_c = _llm_call(cmt.PM_PROMPT + "\n\n" + all_rep
+                                     + f"\n\n【多方】{bull_c}\n【空方】{bear_c}"
+                                     + f"\n\n【交易員】{trader_c}\n\n【風控】{risk_c}", 450)
+                    verdict_c = cmt.parse_verdict(pm_c)
+                    cross_c = cmt.compare_with_quant(verdict_c.get("verdict"),
+                                                     (quant_c or {}).get("score"))
+                    st.session_state["cmt_result"] = {
+                        "ticker": cmt_tkr, "analysts": analysts_out,
+                        "stances": {d: cmt.parse_stance(t) for d, t in analysts_out.items()},
+                        "bull": bull_c, "bear": bear_c, "trader": trader_c,
+                        "hard": hard_c, "risk": risk_c, "pm": pm_c,
+                        "verdict": verdict_c, "quant": quant_c, "cross": cross_c}
+                    prog.update(label="✅ 決策會議完成", state="complete")
+                except Exception as e:
+                    prog.update(label=f"失敗：{e}", state="error")
+
+        _cmt = st.session_state.get("cmt_result")
+        if _cmt:
+            import committee as cmt
+            v, q, x = _cmt["verdict"], _cmt["quant"], _cmt["cross"]
+            k1, k2, k3, k4 = st.columns(4)
+            with k1:
+                metric_card("委員會結論", v.get("verdict") or "—")
+            with k2:
+                metric_card("信心", v.get("confidence") or "—")
+            with k3:
+                metric_card("量化評分", f"{q['score']:+.2f}（{q.get('rating', '')}）" if q else "—")
+            with k4:
+                metric_card("交叉比較", x.get("agreement", "—"))
+            st.info(f"**交叉判讀**：{x.get('note', '')}")
+            st.markdown(f"**🎯 投資經理裁決（{_cmt['ticker']}）**\n\n{_cmt['pm']}")
+            if _cmt["hard"]:
+                st.warning("**系統硬性風控限制（LLM 不可推翻）**\n\n"
+                           + "\n".join(f"- {c}" for c in _cmt["hard"]))
+            _st_map = _cmt["stances"]
+            st.caption("分析師立場：" + "　".join(
+                f"{cmt.ANALYST_ROLES[d][0]} {(f'{s:+.1f}' if s is not None else '—')}"
+                for d, s in _st_map.items()))
+            with st.expander("📋 完整會議紀錄（分析師×4 / 多空對辯 / 交易員 / 風控）"):
+                for _d, _t in _cmt["analysts"].items():
+                    st.markdown(f"**【{cmt.ANALYST_ROLES[_d][0]}】**\n\n{_t}")
+                st.markdown(f"**【多方研究員】**\n\n{_cmt['bull']}")
+                st.markdown(f"**【空方研究員】**\n\n{_cmt['bear']}")
+                st.markdown(f"**【交易員】**\n\n{_cmt['trader']}")
+                st.markdown(f"**【風控主管】**\n\n{_cmt['risk']}")
+            st.caption("⚠️ 模擬機構決策流程屬研究輔助；LLM 委員會無經驗證的長期實績，非投資建議。")
 
     if "asst_chat" not in st.session_state:
         st.session_state["asst_chat"] = []
@@ -1613,6 +2033,38 @@ def page_ai_assistant():
                         except Exception:
                             pass   # 工具失敗不影響基本回答
 
+                    # 反思記憶：把 Bot 過去判斷的命中率/近期失誤餵回 context（FinMem 式）
+                    try:
+                        import json as _json
+
+                        import reflection as _rfl
+                        _sf = Path("watchlist_state.json")
+                        if _sf.exists():
+                            _s_ref = _rfl.summary_text(_json.loads(_sf.read_text(encoding="utf-8")))
+                            if _s_ref:
+                                context += f"\n\n【AI 判斷回顧】{_s_ref}"
+                    except Exception:
+                        pass
+
+                    # 單輪多空對辯（TradingAgents 式；文獻：一輪足矣，多輪遞減）
+                    if debate_on and "outlook" in intents and tickers:
+                        try:
+                            _bull = client.chat.completions.create(
+                                model=ai_model, temperature=0.4, max_tokens=450,
+                                messages=[{"role": "user",
+                                           "content": asst.DEBATE_BULL_PROMPT + "\n\n" + context}]
+                            ).choices[0].message.content
+                            _bear = client.chat.completions.create(
+                                model=ai_model, temperature=0.4, max_tokens=450,
+                                messages=[{"role": "user",
+                                           "content": asst.DEBATE_BEAR_PROMPT + "\n\n" + context}]
+                            ).choices[0].message.content
+                            context += ("\n\n=== 多空對辯（請在最終回答中裁決兩方論證的相對強度）===\n"
+                                        f"【多方最強論證】\n{_bull}\n【空方最強論證】\n{_bear}")
+                            st.caption("⚖️ 已完成單輪多空對辯")
+                        except Exception:
+                            pass   # 對辯失敗不影響基本回答
+
                     # 帶入近期對話（純文字）+ 當前資料
                     history = [{"role": m["role"], "content": m["content"]}
                                for m in st.session_state["asst_chat"][:-1][-6:]]
@@ -1648,8 +2100,6 @@ def page_ai_assistant():
 
 @st.cache_data(ttl=120)
 def _fetch_market_snapshot():
-    import yfinance as yf
-
     INDICES = {
         "^GSPC":     ("S&P 500",    "index"),
         "^IXIC":     ("NASDAQ",     "index"),
@@ -1669,41 +2119,14 @@ def _fetch_market_snapshot():
         "XLI": "工業", "XLU": "公用事業", "XLRE": "房地產",
         "XLB": "原物料", "XLC": "通訊",
     }
-    def _batch_closes(tickers: list[str], period: str) -> dict:
-        """一次批次下載多檔的收盤序列，穩健處理 MultiIndex 兩種版面。"""
-        try:
-            raw = yf.download(tickers, period=period, auto_adjust=True,
-                              progress=False, threads=True)
-        except Exception:
-            return {}
-        if raw is None or raw.empty:
-            return {}
-        out = {}
-        is_multi = isinstance(raw.columns, pd.MultiIndex)
-        for tkr in tickers:
-            try:
-                if is_multi:
-                    if ("Close", tkr) in raw.columns:
-                        s = raw[("Close", tkr)].dropna()
-                    elif (tkr, "Close") in raw.columns:
-                        s = raw[(tkr, "Close")].dropna()
-                    else:
-                        continue
-                else:                              # 平面欄位只在單檔時才對應該 ticker
-                    if len(tickers) != 1:
-                        continue
-                    s = raw["Close"].squeeze().dropna()
-                if len(s) >= 2:
-                    out[tkr] = s
-            except Exception:
-                continue
-        return out
+    # 批次下載共用 sector_scan._batch_closes（全專案唯一實作，MultiIndex 修補只改一處）
+    from sector_scan import _batch_closes
 
     # 指數與板塊兩批並行下載（22 次序列 → 2 次批次，快 3-5 倍）
     from concurrent.futures import ThreadPoolExecutor
     with ThreadPoolExecutor(max_workers=2) as ex:
-        f_idx = ex.submit(_batch_closes, list(INDICES.keys()), "5d")
-        f_sec = ex.submit(_batch_closes, list(SECTORS.keys()), "2mo")
+        f_idx = ex.submit(_batch_closes, list(INDICES.keys()), "5d", 2)
+        f_sec = ex.submit(_batch_closes, list(SECTORS.keys()), "2mo", 2)
         idx_closes = f_idx.result()
         sec_closes = f_sec.result()
 
@@ -1725,13 +2148,75 @@ def _fetch_market_snapshot():
     return snapshot, sectors
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_market_rss(max_n: int = 5):
+    """MarketWatch 頭條快取 5 分鐘——別讓每次 rerun 都打 RSS。"""
+    import feedparser
+    feed = feedparser.parse("https://feeds.marketwatch.com/marketwatch/topstories/")
+    return [(e.get("title", ""), e.get("link", "#"), e.get("published", ""))
+            for e in feed.entries[:max_n]]
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _cached_price_data(tickers: tuple, start: str):
+    """風險管理頁的價格矩陣快取 10 分鐘——調滑桿（α/λ/名目值）不再重新下載 5 年數據。"""
+    return load_price_data(list(tickers), start=start)
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _cached_intraday(ticker: str, period: str, interval: str):
+    """盤中走勢快取 1 分鐘（「即時」頁允許的最小新鮮度）。"""
+    import yfinance as yf
+    return yf.download(ticker, period=period, interval=interval,
+                       auto_adjust=True, progress=False)
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def _cached_dividends(tickers: tuple):
+    """各代碼的歷史股息序列（快取 1 天；帳本股息收入用）。"""
+    import yfinance as yf
+    out = {}
+    for t in tickers:
+        try:
+            d = yf.Ticker(t).dividends
+            if d is not None and len(d):
+                out[t] = d
+        except Exception:
+            continue
+    return out
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_candidates_prices(tickers: tuple):
+    """選股庫候選股一年歷史，快取 5 分鐘。"""
+    import yfinance as yf
+    return yf.download(list(tickers), period="1y", auto_adjust=True, progress=False)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _cached_portfolio_prices(tickers: tuple, start: str):
+    """持倉分析頁的價格下載快取 10 分鐘——調側欄設定不再重抓多年數據。"""
+    import yfinance as yf
+    return yf.download(list(tickers), start=pd.to_datetime(start),
+                       auto_adjust=True, progress=False)
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def _cached_watchlist_closes(tickers: tuple):
+    """警報頁監控清單的 5 日收盤，批次一次抓 + 快取 2 分鐘。"""
+    from sector_scan import _batch_closes
+    return _batch_closes(list(tickers), "5d", min_len=2)
+
+
 def page_market_overview():
     st.title("🏠 市場總覽")
     now_str = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M")
     st.caption(f"全球市場概覽 · 資料快取 2 分鐘 · 更新：{now_str}")
 
     if st.button("🔄 刷新數據"):
-        st.cache_data.clear()
+        # 只清本頁的快取；st.cache_data.clear() 會把全 app（基本面/產業掃描/選擇權…）全部冷掉
+        _fetch_market_snapshot.clear()
+        _cached_market_rss.clear()
         st.rerun()
 
     with st.spinner("載入市場數據…"):
@@ -1855,12 +2340,11 @@ def page_market_overview():
     # ── Quick news ─────────────────────────────────────────────────
     section("市場快訊")
     try:
-        import feedparser
-        feed = feedparser.parse("https://feeds.marketwatch.com/marketwatch/topstories/")
-        for entry in feed.entries[:5]:
+        import html as _html
+        for _t, _lk, _pub in _cached_market_rss(5):
             st.markdown(
-                f"**[{entry.get('title','')}]({entry.get('link','#')})**  \n"
-                f"<small style='color:#B8C0D0'>{entry.get('published','')}</small>",
+                f"**[{_html.escape(_t)}]({_lk})**  \n"
+                f"<small style='color:#B8C0D0'>{_html.escape(_pub)}</small>",
                 unsafe_allow_html=True,
             )
             st.markdown("---")
@@ -1942,10 +2426,11 @@ def page_market_overview():
                         st.error(f"AI 分析失敗：{e}")
 
         if "ov_ai_analysis" in st.session_state:
+            import html as _html
             st.markdown(
                 f"<div style='background:#1A1D27;border:1px solid #2D3142;border-radius:10px;"
                 f"padding:20px;margin-top:10px;color:#E8EAF0;line-height:1.7'>"
-                f"{st.session_state['ov_ai_analysis'].replace(chr(10),'<br>')}"
+                f"{_html.escape(st.session_state['ov_ai_analysis']).replace(chr(10),'<br>')}"
                 f"</div>",
                 unsafe_allow_html=True,
             )
@@ -1991,7 +2476,7 @@ def page_risk_management():
 
     with st.spinner("載入市場數據…"):
         try:
-            px_df = load_price_data(tickers, start=str(start))
+            px_df = _cached_price_data(tuple(tickers), str(start))
         except Exception as e:
             st.error(f"資料載入失敗：{e}")
             return
@@ -2221,6 +2706,50 @@ def page_risk_management():
                     "💡 **等權重**下，高波動標的會貢獻過多風險（看「風險貢獻%(等權)」欄差異）；"
                     "**等風險貢獻**讓每檔貢獻接近一致，降低單一標的主導組合波動。"
                 )
+
+                # ── 效率前緣（Markowitz MPT，學習自 PyPortfolioOpt）────────
+                st.markdown("---")
+                section("效率前緣（均值-變異數最適化）")
+                try:
+                    import portfolio_opt as po
+                    ef = po.efficient_frontier(r_df, n_points=25)
+                    w_mv = po.min_vol_weights(r_df)
+                    w_ms = po.max_sharpe_weights(r_df)
+                    if ef.empty or w_mv is None or w_ms is None:
+                        st.warning("最適化無解（標的過少或資料異常）。")
+                    else:
+                        mu_a, cov_a = po._annualize(r_df)
+                        pts = {
+                            "最小波動": po.port_perf(w_mv.to_numpy(), mu_a, cov_a),
+                            "最大 Sharpe": po.port_perf(w_ms.to_numpy(), mu_a, cov_a),
+                            "等權": po.port_perf(np.full(r_df.shape[1], 1 / r_df.shape[1]), mu_a, cov_a),
+                            "風險平價": po.port_perf(np.asarray(w_erc, dtype=float), mu_a, cov_a),
+                        }
+                        fig_ef = go.Figure()
+                        fig_ef.add_trace(go.Scatter(
+                            x=ef["vol"], y=ef["ret"], mode="lines",
+                            name="效率前緣", line=dict(color="#1E88E5", width=2)))
+                        for nm, (rt, vl) in pts.items():
+                            fig_ef.add_trace(go.Scatter(
+                                x=[vl], y=[rt], mode="markers+text", name=nm,
+                                text=[nm], textposition="top center",
+                                marker=dict(size=11)))
+                        fig_ef.update_layout(**PLOTLY_LAYOUT, height=430,
+                                             title="效率前緣（年化）",
+                                             xaxis_title="年化波動", yaxis_title="年化報酬")
+                        st.plotly_chart(fig_ef, use_container_width=True)
+
+                        ef_alloc = pd.DataFrame({
+                            "最小波動": w_mv, "最大 Sharpe": w_ms,
+                        }).fillna(0.0)
+                        st.dataframe(ef_alloc.style.format("{:.1%}"),
+                                     use_container_width=True)
+                        st.caption("以歷史報酬估計期望值——歷史非未來，最適權重對輸入極敏感，"
+                                   "僅供與等權/風險平價對照，非投資建議。")
+                except ImportError:
+                    st.info("找不到 portfolio_opt.py，請同步後重試（Colab 需更新 Cell 2）。")
+                except Exception as _ef_e:
+                    st.warning(f"效率前緣計算失敗：{_ef_e}")
             elif _qt is not None:
                 st.warning("請在 Tickers 加入至少 2 檔標的。")
 
@@ -2261,6 +2790,23 @@ def _cached_ticker_data(ticker: str, period: str):
         info = dict(tk.info) if tk.info else {}
     except Exception:
         info = {}
+    # 新版 yfinance 的 dividendYield 可能直接給百分比數字（0.44=0.44%）而非小數。
+    # 在源頭正規化成小數，顯示端一律 ×100（否則 AAPL 會顯示 44.00%）。
+    _dy = info.get("dividendYield")
+    if _dy is not None:
+        try:
+            _dy = float(_dy)
+            _rate, _px = info.get("dividendRate"), info.get("currentPrice") or info.get("regularMarketPrice")
+            if _rate and _px:                    # 最可靠：年配息 ÷ 股價
+                info["dividendYield"] = float(_rate) / float(_px)
+            elif _dy >= 1:                        # ≥1 幾乎必是百分比慣例
+                info["dividendYield"] = _dy / 100
+            # 尾端保險：>25% 的「殖利率」幾乎必是百分比值被當小數
+            # （犧牲極少數 Yieldmax 型超高配息 ETF 的無 rate 情況，換一般個股不再顯示 44.00%）
+            if info.get("dividendYield") and float(info["dividendYield"]) > 0.25:
+                info["dividendYield"] = float(info["dividendYield"]) / 100
+        except Exception:
+            pass
     # .info 在雲端常被 Yahoo 限流 → 用較穩的 fast_info 補市值/52週高低
     try:
         fi = tk.fast_info
@@ -2335,13 +2881,18 @@ def page_stock_research():
         if opt_sym and st.button("分析選擇權情緒", key="opt_go"):
             with st.spinner(f"抓取 {opt_sym} 選擇權鏈…"):
                 try:
-                    import options_sentiment as ops
                     summ = _cached_options(opt_sym)
                 except Exception as e:
                     summ = None
                     st.error(f"選擇權資料載入失敗：{e}")
+            # 存進 session_state，之後動其他 widget（Streamlit 會整頁重跑）結果不消失
+            # 注意：不能叫 "opt_result"——同頁參數最佳化 tab 已用該 key（型別不同會互炸）
+            st.session_state["optsent_result"] = (opt_sym, summ)
+        if st.session_state.get("optsent_result"):
+            import options_sentiment as ops
+            _opt_sym_r, summ = st.session_state["optsent_result"]
             if not summ:
-                st.warning(f"找不到 {opt_sym} 的選擇權資料（可能非選擇權標的、外股或當前無報價）。")
+                st.warning(f"找不到 {_opt_sym_r} 的選擇權資料（可能非選擇權標的、外股或當前無報價）。")
             else:
                 sent = ops.sentiment(summ)
                 sc = sent.get("score")
@@ -2499,12 +3050,10 @@ def page_stock_research():
                 with rs3: metric_card("Sharpe",     f"{sharpe_r:.2f}",   positive=sharpe_r > 1)
                 with rs4: metric_card("最大回撤",   f"{max_dd_r:.2%}",   positive=False)
 
-                # RSI
+                # RSI — 用 backtest.rsi（Wilder 公式），與 Bot 訊號/回測/校準同一個數字
                 section("動能指標 — RSI (14)")
-                gain_r = rets_r.clip(lower=0)
-                loss_r = (-rets_r).clip(lower=0)
-                rs_val = gain_r.rolling(14).mean() / loss_r.rolling(14).mean().replace(0, np.nan)
-                rsi_s  = 100 - 100 / (1 + rs_val)
+                import backtest as _bt
+                rsi_s = _bt.rsi(hist["Close"])
                 fig_rsi = go.Figure()
                 fig_rsi.add_trace(go.Scatter(x=rsi_s.index, y=rsi_s.values,
                                              name="RSI(14)", line=dict(color="#1E88E5", width=2)))
@@ -2525,13 +3074,14 @@ def page_stock_research():
                 section("近期新聞")
                 try:
                     news_items = news_data or []
+                    import html as _html
                     for item in news_items[:6]:
                         from datetime import datetime as _dt
                         pub_t   = item.get("providerPublishTime", 0)
                         pub_str = _dt.fromtimestamp(pub_t).strftime("%Y-%m-%d %H:%M") if pub_t else ""
                         st.markdown(
-                            f"**[{item.get('title','')}]({item.get('link','#')})**  \n"
-                            f"<small style='color:#B8C0D0'>{item.get('publisher','')} · {pub_str}</small>",
+                            f"**[{_html.escape(item.get('title',''))}]({item.get('link','#')})**  \n"
+                            f"<small style='color:#B8C0D0'>{_html.escape(item.get('publisher',''))} · {pub_str}</small>",
                             unsafe_allow_html=True,
                         )
                         st.markdown("---")
@@ -2664,24 +3214,24 @@ def page_stock_research():
         )
 
         if st.button("開始篩選", type="primary", key="sc_run"):
-            with st.spinner(f"篩選 {len(screen_tickers)} 檔，約需 15–30 秒…"):
+            with st.spinner(f"篩選 {len(screen_tickers)} 檔（批次下載）…"):
                 try:
+                    # 一次批次下載全清單（舊版逐檔 30 次請求要 15-30 秒）
+                    import backtest as _bt
+                    from sector_scan import _batch_closes as _bc
+                    closes_sc = _bc(screen_tickers, sc_period, min_len=10)
+                    if not closes_sc:
+                        st.warning("全部代碼都抓不到資料，請確認代碼或稍後再試。")
+                        st.stop()
                     rows_sc = []
                     for tkr_s in screen_tickers:
-                        try:
-                            _raw_s = yf.download(tkr_s, period=sc_period, auto_adjust=True, progress=False)
-                            if _raw_s.empty:
-                                continue
-                            s_s = _raw_s["Close"].squeeze().dropna()
-                        except Exception:
-                            continue
-                        if len(s_s) < 10:
+                        s_s = closes_sc.get(tkr_s)
+                        if s_s is None:
                             continue
                         r_s = s_s.pct_change().dropna()
-                        gain_s = r_s.clip(lower=0)
-                        loss_s = (-r_s).clip(lower=0)
-                        rs_s   = gain_s.rolling(14).mean() / loss_s.rolling(14).mean().replace(0, np.nan)
-                        rsi_sv = float(100 - 100 / (1 + rs_s.dropna().iloc[-1])) if not rs_s.dropna().empty else np.nan
+                        if r_s.empty:
+                            continue
+                        rsi_sv = float(_bt.rsi(s_s).iloc[-1]) if len(s_s) >= 15 else np.nan
                         rows_sc.append({
                             "代碼":     tkr_s,
                             "現價":     float(s_s.iloc[-1]),
@@ -2965,6 +3515,8 @@ def page_stock_research():
                             df_o = _bt2.normalize_ohlc(raw_o, opt_tkr)
                             opt = _bt2.optimize_params(df_o)
                             st.session_state["opt_result"] = (opt_tkr, opt)
+                            st.session_state["opt_raw_df"] = df_o          # 給 walk-forward 視覺化
+                            st.session_state.pop("wf_details", None)       # 換標的清舊快取
                     except Exception as e:
                         st.error(f"最佳化失敗：{e}")
 
@@ -2994,6 +3546,57 @@ def page_stock_research():
                     }),
                     use_container_width=True,
                 )
+
+                # 參數熱力圖（學自 backtesting.py plot_heatmaps）：
+                # 找「穩健高原」——整片亮的區域才可信，孤峰 = 過擬合
+                st.markdown("##### 參數熱力圖（停利 × 停損，取最佳持有期）")
+                _h_best = int(best["horizon"])
+                _hm = opt[opt["horizon"] == _h_best].pivot_table(
+                    index="sl", columns="tp", values="objective", aggfunc="max")
+                if not _hm.empty and _hm.size > 1:
+                    fig_hm = go.Figure(go.Heatmap(
+                        z=_hm.values,
+                        x=[f"{c:.0%}" for c in _hm.columns],
+                        y=[f"{r:.0%}" for r in _hm.index],
+                        colorscale="RdYlGn", colorbar=dict(title="綜合分")))
+                    fig_hm.update_layout(**PLOTLY_LAYOUT, height=360,
+                                         title=f"持有 {_h_best} 日 · 綜合分（期望值×獲利因子×穩健度）",
+                                         xaxis_title="停利", yaxis_title="停損")
+                    st.plotly_chart(fig_hm, use_container_width=True)
+                    st.caption("判讀：**整片亮區**（穩健高原）代表參數不敏感、較可信；"
+                               "**孤立亮點**通常是過擬合，實盤別指望。")
+
+                # Walk-forward 逐段明細（學自 vectorbt 的 IS/OOS 檢視）
+                st.markdown("##### Walk-forward 逐段檢視（最佳規則）")
+                try:
+                    import backtest as _btv
+                    _wfd = st.session_state.get("wf_details")
+                    if not _wfd or _wfd.get("key") != (o_tkr, best["best_rule"]):
+                        raw_wf = st.session_state.get("opt_raw_df")
+                        if raw_wf is not None:
+                            det = _btv.walk_forward_details(
+                                raw_wf, best["best_rule"], n_splits=4,
+                                tp=float(best["tp"]), sl=float(best["sl"]),
+                                horizon=int(best["horizon"]))
+                            _wfd = {"key": (o_tkr, best["best_rule"]), "det": det}
+                            st.session_state["wf_details"] = _wfd
+                    det = (_wfd or {}).get("det") or []
+                    if det:
+                        wf_df = pd.DataFrame(det)
+                        fig_wf = go.Figure(go.Bar(
+                            x=[f"第{d['fold']}段\n{d['start']}~{d['end']}" for d in det],
+                            y=[d["expectancy"] if d["expectancy"] is not None else 0 for d in det],
+                            marker_color=["#4CAF50" if (d["expectancy"] or 0) > 0 else "#F44336"
+                                          for d in det],
+                            text=[f"{d['trades']}筆" for d in det], textposition="outside"))
+                        fig_wf.update_layout(**PLOTLY_LAYOUT, height=320,
+                                             title="各時間段的每筆期望值（全綠=跨期穩定；有紅=僅特定時期有效）",
+                                             yaxis_title="期望值/筆", yaxis_tickformat="+.1%")
+                        st.plotly_chart(fig_wf, use_container_width=True)
+                    else:
+                        st.caption("（資料不足以切段，或該規則在部分時段無訊號）")
+                except Exception as _wf_e:
+                    st.caption(f"（walk-forward 檢視無法計算：{_wf_e}）")
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -3071,6 +3674,15 @@ def _cached_sector_scan(market: str, industries: tuple, period: str, with_fund: 
     return ss.scan_universe(industry_map, period=period, with_fundamentals=with_fund)
 
 
+@st.cache_data(ttl=900, show_spinner=False)
+def _cached_rrg_data():
+    """RRG 用的 11 檔 SPDR 板塊 ETF + SPY 一年收盤（快取 15 分鐘）。"""
+    from sector_scan import _batch_closes
+    etfs = ["XLK", "XLF", "XLE", "XLV", "XLY", "XLP",
+            "XLI", "XLU", "XLRE", "XLB", "XLC", "SPY"]
+    return _batch_closes(etfs, "1y", min_len=60)
+
+
 def page_sector_overview():
     st.title("🗂️ 產業總覽")
     st.caption("一次掃描整個市場/產業的標的 · 產業強弱輪動 + 風險分佈 · 可鑽取個股")
@@ -3080,6 +3692,62 @@ def page_sector_overview():
     except Exception:
         st.error("找不到 stock_db.py，請確認已同步（Colab 需更新 Cell 2）。")
         return
+
+    # ── RRG 相對輪動象限圖（板塊 ETF vs SPY，學習自 JdK RRG）──────────
+    with st.expander("🔄 RRG 板塊輪動象限圖（11 大 SPDR 板塊 vs SPY）", expanded=False):
+        st.caption("右上=領先(強且加速)、右下=轉弱、左下=落後、左上=轉強。"
+                   "採公開 z-score 近似公式（原版 JdK 未公開），週線視窗 10 週，軌跡為近 5 週。")
+        if st.button("計算 RRG", key="rrg_go"):
+            with st.spinner("抓取板塊 ETF 一年數據…"):
+                try:
+                    closes_rrg = _cached_rrg_data()
+                except Exception as e:
+                    closes_rrg = {}
+                    st.error(f"資料抓取失敗：{e}")
+            st.session_state["rrg_result"] = closes_rrg
+        _SECTOR_NAMES = {"XLK": "科技", "XLF": "金融", "XLE": "能源", "XLV": "醫療",
+                         "XLY": "非必需消費", "XLP": "必需消費", "XLI": "工業",
+                         "XLU": "公用事業", "XLRE": "房地產", "XLB": "原物料", "XLC": "通訊"}
+        closes_rrg = st.session_state.get("rrg_result")
+        if closes_rrg is not None:
+            bench_rrg = closes_rrg.get("SPY")
+            if bench_rrg is None:
+                st.warning("抓不到 SPY 基準資料，稍後再試。")
+            else:
+                import sector_scan as _ssc
+                fig_rrg = go.Figure()
+                q_colors = {"領先": "#4CAF50", "轉弱": "#FF9800",
+                            "落後": "#F44336", "轉強": "#1E88E5"}
+                summary_rows = []
+                for etf, name in _SECTOR_NAMES.items():
+                    m = _ssc.rrg_metrics(closes_rrg.get(etf), bench_rrg)
+                    if not m:
+                        continue
+                    xs = [p[0] for p in m["trail"]]
+                    ys = [p[1] for p in m["trail"]]
+                    fig_rrg.add_trace(go.Scatter(
+                        x=xs, y=ys, mode="lines+markers+text",
+                        text=[""] * (len(xs) - 1) + [name],
+                        textposition="top center", name=name,
+                        line=dict(color=q_colors[m["quadrant"]], width=1.5),
+                        marker=dict(size=[5] * (len(xs) - 1) + [11])))
+                    summary_rows.append({"板塊": name, "ETF": etf,
+                                         "RS-Ratio": round(m["rs_ratio"], 1),
+                                         "RS-Mom": round(m["rs_mom"], 1),
+                                         "象限": m["quadrant"]})
+                if summary_rows:
+                    fig_rrg.add_hline(y=100, line_color="#888", line_width=1)
+                    fig_rrg.add_vline(x=100, line_color="#888", line_width=1)
+                    fig_rrg.update_layout(**PLOTLY_LAYOUT, height=560, showlegend=False,
+                                          title="RRG — 相對強度 vs 相對動能（vs SPY，週線）",
+                                          xaxis_title="RS-Ratio（>100 相對強）",
+                                          yaxis_title="RS-Momentum（>100 加速中）")
+                    st.plotly_chart(fig_rrg, use_container_width=True)
+                    _rrg_df = pd.DataFrame(summary_rows).sort_values("RS-Ratio", ascending=False)
+                    st.dataframe(_rrg_df, use_container_width=True, hide_index=True)
+                    st.caption("經典用法：資金輪動順時針走（轉強→領先→轉弱→落後）。僅供判讀輪動位置，非投資建議。")
+                else:
+                    st.warning("資料不足，無法計算 RRG（各 ETF 需至少約 25 週資料）。")
 
     c1, c2, c3 = st.columns([1.2, 2, 1])
     with c1:
@@ -3210,6 +3878,27 @@ def _cached_insider(ticker: str):
     """快取 SEC Form 4 內部人交易彙總（1 小時；申報低頻）。"""
     import sec_insider as si
     return si.fetch_insider(ticker)
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _cached_analyst(ticker: str):
+    """快取分析師共識 + EPS surprise（1 小時）。"""
+    import analyst_data as ad
+    return ad.fetch_analyst(ticker)
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _cached_shorts(ticker: str):
+    """快取做空籌碼面（FINRA 日做空量 + 短倉 + SEC FTD，1 小時）。"""
+    import short_data as sd
+    return sd.fetch_short_overview(ticker)
+
+
+@st.cache_data(ttl=21600, show_spinner=False)
+def _cached_whale(cik: str, name: str):
+    """快取單一機構 13F 兩季比較（6 小時；季度資料本就低頻）。"""
+    import whales_13f as wf
+    return wf.fetch_whale(cik, name)
 
 
 def page_company_analysis():
@@ -3429,12 +4118,89 @@ def page_company_analysis():
                     except Exception as e:
                         st.error(f"AI 解讀失敗：{e}")
         if st.session_state.get("fa_ai_out"):
+            import html as _html
             st.markdown(
                 f"<div style='background:#1A1D27;border:1px solid #2D3142;border-radius:10px;"
                 f"padding:18px;color:#E8EAF0;line-height:1.7'>"
-                f"{st.session_state['fa_ai_out'].replace(chr(10),'<br>')}</div>",
+                f"{_html.escape(st.session_state['fa_ai_out']).replace(chr(10),'<br>')}</div>",
                 unsafe_allow_html=True,
             )
+
+    # ⑥.5 分析師共識與 EPS surprise ───────────────────────────────
+    section("分析師共識 · 財報 Beat 率")
+    if st.button("載入分析師數據", key="an_go"):
+        with st.spinner("抓取分析師評等/目標價/財報歷史…"):
+            try:
+                st.session_state["an_result"] = (data.get("ticker", ""),
+                                                 _cached_analyst(data.get("ticker", "")))
+            except Exception as e:
+                st.error(f"載入失敗：{e}")
+    _an_saved = st.session_state.get("an_result")
+    if _an_saved and _an_saved[0] == data.get("ticker"):
+        an = _an_saved[1]
+        a1, a2, a3, a4 = st.columns(4)
+        rat, tgt, sur = an.get("ratings"), an.get("targets"), an.get("surprises")
+        with a1:
+            metric_card("評等共識", f"{rat['score']:+.2f}" if rat else "—",
+                        positive=bool(rat and rat["score"] > 0))
+            if rat:
+                st.caption(f"{rat['label']}（{rat['total']} 位）")
+        with a2:
+            metric_card("目標價(均)", f"{tgt['mean']:.2f}" if tgt else "—")
+        with a3:
+            metric_card("上檔空間", f"{tgt['upside_mean']:+.1%}" if tgt else "—",
+                        positive=bool(tgt and tgt["upside_mean"] > 0))
+        with a4:
+            metric_card("EPS Beat 率", f"{sur['beat_rate']:.0%}（{sur['n']} 季）" if sur else "—",
+                        positive=bool(sur and sur["beat_rate"] >= 0.5))
+        if rat:
+            _d = rat["dist"]
+            st.caption(f"分佈：強買 {_d['strongBuy']}｜買 {_d['buy']}｜持有 {_d['hold']}"
+                       f"｜賣 {_d['sell']}｜強賣 {_d['strongSell']}")
+        if sur and sur.get("rows"):
+            st.markdown("**近季 EPS：預估 vs 實際**")
+            st.dataframe(pd.DataFrame(sur["rows"]).rename(
+                columns={"date": "日期", "estimate": "預估", "actual": "實際"}),
+                use_container_width=True, hide_index=True)
+        if an.get("upgrades"):
+            st.markdown("**近期評等調整**　" + "　".join(
+                f"{u['firm']}: {u['from'] or '—'}→{u['to']}（{u['date']}）"
+                for u in an["upgrades"][:4]))
+        st.caption("資料 yfinance + Finnhub 備援 · 分析師觀點僅供參考，非投資建議。")
+
+    # ⑥.7 做空籌碼（FINRA/SEC 官方數據，免 key）───────────────────
+    section("做空籌碼（Short Data）")
+    st.caption("FINRA 日做空量占比 + 短倉/流通比 + 回補天數 + SEC 失券（FTD）。僅美股。")
+    tkr_sh = data.get("ticker", "")
+    if "." in tkr_sh:
+        st.info("此標的非美股，FINRA/SEC 做空數據僅涵蓋美國市場。")
+    else:
+        if st.button("查詢做空數據", key="sh_go"):
+            with st.spinner(f"抓取 {tkr_sh} 做空數據（FINRA + SEC）…"):
+                try:
+                    st.session_state["sh_result"] = (tkr_sh, _cached_shorts(tkr_sh))
+                except Exception as e:
+                    st.error(f"查詢失敗：{e}")
+        _sh_saved = st.session_state.get("sh_result")
+        if _sh_saved and _sh_saved[0] == tkr_sh and _sh_saved[1]:
+            sh = _sh_saved[1]
+            s1, s2, s3, s4 = st.columns(4)
+            with s1:
+                metric_card("日做空量占比",
+                            f"{sh['short_vol_ratio']:.0%}" if sh.get("short_vol_ratio") is not None else "—")
+            with s2:
+                metric_card("短倉/流通",
+                            f"{sh['short_pct_float']:.1%}" if sh.get("short_pct_float") is not None else "—")
+            with s3:
+                metric_card("回補天數",
+                            f"{sh['days_to_cover']:.1f}" if sh.get("days_to_cover") is not None else "—")
+            with s4:
+                metric_card("短倉月變化",
+                            f"{sh['short_chg_1m']:+.0%}" if sh.get("short_chg_1m") is not None else "—")
+            for n in sh.get("notes", []):
+                st.markdown(f"- {n}")
+            st.caption(f"資料 FINRA（{sh.get('as_of', '最近交易日')}）/ yfinance / SEC FTD · "
+                       "做空數據屬定位訊號，高短倉≠必跌（可能軋空），非投資建議。")
 
     # ⑦ SEC 內部人交易（Form 4）─────────────────────────────────
     section("內部人交易（SEC Form 4）")
@@ -3443,16 +4209,25 @@ def page_company_analysis():
     tkr_ins = data.get("ticker", "")
     if "." in tkr_ins:
         st.info("此標的非美股，SEC Form 4 僅涵蓋美國掛牌公司。")
-    elif st.button("查詢內部人交易", key="ins_go"):
-        with st.spinner(f"查詢 {tkr_ins} 的 SEC Form 4…"):
-            try:
-                ins = _cached_insider(tkr_ins)
-            except Exception as e:
-                ins = None
-                st.error(f"SEC 查詢失敗：{e}")
-        if not ins:
+    else:
+        if st.button("查詢內部人交易", key="ins_go"):
+            with st.spinner(f"查詢 {tkr_ins} 的 SEC Form 4…"):
+                try:
+                    ins = _cached_insider(tkr_ins)
+                except Exception as e:
+                    ins = None
+                    st.error(f"SEC 查詢失敗：{e}")
+            # session_state 保存，動其他 widget 不消失；換股票時舊結果標記代碼避免張冠李戴
+            st.session_state["ins_result"] = (tkr_ins, ins)
+        _ins_saved = st.session_state.get("ins_result")
+        if _ins_saved and _ins_saved[0] != tkr_ins:
+            st.caption(f"（下方為 {_ins_saved[0]} 的查詢結果；按上方按鈕更新為 {tkr_ins}）")
+        if _ins_saved is None:
+            pass
+        elif not _ins_saved[1]:
             st.warning("查無近期 Form 4（可能無內部人申報，或代碼無法對應 SEC CIK）。")
         else:
+            ins = _ins_saved[1]
             sc = ins.get("score")
             k1, k2, k3, k4 = st.columns(4)
             k1.metric("內部人情緒", f"{sc:+.2f}" if sc is not None else "—", ins.get("label"))
@@ -3511,25 +4286,21 @@ def page_alerts():
             section("最新報價快照")
             with st.spinner("抓取報價…"):
                 try:
+                    # 批次一次抓整個清單（舊版逐檔 N 次請求）＋快取 2 分鐘
+                    closes_al = _cached_watchlist_closes(tuple(cfg["watchlist"]))
                     rows = []
                     for tk in cfg["watchlist"]:
-                        try:
-                            _r = yf.download(tk, period="5d", auto_adjust=True, progress=False)
-                            if _r.empty:
-                                continue
-                            s = _r["Close"].squeeze().dropna()
-                            if len(s) >= 2:
-                                chg1 = float(s.iloc[-1] / s.iloc[-2] - 1)
-                                chg5 = float(s.iloc[-1] / s.iloc[0]  - 1)
-                                rows.append({
-                                    "代碼": tk,
-                                    "現價": round(float(s.iloc[-1]), 2),
-                                    "1日%": chg1,
-                                    "5日%": chg5,
-                                    "趨勢": "▲" if chg1 > 0 else "▼",
-                                })
-                        except Exception:
-                            continue
+                        s = closes_al.get(tk)
+                        if s is not None and len(s) >= 2:
+                            chg1 = float(s.iloc[-1] / s.iloc[-2] - 1)
+                            chg5 = float(s.iloc[-1] / s.iloc[0]  - 1)
+                            rows.append({
+                                "代碼": tk,
+                                "現價": round(float(s.iloc[-1]), 2),
+                                "1日%": chg1,
+                                "5日%": chg5,
+                                "趨勢": "▲" if chg1 > 0 else "▼",
+                            })
                     if rows:
                         snap_df = pd.DataFrame(rows).set_index("代碼")
                         def _color(v):
@@ -3565,15 +4336,12 @@ def page_alerts():
             )
 
         if st.button("🔄 刷新", key="intra_refresh"):
-            st.cache_data.clear()
+            _cached_intraday.clear()   # 只清盤中數據，別把全 app 快取一起冷掉
 
         if intra_t:
             with st.spinner(f"載入 {intra_t} 即時數據…"):
                 try:
-                    intra = yf.download(
-                        intra_t, period=intra_per, interval=intra_int,
-                        auto_adjust=True, progress=False,
-                    )
+                    intra = _cached_intraday(intra_t, intra_per, intra_int)
                     if isinstance(intra.columns, pd.MultiIndex):
                         intra.columns = intra.columns.droplevel(1)
                 except Exception as e:
@@ -3653,11 +4421,8 @@ def page_alerts():
                             s = cl_sg[tk].dropna()
                             if len(s) < 50:
                                 continue
-                            r = s.pct_change().dropna()
-                            gain = r.clip(lower=0).rolling(14).mean()
-                            loss = (-r).clip(lower=0).rolling(14).mean()
-                            rs   = gain / loss.replace(0, np.nan)
-                            rsi  = float((100 - 100 / (1 + rs)).dropna().iloc[-1]) if not rs.dropna().empty else np.nan
+                            import backtest as _bt
+                            rsi = float(_bt.rsi(s).iloc[-1])
                             ma20 = float(s.rolling(20).mean().iloc[-1])
                             ma50 = float(s.rolling(50).mean().iloc[-1]) if len(s) >= 50 else np.nan
                             day_c = float(s.iloc[-1] / s.iloc[-2] - 1)
@@ -3678,18 +4443,21 @@ def page_alerts():
                                     "1日%": day_c, "RSI(14)": rsi,
                                     "訊號": " · ".join(tags),
                                 })
-                        if signals:
-                            sg_df = pd.DataFrame(signals).set_index("代碼")
-                            st.success(f"找到 {len(signals)} 檔觸發訊號")
-                            st.dataframe(
-                                sg_df.style.format({"現價": "{:.2f}", "1日%": "{:.2%}", "RSI(14)": "{:.1f}"}),
-                                use_container_width=True,
-                            )
-                            st.session_state["last_signals"] = signals
-                        else:
+                        st.session_state["last_signals"] = signals
+                        if not signals:
                             st.info("目前沒有觸發任何訊號。")
                     except Exception as e:
                         st.error(f"掃描失敗：{e}")
+
+        # 掃描結果表：從 session_state 渲染——按「推送」等按鈕（會 rerun）表格不再消失
+        if st.session_state.get("last_signals"):
+            _sigs_tbl = st.session_state["last_signals"]
+            sg_df = pd.DataFrame(_sigs_tbl).set_index("代碼")
+            st.success(f"找到 {len(_sigs_tbl)} 檔觸發訊號")
+            st.dataframe(
+                sg_df.style.format({"現價": "{:.2f}", "1日%": "{:.2%}", "RSI(14)": "{:.1f}"}),
+                use_container_width=True,
+            )
 
         # Push notifications
         if st.session_state.get("last_signals"):
@@ -4066,7 +4834,6 @@ def page_trading_tools():
         )
         try:
             import quant_tools as _qt
-            import yfinance as _yf
         except ImportError:
             _qt = None
             st.error("找不到 quant_tools.py，請確認已同步（Colab 需更新 Cell 2）。")
@@ -4085,10 +4852,11 @@ def page_trading_tools():
                 vt_maxlev = st.slider("最大槓桿", 1.0, 3.0, 2.0, 0.1, key="vt_ml")
 
             if st.button("計算波動率部位", type="primary", key="vt_run"):
+                st.session_state["vt_active"] = True    # 按過一次就保持顯示，調滑桿即時重算
+            if st.session_state.get("vt_active"):
                 with st.spinner(f"抓取 {vt_tkr} 波動數據…"):
                     try:
-                        raw_vt = _yf.download(vt_tkr, period="6mo",
-                                              auto_adjust=True, progress=False)
+                        _info_vt, raw_vt, _news_vt = _cached_ticker_data(vt_tkr, "6mo")
                         if raw_vt.empty:
                             st.error("無資料，請確認代碼。")
                         else:
