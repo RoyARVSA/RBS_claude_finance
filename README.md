@@ -15,7 +15,7 @@ Streamlit 網頁應用 + 獨立的訊號掃描 Bot（GitHub Actions 排程版 / 
 
 | 頁面 | 功能 |
 |------|------|
-| 💬 AI 助理 | **資深分析師模式：論點導向、事實vs推論分開、催化劑/情境/觀察指標；前瞻問題自動跑回測+選擇權+內部人+同業比較＋單輪多空對辯＋反思記憶（回顧自己過去判斷的命中率）** |
+| 💬 AI 助理 | **資深分析師模式＋🏛 機構決策委員會（分析師×4→多空對辯→交易員→硬風控→投資經理，與量化評分交叉比較）＋單輪多空對辯＋反思記憶** |
 | 🏠 市場總覽 | 即時指數/板塊/宏觀指標、**總經數據(FRED)**、市場快訊、**AI 自主市場分析** |
 | 📈 持倉分析 | 多資產組合：權益曲線、回撤、Sharpe、IR、Beta、**績效報告（CAGR/Sortino/Calmar/月報酬熱力圖/回撤期間）**、**交易帳本（成本基礎/TWR/XIRR/股息收入）** |
 | ⚠️ 風險管理 | VaR/CVaR、蒙地卡羅、Kupiec 回測、壓力測試、**風險平價配置 + 效率前緣（MPT）** |
@@ -121,6 +121,7 @@ short_data.py           做空籌碼：FINRA 日做空量 + 短倉/回補天數 
 whales_13f.py           超級投資人 13F：EDGAR 13F-HR 解析 + 兩季增減倉比較（免 key）
 ledger.py               交易帳本：平均成本/已未實現損益/TWR/XIRR/股息收入（Ghostfolio 式）
 reflection.py           AI 反思記憶：判斷 vs N 日後結果 → 命中率回饋（FinMem 式）
+committee.py            機構決策委員會：角色提示/立場解析/硬風控閘門/量化交叉比較（TradingAgents 式）
 alpaca_trader.py        Alpaca 紙上交易：下單決策(decide_orders) + REST client
 stock_db.py             選股資料庫（5 市場、30+ 產業、200+ 標的，含 AI 供應鏈瓶頸主題）
 rbs_lib.py              風險計算函式庫（VaR/CVaR/共變異數/情境）
