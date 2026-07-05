@@ -13,12 +13,15 @@ from __future__ import annotations
 
 T86_URL = "https://www.twse.com.tw/rwd/zh/fund/T86"
 
-# 我們需要的欄位（以「欄名包含關鍵字」對應，容忍 TWSE 欄名微調）
+# 我們需要的欄位——以「欄名前綴」對應（網查證實的實際欄名；經消費端程式碼交叉驗證）：
+# · 總計欄是「三大法人買賣超股數」（無「合計」——那是上櫃 TPEx 版的命名）
+# · 必須用**前綴**比對：「自營商買賣超股數」是「外資自營商買賣超股數」的子字串，
+#   用包含比對會錯抓到外資自營商欄
 _FIELD_KEYS = {
-    "foreign": "外陸資買賣超股數",     # 不含外資自營商
+    "foreign": "外陸資買賣超股數",     # 前綴匹配 → 外陸資買賣超股數(不含外資自營商)
     "trust":   "投信買賣超股數",
-    "dealer":  "自營商買賣超股數",     # 合計欄
-    "total":   "三大法人買賣超股數合計",
+    "dealer":  "自營商買賣超股數",     # 前綴匹配 → 合計欄（在 自行買賣/避險 子欄之前）
+    "total":   "三大法人買賣超股數",
 }
 
 
@@ -41,11 +44,11 @@ def parse_t86(payload: dict, stock_no: str) -> dict | None:
     data = payload.get("data") or []
     if not fields or not data:
         return None
-    # 欄名 → 索引（用包含比對，容忍全形空白/微調）
+    # 欄名 → 索引（前綴比對；取第一個符合者）
     idx: dict = {}
     for key, kw in _FIELD_KEYS.items():
         for i, f in enumerate(fields):
-            if kw in str(f).replace(" ", ""):
+            if str(f).replace(" ", "").startswith(kw):
                 idx[key] = i
                 break
     if "total" not in idx:
@@ -169,7 +172,7 @@ if __name__ == "__main__":
                    "投信買進股數", "投信賣出股數", "投信買賣超股數",
                    "自營商買賣超股數", "自營商買進股數(自行買賣)", "自營商賣出股數(自行買賣)",
                    "自營商買賣超股數(自行買賣)", "自營商買進股數(避險)", "自營商賣出股數(避險)",
-                   "自營商買賣超股數(避險)", "三大法人買賣超股數合計"],
+                   "自營商買賣超股數(避險)", "三大法人買賣超股數"],
         "data": [
             ["2330", "台積電", "30,000,000", "20,000,000", "10,000,000",
              "0", "0", "0", "2,000,000", "500,000", "1,500,000",
@@ -183,6 +186,7 @@ if __name__ == "__main__":
     print("2330:", row)
     assert row["foreign"] == 10_000_000 and row["trust"] == 1_500_000
     assert row["total"] == 11_800_000
+    assert row["dealer"] == 300_000        # 必須抓到合計欄(idx11)，不是外資自營商欄(idx7=0)
     row2 = parse_t86(PAYLOAD, "2317")
     assert row2["total"] == -3_600_000
     assert parse_t86(PAYLOAD, "9999") is None
