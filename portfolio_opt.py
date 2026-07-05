@@ -103,7 +103,7 @@ def hrp_weights(returns_df: pd.DataFrame) -> pd.Series | None:
         n = len(corr)
         if n < 2:
             return None
-        dist = np.sqrt(0.5 * (1 - corr.values))
+        dist = np.sqrt(np.clip(0.5 * (1 - corr.values), 0.0, 1.0))   # fp 噪聲防 NaN
         np.fill_diagonal(dist, 0.0)
         link = linkage(squareform(dist, checks=False), method="single")
         order = list(leaves_list(link))                     # 準對角化排序

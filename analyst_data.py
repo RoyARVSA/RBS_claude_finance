@@ -61,7 +61,9 @@ def summarize_surprises(rows: list) -> dict | None:
     if not done:
         return None
     beats = sum(1 for r in done if float(r["actual"]) > float(r["estimate"]))
-    sur = [(float(r["actual"]) - float(r["estimate"])) / abs(float(r["estimate"]))
+    # 每筆 surprise 夾在 ±300%：接近零的預估值會產生 4900% 這類極端值灌爆平均
+    sur = [max(-3.0, min(3.0,
+           (float(r["actual"]) - float(r["estimate"])) / abs(float(r["estimate"]))))
            for r in done if float(r["estimate"]) != 0]
     return {"n": len(done), "beats": beats,
             "beat_rate": beats / len(done),

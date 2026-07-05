@@ -129,8 +129,10 @@ def _fred_get(series_id: str, api_key: str, limit: int = 14) -> list:
 
 
 # 重要數據發布（FRED release id → 短名）；FOMC 不在 FRED releases，需另行留意
+# id 經網查核實：10=CPI、50=Employment Situation、53=GDP、54=PCE、
+# 9=Advance Retail Sales、13=G.17 Industrial Production、46=PPI
 KEY_RELEASES = {10: "CPI 通膨", 50: "非農就業", 53: "GDP", 54: "PCE 物價",
-                46: "零售銷售", 25: "工業生產"}
+                9: "零售銷售", 13: "工業生產", 46: "PPI 生產者物價"}
 
 
 def filter_release_dates(rows: list, today: str, days_ahead: int = 7) -> list:

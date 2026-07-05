@@ -78,20 +78,21 @@ def parse_stance(text: str) -> float | None:
 
 
 def parse_direction(text: str) -> str | None:
-    m = re.search(r"方向\s*[:：]\s*(做多|觀望|迴避)", text or "")
-    return m.group(1) if m else None
+    # 取「最後一個」匹配：提示要求結論在末行；前文可能討論「若…則方向: 觀望」
+    m = re.findall(r"方向\s*[:：]\s*(做多|觀望|迴避)", text or "")
+    return m[-1] if m else None
 
 
 def parse_risk_opinion(text: str) -> str | None:
-    m = re.search(r"風控意見\s*[:：]\s*(放行|有條件放行|否決)", text or "")
-    return m.group(1) if m else None
+    m = re.findall(r"風控意見\s*[:：]\s*(放行|有條件放行|否決)", text or "")
+    return m[-1] if m else None
 
 
 def parse_verdict(text: str) -> dict:
-    v = re.search(r"結論\s*[:：]\s*(買進|觀望|迴避)", text or "")
-    c = re.search(r"信心\s*[:：]\s*(低|中|高)", text or "")
-    return {"verdict": v.group(1) if v else None,
-            "confidence": c.group(1) if c else None}
+    v = re.findall(r"結論\s*[:：]\s*(買進|觀望|迴避)", text or "")
+    c = re.findall(r"信心\s*[:：]\s*(低|中|高)", text or "")
+    return {"verdict": v[-1] if v else None,
+            "confidence": c[-1] if c else None}
 
 
 # ── 硬風控閘門（確定性規則——LLM 不可推翻）────────────────────────────────────
@@ -153,6 +154,10 @@ if __name__ == "__main__":
     assert parse_risk_opinion("風控意見：有條件放行") == "有條件放行"
     v = parse_verdict("……\n結論: 觀望\n信心: 中")
     assert v == {"verdict": "觀望", "confidence": "中"}
+    # 前文提到假設性結論時，以最後一個為準（末行才是正式裁決）
+    v2 = parse_verdict("若風控否決則結論: 觀望。但綜合評估後——\n結論: 買進\n信心: 中")
+    assert v2["verdict"] == "買進"
+    assert parse_direction("討論過方向: 迴避 的情境…\n方向: 做多") == "做多"
 
     hc = hard_risk_check({"regime_label": "⚠️ 風險偏空", "ann_vol": 0.95,
                           "reflection_hit_rate": 0.3, "reflection_n": 8,
