@@ -1773,6 +1773,10 @@ def page_ai_assistant():
                    "文獻註記：LLM 委員會無經驗證的長期實績——價值在多視角決策紀律，非預測。")
         cmt_in = st.text_input("標的（美股，可逗號分隔多檔、最多 4 檔——同場會議比較取捨）",
                                "NVDA", key="cmt_tkr").upper().strip()
+        cmt_deep = st.checkbox(
+            "🔬 深度會議（+3 次呼叫：研究主管裁決辯論 → 風控激進/保守派對辯 → 風控主席）",
+            value=False, key="cmt_deep",
+            help="TradingAgents 完整版流程。標準模式 ~9 次呼叫，深度 ~12 次。")
         if st.button("🏛 召開投資決策會議", key="cmt_go") and cmt_in:
             if not ai_key:
                 st.error("請先在上方「⚙️ 設定」填入 LLM API Key。")
@@ -1836,17 +1840,42 @@ def page_ai_assistant():
                         except Exception:
                             pass
                         tech_secs.append(_td)
-                        # ATR 參考價位（給交易員的系統基準）
+                        # 完整價位結構（TradingAgents 式：所有論述掛在具體價位上）
                         try:
                             _cl, _hi, _lo = hist_c["Close"], hist_c["High"], hist_c["Low"]
+                            _vol_s = hist_c.get("Volume")
+                            _px = float(_cl.iloc[-1])
+                            _ema10 = float(_cl.ewm(span=10).mean().iloc[-1])
+                            _sma50 = float(_cl.rolling(50).mean().iloc[-1]) if len(_cl) >= 50 else None
+                            _sma200 = float(_cl.rolling(200).mean().iloc[-1]) if len(_cl) >= 200 else None
+                            _bmid = float(_cl.rolling(20).mean().iloc[-1])
+                            _bstd = float(_cl.rolling(20).std().iloc[-1])
+                            _bup, _bdn = _bmid + 2 * _bstd, _bmid - 2 * _bstd
+                            _vwma = None
+                            if _vol_s is not None:
+                                _vw_den = float(_vol_s.rolling(20).sum().iloc[-1])
+                                if _vw_den > 0:
+                                    _vwma = float((_cl * _vol_s).rolling(20).sum().iloc[-1] / _vw_den)
+                            _e12, _e26 = _cl.ewm(span=12).mean(), _cl.ewm(span=26).mean()
+                            _macd_l = _e12 - _e26
+                            _macd_v = float(_macd_l.iloc[-1])
+                            _macd_sig = float(_macd_l.ewm(span=9).mean().iloc[-1])
                             _tr = pd.concat([_hi - _lo, (_hi - _cl.shift()).abs(),
                                              (_lo - _cl.shift()).abs()], axis=1).max(axis=1)
                             _atr = float(_tr.rolling(14).mean().iloc[-1])
-                            _px = float(_cl.iloc[-1])
+
+                            def _lv(v):
+                                return f"{v:.2f}" if v is not None else "—"
+                            _struct = (f"　價位結構：10EMA {_lv(_ema10)}｜50SMA {_lv(_sma50)}｜"
+                                       f"200SMA {_lv(_sma200)}｜布林 {_lv(_bdn)}/{_lv(_bmid)}/{_lv(_bup)}｜"
+                                       f"VWMA20 {_lv(_vwma)}｜MACD {_macd_v:.2f}(訊號 {_macd_sig:.2f})｜"
+                                       f"ATR14 {_atr:.2f}")
+                            _td += "\n" + _struct
                             level_secs.append(
                                 f"{tk}: 現價 {_px:.2f}、ATR14 {_atr:.2f}、"
-                                f"系統停損參考(1.5×ATR) {_px - 1.5 * _atr:.2f}、"
-                                f"上檔參考(2×ATR) {_px + 2 * _atr:.2f}")
+                                f"停損參考(1.5×ATR) {_px - 1.5 * _atr:.2f}、上檔參考(2×ATR) {_px + 2 * _atr:.2f}；"
+                                f"關鍵價位 10EMA {_lv(_ema10)}／50SMA {_lv(_sma50)}／200SMA {_lv(_sma200)}／"
+                                f"布林下軌 {_lv(_bdn)}")
                         except Exception:
                             pass
                         try:
@@ -1893,6 +1922,12 @@ def page_ai_assistant():
                             sh_c = _cached_shorts(tk)
                             if sh_c and sh_c.get("notes"):
                                 _cp.append("做空面：" + "；".join(sh_c["notes"]))
+                        except Exception:
+                            pass
+                        try:
+                            _heads = [n.get("title", "") for n in (_n_c or [])[:4] if n.get("title")]
+                            if _heads:
+                                _cp.append("近期新聞標題：" + "／".join(_heads))
                         except Exception:
                             pass
                         chips_secs.append(f"【{tk}】\n" + ("\n".join(_cp) or "籌碼資料暫缺"))
@@ -1944,11 +1979,17 @@ def page_ai_assistant():
                     prog.update(label="多空研究員對辯中…")
                     bull_c = _llm_call(cmt.RESEARCHER_BULL + "\n\n" + all_rep, 420)
                     bear_c = _llm_call(cmt.RESEARCHER_BEAR + "\n\n" + all_rep, 420)
+                    rm_c = None
+                    if cmt_deep:                      # 深度：研究主管裁決辯論、給配置評級與分批框架
+                        prog.update(label="研究主管裁決辯論中…")
+                        rm_c = _llm_call(cmt.RESEARCH_MANAGER_PROMPT + "\n\n" + all_rep
+                                         + f"\n\n【多方】{bull_c}\n【空方】{bear_c}", 420)
                     prog.update(label="交易員提案中…")
-                    _levels = "【系統參考價位（ATR 基準）】\n" + "\n".join(level_secs)
+                    _levels = "【系統參考價位（ATR 基準 + 均線/布林結構）】\n" + "\n".join(level_secs)
                     _t_prompt = cmt.trader_prompt_multi(ok_tks) if multi else cmt.TRADER_PROMPT
                     trader_c = _llm_call(_t_prompt + "\n\n" + all_rep
                                          + f"\n\n{_levels}"
+                                         + (f"\n\n【研究主管指示】{rm_c}" if rm_c else "")
                                          + f"\n\n【多方】{bull_c}\n【空方】{bear_c}", 460)
                     # ③ 硬風控（確定性規則，LLM 不可推翻）
                     gfacts = {"regime_label": (regime_c or {}).get("label")}
@@ -1970,14 +2011,26 @@ def page_ai_assistant():
                         hard_c += [f"{tk}：{c}" for c in per]
                     if vol_worst is not None and vol_worst > 0.8:
                         hard_c.append(f"最高年化波動 {vol_worst:.0%} > 80%：該檔部位上限 5%")
+                    raggr_c = rcons_c = None
+                    if cmt_deep:                      # 深度：風控激進/保守派先對辯，主席再裁
+                        prog.update(label="風控激進派論證中…")
+                        raggr_c = _llm_call(cmt.RISK_AGGRESSIVE_PROMPT
+                                            + f"\n\n【交易員提案】\n{trader_c}\n\n{_levels}", 380)
+                        prog.update(label="風控保守派反駁中…")
+                        rcons_c = _llm_call(cmt.RISK_CONSERVATIVE_PROMPT
+                                            + f"\n\n【交易員提案】\n{trader_c}"
+                                            + f"\n\n【激進派】{raggr_c}\n\n{_levels}", 380)
                     prog.update(label="風控主管審查中…")
-                    risk_c = _llm_call(cmt.risk_prompt(hard_c) + "\n\n【交易員提案】\n" + trader_c, 340)
+                    risk_c = _llm_call(cmt.risk_prompt(hard_c) + "\n\n【交易員提案】\n" + trader_c
+                                       + (f"\n\n【激進派】{raggr_c}\n【保守派】{rcons_c}"
+                                          if raggr_c else ""), 360)
                     prog.update(label="投資經理裁決中…")
                     _pm_prompt = cmt.pm_prompt_multi(ok_tks) if multi else cmt.PM_PROMPT
                     pm_c = _llm_call(_pm_prompt + "\n\n" + all_rep
                                      + f"\n\n【多方】{bull_c}\n【空方】{bear_c}"
+                                     + (f"\n\n【研究主管】{rm_c}" if rm_c else "")
                                      + f"\n\n【交易員】{trader_c}\n\n【風控】{risk_c}",
-                                     mt=(560 if multi else 480))
+                                     mt=(620 if multi else 560))
                     if multi:
                         mres = cmt.parse_multi_verdict(pm_c, ok_tks)
                         crosses = {tk: cmt.compare_with_quant(
@@ -1996,6 +2049,7 @@ def page_ai_assistant():
                         "stances": ({d: cmt.parse_stance(t) for d, t in analysts_out.items()}
                                     if not multi else {}),
                         "bull": bull_c, "bear": bear_c, "trader": trader_c,
+                        "rm": rm_c, "raggr": raggr_c, "rcons": rcons_c,
                         "hard": hard_c, "risk": risk_c, "pm": pm_c,
                         "verdict": verdict_c, "mres": mres, "crosses": crosses,
                         "quants": quants, "cross": cross_c}
@@ -2044,6 +2098,10 @@ def page_ai_assistant():
                 with k4:
                     metric_card("交叉比較", (x or {}).get("agreement", "—"))
                 st.info(f"**交叉判讀**：{(x or {}).get('note', '')}")
+            _hz = ((_cmt.get("mres") or {}).get("horizon") if _cmt["multi"]
+                   else (_cmt["verdict"] or {}).get("horizon"))
+            if _hz:
+                st.caption(f"⏱ 適用時間框架：**{_hz}**")
             st.markdown(f"**🎯 投資經理裁決（{'、'.join(_tks_r)}）**\n\n{_cmt['pm']}")
             if _cmt["hard"]:
                 st.warning("**系統硬性風控限制（LLM 不可推翻）**\n\n"
@@ -2052,13 +2110,28 @@ def page_ai_assistant():
                 st.caption("分析師立場：" + "　".join(
                     f"{cmt.ANALYST_ROLES[d][0]} {(f'{s:+.1f}' if s is not None else '—')}"
                     for d, s in _cmt["stances"].items()))
-            with st.expander("📋 完整會議紀錄（分析師×4 / 多空對辯 / 交易員 / 風控）"):
+            _minutes = [f"# 投資決策會議紀錄（{'、'.join(_tks_r)}）\n"]
+            with st.expander("📋 完整會議紀錄（分析師×4 / 對辯 / 交易員 / 風控 / 裁決）"):
                 for _d, _t in _cmt["analysts"].items():
                     st.markdown(f"**【{cmt.ANALYST_ROLES[_d][0]}】**\n\n{_t}")
-                st.markdown(f"**【多方研究員】**\n\n{_cmt['bull']}")
-                st.markdown(f"**【空方研究員】**\n\n{_cmt['bear']}")
-                st.markdown(f"**【交易員】**\n\n{_cmt['trader']}")
-                st.markdown(f"**【風控主管】**\n\n{_cmt['risk']}")
+                    _minutes.append(f"## {cmt.ANALYST_ROLES[_d][0]}\n{_t}\n")
+                for _lbl, _key in (("多方研究員", "bull"), ("空方研究員", "bear"),
+                                   ("研究主管", "rm"), ("交易員", "trader"),
+                                   ("風控激進派", "raggr"), ("風控保守派", "rcons"),
+                                   ("風控主管", "risk")):
+                    _val = _cmt.get(_key)
+                    if _val:
+                        st.markdown(f"**【{_lbl}】**\n\n{_val}")
+                        _minutes.append(f"## {_lbl}\n{_val}\n")
+                _minutes.append(f"## 投資經理最終裁決\n{_cmt['pm']}\n")
+                if _cmt["hard"]:
+                    _minutes.append("## 系統硬性風控限制\n"
+                                    + "\n".join(f"- {c}" for c in _cmt["hard"]) + "\n")
+                _minutes.append("\n> 分析教育用途，非投資建議。")
+            st.download_button("⬇ 下載完整會議紀錄 (.md)",
+                               "\n".join(_minutes).encode("utf-8"),
+                               f"committee_{'_'.join(_tks_r)}.md", "text/markdown",
+                               key="cmt_dl")
             st.caption("⚠️ 模擬機構決策流程屬研究輔助；LLM 委員會無經驗證的長期實績，非投資建議。")
 
     if "asst_chat" not in st.session_state:
