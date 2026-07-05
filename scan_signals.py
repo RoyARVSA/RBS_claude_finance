@@ -703,7 +703,7 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
             bool_keys = {"macd_enabled", "bb_enabled", "atr_enabled", "scan_market_only",
                          "cooldown_enabled", "regime_filter_enabled",
                          "position_sizing_enabled", "briefing_enabled", "mtf_enabled",
-                         "autotrade_enabled"}
+                         "autotrade_enabled", "weekly_enabled"}
             float_keys = {"rsi_oversold", "rsi_overbought", "price_change_pct",
                           "vol_spike_ratio", "cooldown_hours",
                           "account_size", "risk_pct", "atr_mult", "briefing_hour_et",
@@ -1776,7 +1776,7 @@ def weekly_report(state: dict) -> str:
     """
     from sector_scan import _batch_closes
     now_et = datetime.now(ET)
-    lines = [f"📒 *RBS 每週深度週報* — {now_et.strftime('%Y-%m-%d')}（週）"]
+    lines = [f"📒 *RBS 每週深度週報* — {now_et.strftime('%Y-%m-%d')}"]
 
     # 指數本週表現
     try:
@@ -1797,17 +1797,32 @@ def weekly_report(state: dict) -> str:
         results = scan(state["watchlist"], state["thresholds"],
                        calibration=_calibration_weights(state))
         ranked = sorted(results, key=lambda r: -r.get("score", 0))
-        if ranked:
+        if len(ranked) >= 6:
             top = "、".join(f"{r['ticker']}({r['score']:+.2f})" for r in ranked[:3])
             bot = "、".join(f"{r['ticker']}({r['score']:+.2f})" for r in ranked[-3:][::-1])
             lines.append(f"🏆 最強：{top}\n🥶 最弱：{bot}")
+        elif ranked:                              # 清單太短就列全表，避免最強/最弱重疊
+            lines.append("📊 評分：" + "、".join(
+                f"{r['ticker']}({r['score']:+.2f})" for r in ranked))
     except Exception:
         pass
 
-    # 決策計分板（反思記憶）
+    # 決策計分板（反思記憶＋委員會紀錄——app 會把 committee_log.json commit 進 repo，
+    # cron 的 checkout 讀得到）
     try:
+        import json as _json_w
+        from pathlib import Path as _P_w
+
         import reflection as rfl
-        sb = rfl.scoreboard(state.get("reflections", {}).get("history", []))
+        hist_w = list(state.get("reflections", {}).get("history", []))
+        try:
+            _clf = _P_w("committee_log.json")
+            if _clf.exists():
+                hist_w += (_json_w.loads(_clf.read_text(encoding="utf-8"))
+                           .get("reflections", {}).get("history", []))
+        except Exception:
+            pass
+        sb = rfl.scoreboard(hist_w)
         for r_ in sb:
             if r_["hit_rate"] is not None:
                 lines.append(f"🎯 {rfl.SOURCE_LABELS.get(r_['source'], r_['source'])}"

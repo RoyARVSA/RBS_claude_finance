@@ -86,6 +86,7 @@ streamlit run app.py
 | `FRED_API_KEY` | 總經數據 | 總經指標區塊不顯示 | [fred.stlouisfed.org](https://fred.stlouisfed.org/) |
 | `FINNHUB_API_KEY` | 基本面備援 | yfinance `.info` 被限流時，市值/P/E/ROE 顯示「—」 | [finnhub.io](https://finnhub.io/) |
 | `ALPACA_KEY_ID` + `ALPACA_SECRET_KEY` | 模擬交易（**paper**）| 模擬交易不執行 | [alpaca.markets](https://alpaca.markets/) Trading API |
+| `GITHUB_TOKEN` | 決策計分板持久化（委員會紀錄 commit 進 repo） | 紀錄只存本地，app 重啟即消失 | GitHub → Fine-grained PAT，**只授權本 repo 的 Contents 讀寫**（勿用全域 classic token） |
 
 > SEC 內部人交易（Form 4）走 EDGAR、選擇權情緒走 yfinance，兩者**皆免 key**。
 > SEC 可選設 `SEC_USER_AGENT` 自訂聯絡用 User-Agent（選填，有預設值即可用）。

@@ -4278,7 +4278,8 @@ def _save_cmt_log(log: dict) -> str:
             pass
     try:
         Path(_CMT_LOG_PATH).write_text(payload, encoding="utf-8")
-        return "本地暫存（app 重啟會消失；設 GITHUB_TOKEN secret 可持久化）"
+        return ("本地暫存（GitHub 保存失敗，稍後重試）" if tk
+                else "本地暫存（app 重啟會消失；設 GITHUB_TOKEN secret 可持久化）")
     except Exception:
         return "保存失敗"
 
