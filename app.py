@@ -1771,7 +1771,7 @@ def page_ai_assistant():
         st.caption("模擬一家金融機構的完整決策鏈（約 9 次 LLM 呼叫、30-90 秒），"
                    "硬性風控由系統規則判定、LLM 不可推翻，最後與量化評分交叉比較。"
                    "文獻註記：LLM 委員會無經驗證的長期實績——價值在多視角決策紀律，非預測。")
-        cmt_in = st.text_input("標的（美股，可逗號分隔多檔、最多 4 檔——同場會議比較取捨）",
+        cmt_in = st.text_input("標的（美股/台股，可逗號分隔多檔、最多 4 檔——同場會議比較取捨）",
                                "NVDA", key="cmt_tkr").upper().strip()
         cmt_deep = st.checkbox(
             "🔬 深度會議（+3 次呼叫：研究主管裁決辯論 → 風控激進/保守派對辯 → 風控主席）",
@@ -1926,6 +1926,15 @@ def page_ai_assistant():
                                 _cp.append("做空面：" + "；".join(sh_c["notes"]))
                         except Exception:
                             pass
+                        if tk.endswith(".TW"):
+                            try:
+                                import tw_flows as _twf3
+                                _twacc = _cached_tw_flows(tk)
+                                _twt = _twf3.flows_text(_twacc) if _twacc else None
+                                if _twt:
+                                    _cp.append("三大法人：" + _twt)
+                            except Exception:
+                                pass
                         try:
                             for _h in [n.get("title", "") for n in (_n_c or [])[:4] if n.get("title")]:
                                 all_heads.append((tk, _h))   # 收集後統一逐篇標注多空
@@ -4180,6 +4189,13 @@ def _cached_shorts(ticker: str):
     return sd.fetch_short_overview(ticker)
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def _cached_tw_flows(ticker: str):
+    """快取台股三大法人近 5 日買賣超（1 小時；TWSE 每日盤後更新）。"""
+    import tw_flows as twf
+    return twf.fetch_flows(ticker, days=5)
+
+
 @st.cache_data(ttl=21600, show_spinner=False)
 def _cached_whale(cik: str, name: str):
     """快取單一機構 13F 兩季比較（6 小時；季度資料本就低頻）。"""
@@ -4538,8 +4554,42 @@ def page_company_analysis():
     section("做空籌碼（Short Data）")
     st.caption("FINRA 日做空量占比 + 短倉/流通比 + 回補天數 + SEC 失券（FTD）。僅美股。")
     tkr_sh = data.get("ticker", "")
-    if "." in tkr_sh:
-        st.info("此標的非美股，FINRA/SEC 做空數據僅涵蓋美國市場。")
+    if tkr_sh.endswith(".TW"):
+        # 台股籌碼面 = 三大法人買賣超（TWSE 免 key）
+        if st.button("查詢三大法人買賣超", key="twf_go"):
+            with st.spinner(f"抓取 {tkr_sh} 近 5 日法人動向（TWSE）…"):
+                try:
+                    st.session_state["twf_result"] = (tkr_sh, _cached_tw_flows(tkr_sh))
+                except Exception as e:
+                    st.error(f"查詢失敗：{e}")
+        _twf_saved = st.session_state.get("twf_result")
+        if _twf_saved and _twf_saved[0] == tkr_sh:
+            twf_acc = _twf_saved[1]
+            if not twf_acc:
+                st.warning("查無法人資料（非上市股票、或 TWSE 暫時無回應；上櫃股票暫不支援）。")
+            else:
+                import tw_flows as _twf2
+                f1, f2, f3, f4 = st.columns(4)
+                with f1:
+                    metric_card("外資（5日）", f"{twf_acc['foreign_lots']:+,.0f} 張"
+                                if twf_acc.get("foreign_lots") is not None else "—",
+                                positive=bool((twf_acc.get("foreign_lots") or 0) > 0))
+                with f2:
+                    metric_card("投信（5日）", f"{twf_acc['trust_lots']:+,.0f} 張"
+                                if twf_acc.get("trust_lots") is not None else "—",
+                                positive=bool((twf_acc.get("trust_lots") or 0) > 0))
+                with f3:
+                    metric_card("自營（5日）", f"{twf_acc['dealer_lots']:+,.0f} 張"
+                                if twf_acc.get("dealer_lots") is not None else "—")
+                with f4:
+                    metric_card("外資/投信連買", f"{twf_acc.get('foreign_streak', 0)} / "
+                                                f"{twf_acc.get('trust_streak', 0)} 日")
+                _ft = _twf2.flows_text(twf_acc)
+                if _ft:
+                    st.markdown(f"- {_ft}")
+                st.caption("資料 TWSE（上市）盤後 · 外資含陸資、不含外資自營商 · 非投資建議。")
+    elif "." in tkr_sh:
+        st.info("此標的非美股/台股上市，做空與法人數據暫不支援。")
     else:
         if st.button("查詢做空數據", key="sh_go"):
             with st.spinner(f"抓取 {tkr_sh} 做空數據（FINRA + SEC）…"):
