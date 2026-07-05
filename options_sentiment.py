@@ -161,6 +161,92 @@ def format_options_text(summary: dict, sent: dict | None = None) -> str:
     return "\n".join(lines)
 
 
+_CBOE_RE = None   # lazy compile
+
+
+def parse_cboe(payload: dict, today: str, within_days: int = 45,
+               max_expiries: int = 3):
+    """
+    解析 CBOE 免 key 延遲報價 JSON（cdn.cboe.com …/options/{SYM}.json）→
+    (chains=[(calls_df, puts_df)...], expiries, spot)。純函數，離線可測。
+    選擇權代碼格式：ROOT + YYMMDD + C/P + 履約價×1000（8 位）。
+    """
+    import re as _re
+    global _CBOE_RE
+    if _CBOE_RE is None:
+        _CBOE_RE = _re.compile(r"^[A-Z.]{1,6}(\d{6})([CP])(\d{8})$")
+    import datetime as _dt
+
+    import pandas as pd
+    data = (payload or {}).get("data") or {}
+    spot = None
+    for k in ("current_price", "close", "last_trade_price"):
+        try:
+            v = float(data.get(k))
+            if v > 0:
+                spot = v
+                break
+        except (TypeError, ValueError):
+            continue
+    try:
+        t0 = _dt.date.fromisoformat(today)
+    except ValueError:
+        return [], [], spot
+
+    by_exp: dict = {}
+    for o in data.get("options") or []:
+        m = _CBOE_RE.match(str(o.get("option", "")).replace(" ", ""))
+        if not m:
+            continue
+        ymd, cp, strike_s = m.groups()
+        try:
+            exp = _dt.datetime.strptime(ymd, "%y%m%d").date()
+        except ValueError:
+            continue
+        dte = (exp - t0).days
+        if not (0 <= dte <= within_days):
+            continue
+        row = {"strike": int(strike_s) / 1000.0,
+               "volume": o.get("volume"),
+               "openInterest": o.get("open_interest"),
+               "impliedVolatility": o.get("iv")}
+        by_exp.setdefault(exp.isoformat(), {"C": [], "P": []})[cp].append(row)
+
+    chains, expiries = [], []
+    for e in sorted(by_exp.keys())[:max_expiries]:
+        calls = pd.DataFrame(by_exp[e]["C"])
+        puts = pd.DataFrame(by_exp[e]["P"])
+        if calls.empty and puts.empty:
+            continue
+        chains.append((calls, puts))
+        expiries.append(e)
+    return chains, expiries, spot
+
+
+def _fetch_cboe(ticker: str) -> dict | None:
+    """CBOE 備援：yfinance 選擇權抓不到時的免 key 來源（僅美股單一代碼）。"""
+    import datetime as _dt
+
+    import requests
+    sym = ticker.upper().strip()
+    if not sym.isalpha() or len(sym) > 6:
+        return None
+    try:
+        r = requests.get(f"https://cdn.cboe.com/api/global/delayed_quotes/options/{sym}.json",
+                         timeout=20, headers={"User-Agent": "Mozilla/5.0"})
+        if not r.ok:
+            return None
+        chains, exps, spot = parse_cboe(r.json(), _dt.date.today().isoformat())
+    except Exception:
+        return None
+    if not chains:
+        return None
+    summary = summarize_chains(chains, spot, exps)
+    summary["ticker"] = ticker
+    summary["source"] = "CBOE 延遲報價（yfinance 備援）"
+    return summary
+
+
 # ── 抓取層（需網路；此環境代理擋 yfinance，部署後實測）────────────────────────
 
 def fetch_options(ticker: str, max_expiries: int = 3, within_days: int = 45) -> dict | None:
@@ -175,9 +261,9 @@ def fetch_options(ticker: str, max_expiries: int = 3, within_days: int = 45) -> 
     try:
         exps = list(tk.options or [])
     except Exception:
-        return None
+        exps = []
     if not exps:
-        return None
+        return _fetch_cboe(ticker)          # yfinance 沒選擇權 → CBOE 免 key 備援
 
     # 現價：fast_info 優先，退回歷史收盤
     spot = None
@@ -213,7 +299,7 @@ def fetch_options(ticker: str, max_expiries: int = 3, within_days: int = 45) -> 
         except Exception:
             continue
     if not chains:
-        return None
+        return _fetch_cboe(ticker)          # 鏈全抓失敗 → CBOE 備援
 
     summary = summarize_chains(chains, spot, picked)
     summary["ticker"] = ticker

@@ -128,6 +128,59 @@ def _fred_get(series_id: str, api_key: str, limit: int = 14) -> list:
         return []
 
 
+# 重要數據發布（FRED release id → 短名）；FOMC 不在 FRED releases，需另行留意
+KEY_RELEASES = {10: "CPI 通膨", 50: "非農就業", 53: "GDP", 54: "PCE 物價",
+                46: "零售銷售", 25: "工業生產"}
+
+
+def filter_release_dates(rows: list, today: str, days_ahead: int = 7) -> list:
+    """
+    純函數：從 FRED releases/dates 列（[{release_id, release_name, date}]）
+    篩出 today ~ today+days_ahead 內的重要發布。回 [(date, 短名)] 依日期排序去重。
+    """
+    import datetime as _dt
+    try:
+        t0 = _dt.date.fromisoformat(today)
+    except ValueError:
+        return []
+    t1 = t0 + _dt.timedelta(days=days_ahead)
+    seen, out = set(), []
+    for r in rows or []:
+        rid = r.get("release_id")
+        if rid not in KEY_RELEASES:
+            continue
+        try:
+            d = _dt.date.fromisoformat(str(r.get("date")))
+        except ValueError:
+            continue
+        if t0 <= d <= t1 and (rid, d) not in seen:
+            seen.add((rid, d))
+            out.append((d.isoformat(), KEY_RELEASES[rid]))
+    out.sort()
+    return out
+
+
+def fetch_release_calendar(api_key: str, days_ahead: int = 7) -> list:
+    """本週重要總經數據發布日（FRED releases/dates，含未來排程）。失敗回 []。"""
+    if not api_key:
+        return []
+    import datetime as _dt
+
+    import requests
+    try:
+        r = requests.get("https://api.stlouisfed.org/fred/releases/dates",
+                         params={"api_key": api_key, "file_type": "json",
+                                 "include_release_dates_with_no_data": "true",
+                                 "realtime_start": _dt.date.today().isoformat(),
+                                 "realtime_end": "9999-12-31",
+                                 "sort_order": "asc", "limit": 500},
+                         timeout=20)
+        rows = (r.json() or {}).get("release_dates", []) if r.ok else []
+    except Exception:
+        return []
+    return filter_release_dates(rows, _dt.date.today().isoformat(), days_ahead)
+
+
 def fetch_macro(api_key: str) -> dict:
     """
     抓所有關鍵總經序列。回 {key: {value, prev, chg, date, label, unit}}，

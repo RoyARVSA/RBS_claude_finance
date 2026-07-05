@@ -89,6 +89,53 @@ def efficient_frontier(returns_df: pd.DataFrame, n_points: int = 25,
     return pd.DataFrame(rows)
 
 
+def hrp_weights(returns_df: pd.DataFrame) -> pd.Series | None:
+    """
+    HRP 階層風險平價（López de Prado；Riskfolio 的招牌）。
+    相關性距離 → 階層聚類 → 準對角化 → 遞迴二分反變異數配置。
+    不需期望報酬（比均值-變異數穩健）、不需矩陣求逆。失敗回 None。
+    """
+    try:
+        from scipy.cluster.hierarchy import leaves_list, linkage
+        from scipy.spatial.distance import squareform
+        corr = returns_df.corr()
+        cov = returns_df.cov()
+        n = len(corr)
+        if n < 2:
+            return None
+        dist = np.sqrt(0.5 * (1 - corr.values))
+        np.fill_diagonal(dist, 0.0)
+        link = linkage(squareform(dist, checks=False), method="single")
+        order = list(leaves_list(link))                     # 準對角化排序
+        tickers = [returns_df.columns[i] for i in order]
+        w = pd.Series(1.0, index=tickers)
+
+        def _cluster_var(items):
+            sub = cov.loc[items, items].values
+            ivp = 1 / np.diag(sub)
+            ivp /= ivp.sum()
+            return float(ivp @ sub @ ivp)
+
+        clusters = [tickers]
+        while clusters:
+            nxt = []
+            for cl in clusters:
+                if len(cl) < 2:
+                    continue
+                mid = len(cl) // 2
+                left, right = cl[:mid], cl[mid:]
+                vl, vr = _cluster_var(left), _cluster_var(right)
+                alpha = 1 - vl / (vl + vr) if (vl + vr) > 0 else 0.5
+                w[left] *= alpha
+                w[right] *= (1 - alpha)
+                nxt += [left, right]
+            clusters = nxt
+        w = w / w.sum()
+        return w.reindex(returns_df.columns)
+    except Exception:
+        return None
+
+
 # ── CLI 自我測試 ──────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -127,5 +174,13 @@ if __name__ == "__main__":
     # 前緣上任一點的波動不小於最小波動組合
     assert (ef["vol"] >= vol_mv - 1e-9).all()
     print(f"  前緣 {len(ef)} 點：ret {ef['ret'].iloc[0]:.3f}→{ef['ret'].iloc[-1]:.3f}")
+
+    whrp = hrp_weights(rets)
+    assert whrp is not None and abs(whrp.sum() - 1) < 1e-9 and (whrp >= 0).all()
+    ret_hp, vol_hp = port_perf(whrp.to_numpy(), mu, cov)
+    print(f"  HRP  vol={vol_hp:.4f}  權重={dict(whrp.round(3))}")
+    assert vol_hp <= vol_eq + 1e-9              # HRP 分散應優於等權
+    assert whrp["BOND"] == whrp.max()           # 低波動資產拿最大權重
+    assert hrp_weights(rets[["BOND"]]) is None  # 單資產無法聚類
 
     print("\n✅ portfolio_opt 純邏輯測試通過")
