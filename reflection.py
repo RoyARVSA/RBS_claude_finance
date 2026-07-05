@@ -30,10 +30,11 @@ def record_pick(state: dict, ticker: str, score: float, price: float,
     """記錄一筆方向判斷（同日同代碼去重）。score 正=偏多、負=偏空。"""
     if not ticker or price is None or price <= 0:
         return False
+    ticker = ticker.upper()          # 先正規化再去重，小寫呼叫端才不會繞過
     r = _refl(state)
     if any(p["ticker"] == ticker and p["date"] == date for p in r["pending"]):
         return False
-    r["pending"].append({"ticker": ticker.upper(), "score": round(float(score), 2),
+    r["pending"].append({"ticker": ticker, "score": round(float(score), 2),
                          "price": float(price), "date": date})
     r["pending"] = r["pending"][-PENDING_CAP:]
     return True

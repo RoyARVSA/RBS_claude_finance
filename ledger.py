@@ -63,7 +63,7 @@ def positions_and_realized(trades: list[dict]) -> tuple[dict, list[str], list[di
             p["qty"] -= t["qty"]
             p["cost"] = p["avg_cost"] * p["qty"]
             if p["qty"] < 1e-9:
-                p["qty"], p["cost"] = 0.0, 0.0
+                p["qty"], p["cost"], p["avg_cost"] = 0.0, 0.0, 0.0   # 清倉即歸零，避免顯示過期均價
         accepted.append(t)
     return pos, errs, accepted
 
@@ -84,6 +84,8 @@ def equity_curve(trades: list[dict], prices: pd.DataFrame) -> pd.DataFrame:
     qty = pd.DataFrame(0.0, index=idx, columns=sorted({t["ticker"] for t in trades}))
     flow = pd.Series(0.0, index=idx)
     for t in trades:
+        if t["ticker"] not in prices.columns:
+            continue    # 沒價格的標的：qty 與 flow 一起跳過，否則 flow 入帳但市值為零會扭曲 TWR
         # 交易日若非交易所開盤日，落到下一個可用日
         pos_dates = idx[idx >= t["date"]]
         if len(pos_dates) == 0:
