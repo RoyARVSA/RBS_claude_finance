@@ -42,8 +42,9 @@ Streamlit 網頁應用 + 獨立的訊號掃描 Bot（GitHub Actions 排程版 / 
 - **財報行事曆提醒**：觀察清單標的財報前 N 天自動提醒（晨報 + `/earnings`）
 - **到價警報**：`/alert AAPL 200` 突破/跌破即推播，觸發後自動移除（上限 20 個）
 - **Alpaca 模擬交易**：訊號自動下模擬單驗證策略實效（預設關閉，`/autotrade on` 啟用）
-- **Telegram 指令**：清單 `/add /remove /list`、分析 `/rank /fundamentals /options /insider /earnings /briefing`、
-  風控 `/risk /protections /calibrate`、模擬交易 `/autotrade /positions /pnl /journal /closeall`（`/help` 看全部）
+- **Telegram 指令**：清單 `/add /remove /list`、分析 `/rank /fundamentals /options /insider /whales /earnings /briefing /weekly`、
+  **AI `/committee`（手機開機構決策會議）**、警報 `/alert`、風控 `/risk /protections /calibrate`、
+  模擬交易 `/autotrade /positions /pnl /journal /closeall`（`/help` 看全部）
 
 ### 🧪 回測引擎（`backtest.py`）
 

@@ -33,6 +33,7 @@ Telegram 指令（傳給 Bot）：
   /journal [N]            – 交易日誌（每筆自動交易的評分與原因）
   /briefing               – 立即生成每日 AI 晨報（每交易日 ET 08:30 自動推送）
   /weekly                 – 立即生成每週深度週報（每週日 ET 18:00 後自動推送）
+  /committee TICKER       – 機構決策會議：分析師×4→對辯→交易員→風控→PM（別名 /cmt）
   /set mtf_enabled on/off – 週線同向確認（日線分數與週線同向加強、背離減弱）
   /scan                   – 立即掃描（忽略靜音與市場狀態）
   /clear                  – 清空觀察清單
@@ -286,7 +287,8 @@ def _cmd_help() -> str:
         "`/alert AAPL 200` — 到價警報（`/alert` 看清單、`/alert del AAPL` 刪）\n"
         "`/earnings [天數]` — 觀察清單近期財報日\n"
         "`/briefing` — 立即生成每日晨報\n"
-        "`/weekly` — 立即生成每週深度週報（指數/強弱/計分板/RRG/下週行事曆）\n\n"
+        "`/weekly` — 立即生成每週深度週報（指數/強弱/計分板/RRG/下週行事曆）\n"
+        "`/committee NVDA`（或 `/cmt`）— 開一場機構決策會議（需 LLM key，約 1-3 分）\n\n"
         "🤖 *模擬交易（Alpaca paper）*\n"
         "`/autotrade on|off` — 自動下模擬單（預設關）\n"
         "`/positions` — 目前持倉 + 損益\n"
@@ -475,6 +477,142 @@ def _cmd_insider(ticker: str) -> str:
     win = f"近{summ.get('window_days', 90)}天"
     return f"🕵️ *內部人交易* {ticker}\n" + si.format_insider_text(summ, win) \
         + "\n_輔助訊號，非投資建議_"
+
+
+def _cmd_committee(state: dict, ticker: str) -> tuple[str, bool]:
+    """
+    Bot 版機構決策委員會（標準流程 ~9 次 LLM 呼叫，約 1-3 分鐘）。
+    重用 committee.py 全套角色提示與 web 端相同的資料模組；
+    裁決自動記入 state 反思記憶（source=committee）→ 計分板統一累積。
+    回 (回覆文字, state_changed)。
+    """
+    if not os.environ.get("LLM_API_KEY"):
+        return "⚠️ 未設定 LLM_API_KEY（GitHub Secrets），無法開會", False
+    try:
+        import committee as cmt
+        import sector_scan as ssc
+    except Exception as e:
+        return f"❌ 模組缺失：{e}", False
+
+    # ① 資料層
+    tk = ticker.upper()
+    try:
+        raw = yf.download(tk, period="1y", auto_adjust=True, progress=False)
+        import backtest as bt
+        df = bt.normalize_ohlc(raw, tk)
+        close = df["Close"].dropna()
+        if len(close) < 60:
+            return f"⚠️ {tk} 歷史資料不足", False
+    except Exception as e:
+        return f"❌ {tk} 資料抓取失敗：{e}", False
+    tech = ssc.price_metrics(close) or {}
+    quant = None
+    try:
+        quant = _composite_score(df["Close"], df.get("High"), df.get("Low"), df.get("Volume"))
+    except Exception:
+        pass
+    px = float(close.iloc[-1])
+    tech_dom = (f"現價 {px:.2f}　近1月 {tech.get('return_1m')}　近3月 {tech.get('return_3m')}　"
+                f"年化波動 {tech.get('ann_vol')}　RSI {tech.get('rsi')}\n"
+                f"量化綜合評分 {(quant or {}).get('score', '無')}（{(quant or {}).get('rating', '')}）")
+    fund_dom = "（基本面抓取失敗）"
+    try:
+        import fundamentals as fa
+        fd = fa.fetch_fundamentals(tk)
+        hsd = fa.health_score(fd) if fd.get("ok") else {}
+        import analyst_data as ad
+        an = ad.fetch_analyst(tk)
+        rat, tgt, sur = an.get("ratings"), an.get("targets"), an.get("surprises")
+        fund_dom = (f"財務健康 {hsd.get('score', '無')}　P/E {fd.get('pe')}　ROE {fd.get('roe')}　"
+                    f"營收成長 {fd.get('revenue_growth')}\n"
+                    f"分析師共識 {(rat or {}).get('score', '無')}　"
+                    f"目標價上檔 {(tgt or {}).get('upside_mean', '無')}　"
+                    f"EPS Beat {(sur or {}).get('beat_rate', '無')}")
+    except Exception:
+        pass
+    chips_parts = []
+    try:
+        if tk.endswith((".TW", ".TWO")):
+            import tw_flows as twf
+            acc = twf.fetch_flows(tk)
+            t_ = twf.flows_text(acc) if acc else None
+            if t_:
+                chips_parts.append(t_)
+        else:
+            import options_sentiment as ops
+            o = ops.fetch_options(tk)
+            if o:
+                chips_parts.append(ops.format_options_text(o))
+            import sec_insider as si
+            i_ = si.fetch_insider(tk, max_filings=8)
+            if i_:
+                chips_parts.append(si.format_insider_text(i_))
+    except Exception:
+        pass
+    chips_dom = "\n".join(chips_parts) or "（籌碼資料暫缺）"
+    macro_dom = "（無 FRED key）"
+    try:
+        fk = os.environ.get("FRED_API_KEY", "")
+        if fk:
+            import macro as mc
+            md_ = mc.fetch_macro(fk)
+            if md_:
+                macro_dom = mc.macro_summary_text(md_)
+    except Exception:
+        pass
+
+    # ② 委員會流程（重用 committee.py 提示；每次呼叫獨立容錯）
+    def call(p, mt=380):
+        r = _llm_complete(p, max_tokens=mt)
+        if not r:
+            raise RuntimeError("LLM 呼叫失敗")
+        return r
+
+    try:
+        domains = {"technical": tech_dom, "fundamental": fund_dom,
+                   "chips": chips_dom, "macro": macro_dom}
+        analysts = {d: call(cmt.analyst_prompt(d) + f"\n\n=== {tk} 資料 ===\n" + t_)
+                    for d, t_ in domains.items()}
+        all_rep = "\n\n".join(f"【{cmt.ANALYST_ROLES[d][0]}】\n{t_}"
+                              for d, t_ in analysts.items())
+        bull = call(cmt.RESEARCHER_BULL + "\n\n" + all_rep, 400)
+        bear = call(cmt.RESEARCHER_BEAR + "\n\n" + all_rep, 400)
+        trader = call(cmt.TRADER_PROMPT + "\n\n" + all_rep
+                      + f"\n\n【多方】{bull}\n【空方】{bear}", 420)
+        hard = cmt.hard_risk_check({"quant_score": (quant or {}).get("score"),
+                                    "ann_vol": tech.get("ann_vol")})
+        risk = call(cmt.risk_prompt(hard) + "\n\n【交易員提案】\n" + trader, 320)
+        pm = call(cmt.PM_PROMPT + "\n\n" + all_rep
+                  + f"\n\n【多方】{bull}\n【空方】{bear}\n\n【交易員】{trader}\n\n【風控】{risk}", 520)
+    except Exception as e:
+        return f"❌ 會議中斷：{e}", False
+
+    verdict = cmt.parse_verdict(pm)
+    cross = cmt.compare_with_quant(verdict.get("verdict"), (quant or {}).get("score"))
+    # ③ 裁決入反思記憶（與 web 端計分板統一）
+    changed = False
+    try:
+        import reflection as rfl
+        vmap = {"買進": 0.8, "迴避": -0.8}
+        sc = vmap.get(verdict.get("verdict"))
+        if sc is not None and px > 0:
+            changed = rfl.record_pick(state, tk, sc, px,
+                                      datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                                      source="committee")
+    except Exception:
+        pass
+
+    stances = "　".join(f"{cmt.ANALYST_ROLES[d][0][:2]} "
+                        f"{(f'{s:+.1f}' if (s := cmt.parse_stance(t_)) is not None else '—')}"
+                        for d, t_ in analysts.items())
+    reply = (f"🏛 *委員會裁決 {tk}*\n"
+             f"結論：*{verdict.get('verdict') or '—'}*　信心：{verdict.get('confidence') or '—'}"
+             + (f"　時間框架：{verdict['horizon']}" if verdict.get("horizon") else "") + "\n"
+             f"量化評分 {(quant or {}).get('score', '—')}　{cross.get('agreement', '')}\n"
+             f"立場：{stances}\n\n{pm[:1200]}\n"
+             + ("\n⚠️ 硬性風控：" + "；".join(hard) if hard else "")
+             + "\n_9 次 LLM 呼叫 · 已記入計分板 · 非投資建議_")
+    return reply, changed
 
 
 def _cmd_positions() -> str:
@@ -840,6 +978,16 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
             reply = "☀️ 生成晨報中，約需 20-40 秒…"
             _tg_send(token, src_chat or chat_id, reply)
             reply = daily_briefing(state, force=True) or "晨報生成失敗"
+
+        elif cmd in ("/committee", "/cmt"):
+            if not args:
+                reply = "用法：`/committee NVDA`（約 1-3 分鐘、9 次 LLM 呼叫；台股用 2330.TW）"
+            else:
+                _tg_send(token, src_chat or chat_id,
+                         f"🏛 召開 {args[0].upper()} 投資決策會議（約 1-3 分鐘）…")
+                reply, _cmt_changed = _cmd_committee(state, args[0])
+                if _cmt_changed:
+                    changed = True
 
         elif cmd == "/weekly":
             reply = "📒 生成週報中，約需 30-60 秒…"
