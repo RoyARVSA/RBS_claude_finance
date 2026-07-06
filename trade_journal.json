@@ -18,5 +18,15 @@
     "reason": "評分 +0.62 ≥ 買進門檻 0.5",
     "submitted": true,
     "error": null
+  },
+  {
+    "time": "2026-07-06T14:02:44Z",
+    "symbol": "AAPL",
+    "side": "buy",
+    "qty": 48,
+    "score": 0.602,
+    "reason": "評分 +0.60 ≥ 買進門檻 0.5",
+    "submitted": true,
+    "error": null
   }
 ]
