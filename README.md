@@ -15,12 +15,12 @@ Streamlit 網頁應用 + 獨立的訊號掃描 Bot（GitHub Actions 排程版 / 
 
 | 頁面 | 功能 |
 |------|------|
-| 💬 AI 助理 | **資深分析師模式＋🏛 機構決策委員會（分析師×4→多空對辯→交易員→硬風控→投資經理，與量化評分交叉比較）＋單輪多空對辯＋反思記憶** |
-| 🏠 市場總覽 | 即時指數/板塊/宏觀指標、**總經數據(FRED)**、市場快訊、**AI 自主市場分析** |
+| 💬 AI 助理 | **資深分析師模式＋🏛 機構決策委員會（分析師×4→多空對辯→交易員→硬風控→投資經理，與量化評分交叉比較；支援多檔同場會議、深度模式(研究主管+風控對辯)、新聞逐篇多空標注、會議紀錄下載、Telegram 推播）＋📊 決策計分板（量化 vs 委員會誰更準）＋單輪多空對辯＋反思記憶** |
+| 🏠 市場總覽 | 即時指數/板塊/宏觀指標、**總經數據(FRED)**、市場快訊、**AI 自主市場分析**、**🩺 資料源健康檢查（9 大數據源一鍵驗收）** |
 | 📈 持倉分析 | 多資產組合：權益曲線、回撤、Sharpe、IR、Beta、**績效報告（CAGR/Sortino/Calmar/月報酬熱力圖/回撤期間）**、**交易帳本（成本基礎/TWR/XIRR/股息收入）** |
 | ⚠️ 風險管理 | VaR/CVaR、蒙地卡羅、Kupiec 回測、壓力測試、**風險平價 + 效率前緣（MPT）+ HRP 階層風險平價** |
 | 🔍 股票研究 | K 線+RSI、AI 深度報告、市場篩選器、**訊號回測 + 參數最佳化（含參數熱力圖與 walk-forward 逐段檢視）**、TradingView、**選擇權情緒(Put/Call、IV 偏斜)** |
-| 🏢 公司分析 | **基本面體質：財務健康評分、估值旗標、三表趨勢、AI 解讀、分析師共識+EPS Beat 率、做空籌碼(FINRA/FTD)、SEC 內部人交易(Form 4)** |
+| 🏢 公司分析 | **基本面體質：財務健康評分、估值旗標、三表趨勢、AI 解讀、分析師共識+EPS Beat 率、做空籌碼(FINRA/FTD)、台股三大法人買賣超(上市 TWSE + 上櫃 TPEX)、SEC 內部人交易(Form 4)、📄 一鍵完整研究報告（彙整全部區塊下載）** |
 | 🗂️ 產業總覽 | **一次掃描整個市場：產業強弱 vs 風險散佈、鑽取個股（可加基本面）、RRG 板塊輪動象限圖** |
 | 🚨 即時警報 | 監控清單、盤中走勢、訊號掃描、Telegram/Email 推播 |
 | 🛠️ 交易工具 | 部位大小、**波動率目標部位**、Kelly、風險報酬比、複利 |
@@ -35,14 +35,16 @@ Streamlit 網頁應用 + 獨立的訊號掃描 Bot（GitHub Actions 排程版 / 
 - **綜合評分**：趨勢/MACD/RSI/布林/動量合成 -1~+1 分數，5 級評級
 - **多時間框架確認**：日線分數與週線同向加強、背離減弱（軟性調整）
 - **每日 AI 晨報**：每交易日 ET 08:30 推送大盤+排名+訊號+內部人亮點+AI 判斷回顧+**本週總經發布日（CPI/非農/GDP）**
+- **每週深度週報**：週日 ET 晚間自動推送——指數週表現、清單強弱、**決策計分板**、RRG 板塊輪動、下週財報/總經行事曆（`/weekly` 隨時手動）
 - **自我優化迴圈**：回測各訊號歷史勝率 → 動態調整評分權重（每週校準）
 - **防護機制**（freqtrade 式）：訊號冷卻去重、大盤風險濾網
 - **部位建議**：每個訊號附 ATR 風險基準的建議股數
 - **財報行事曆提醒**：觀察清單標的財報前 N 天自動提醒（晨報 + `/earnings`）
 - **到價警報**：`/alert AAPL 200` 突破/跌破即推播，觸發後自動移除（上限 20 個）
 - **Alpaca 模擬交易**：訊號自動下模擬單驗證策略實效（預設關閉，`/autotrade on` 啟用）
-- **Telegram 指令**：清單 `/add /remove /list`、分析 `/rank /fundamentals /options /insider /earnings /briefing`、
-  風控 `/risk /protections /calibrate`、模擬交易 `/autotrade /positions /pnl /journal /closeall`（`/help` 看全部）
+- **Telegram 指令**：清單 `/add /remove /list`、分析 `/rank /fundamentals /options /insider /whales /earnings /briefing /weekly`、
+  **AI `/committee`（手機開機構決策會議）**、警報 `/alert`、風控 `/risk /protections /calibrate`、
+  模擬交易 `/autotrade /positions /pnl /journal /closeall`（`/help` 看全部）
 
 ### 🧪 回測引擎（`backtest.py`）
 
@@ -85,6 +87,7 @@ streamlit run app.py
 | `FRED_API_KEY` | 總經數據 | 總經指標區塊不顯示 | [fred.stlouisfed.org](https://fred.stlouisfed.org/) |
 | `FINNHUB_API_KEY` | 基本面備援 | yfinance `.info` 被限流時，市值/P/E/ROE 顯示「—」 | [finnhub.io](https://finnhub.io/) |
 | `ALPACA_KEY_ID` + `ALPACA_SECRET_KEY` | 模擬交易（**paper**）| 模擬交易不執行 | [alpaca.markets](https://alpaca.markets/) Trading API |
+| `GITHUB_TOKEN` | 決策計分板持久化（委員會紀錄 commit 進 repo） | 紀錄只存本地，app 重啟即消失 | GitHub → Fine-grained PAT，**只授權本 repo 的 Contents 讀寫**（勿用全域 classic token） |
 
 > SEC 內部人交易（Form 4）走 EDGAR、選擇權情緒走 yfinance，兩者**皆免 key**。
 > SEC 可選設 `SEC_USER_AGENT` 自訂聯絡用 User-Agent（選填，有預設值即可用）。
@@ -120,8 +123,9 @@ analyst_data.py         分析師共識：評等分佈/目標價上檔/EPS surpr
 short_data.py           做空籌碼：FINRA 日做空量 + 短倉/回補天數 + SEC 失券 FTD（免 key）
 whales_13f.py           超級投資人 13F：EDGAR 13F-HR 解析 + 兩季增減倉比較（免 key）
 ledger.py               交易帳本：平均成本/已未實現損益/TWR/XIRR/股息收入（Ghostfolio 式）
-reflection.py           AI 反思記憶：判斷 vs N 日後結果 → 命中率回饋（FinMem 式）
-committee.py            機構決策委員會：角色提示/立場解析/硬風控閘門/量化交叉比較（TradingAgents 式）
+reflection.py           AI 反思記憶：判斷 vs N 日後結果 → 命中率 + 決策者計分板（FinMem 式）
+tw_flows.py             台股三大法人買賣超（TWSE T86 上市 + TPEX 上櫃，免 key）：外資/投信/自營 + 連買天數
+committee.py            機構決策委員會：角色提示/立場解析/硬風控閘門/量化交叉比較，支援多檔與深度模式（TradingAgents 式）
 alpaca_trader.py        Alpaca 紙上交易：下單決策(decide_orders) + REST client
 stock_db.py             選股資料庫（5 市場、30+ 產業、200+ 標的，含 AI 供應鏈瓶頸主題）
 rbs_lib.py              風險計算函式庫（VaR/CVaR/共變異數/情境）

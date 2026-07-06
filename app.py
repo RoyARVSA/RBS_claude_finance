@@ -1771,7 +1771,7 @@ def page_ai_assistant():
         st.caption("模擬一家金融機構的完整決策鏈（約 9 次 LLM 呼叫、30-90 秒），"
                    "硬性風控由系統規則判定、LLM 不可推翻，最後與量化評分交叉比較。"
                    "文獻註記：LLM 委員會無經驗證的長期實績——價值在多視角決策紀律，非預測。")
-        cmt_in = st.text_input("標的（美股，可逗號分隔多檔、最多 4 檔——同場會議比較取捨）",
+        cmt_in = st.text_input("標的（美股/台股，可逗號分隔多檔、最多 4 檔——同場會議比較取捨）",
                                "NVDA", key="cmt_tkr").upper().strip()
         cmt_deep = st.checkbox(
             "🔬 深度會議（+3 次呼叫：研究主管裁決辯論 → 風控激進/保守派對辯 → 風控主席）",
@@ -1802,6 +1802,7 @@ def page_ai_assistant():
                         _ss = None
                     tech_secs, fund_secs, chips_secs, level_secs = [], [], [], []
                     quants, ok_tks, vol_worst, all_heads = {}, [], None, []
+                    prices_c = {}
                     for tk in cmt_tks:
                         prog.update(label=f"蒐集 {tk} 資料中…")
                         try:
@@ -1814,6 +1815,7 @@ def page_ai_assistant():
                         ok_tks.append(tk)
                         tech_c = _ssc.price_metrics(hist_c["Close"]) or {}
                         tech_c.update(_trend_fields(hist_c["Close"]))
+                        prices_c[tk] = tech_c.get("price")
                         if tech_c.get("ann_vol") is not None:
                             vol_worst = max(vol_worst or 0, tech_c["ann_vol"])
                         quant_c = None
@@ -1924,6 +1926,15 @@ def page_ai_assistant():
                                 _cp.append("做空面：" + "；".join(sh_c["notes"]))
                         except Exception:
                             pass
+                        if tk.endswith((".TW", ".TWO")):
+                            try:
+                                import tw_flows as _twf3
+                                _twacc = _cached_tw_flows(tk)
+                                _twt = _twf3.flows_text(_twacc) if _twacc else None
+                                if _twt:
+                                    _cp.append("三大法人：" + _twt)
+                            except Exception:
+                                pass
                         try:
                             for _h in [n.get("title", "") for n in (_n_c or [])[:4] if n.get("title")]:
                                 all_heads.append((tk, _h))   # 收集後統一逐篇標注多空
@@ -2073,6 +2084,52 @@ def page_ai_assistant():
                         "verdict": verdict_c, "mres": mres, "crosses": crosses,
                         "quants": quants, "cross": cross_c,
                         "news_tags": news_tags_view}
+                    # 決策入檔（買進/迴避才記，5 日後結算進計分板；觀望不計方向）
+                    try:
+                        import reflection as _rfl2
+                        _vmap = {"買進": 0.8, "迴避": -0.8}
+                        _verds = (mres["verdicts"] if multi
+                                  else {ok_tks[0]: verdict_c.get("verdict")})
+                        log = _load_cmt_log()
+                        _today_c = pd.Timestamp.now().strftime("%Y-%m-%d")
+                        n_rec = 0
+                        for _tk_v, _vd in _verds.items():
+                            _sc_v = _vmap.get(_vd)
+                            _px_v = prices_c.get(_tk_v)
+                            if _sc_v is not None and _px_v:
+                                if _rfl2.record_pick(log, _tk_v, _sc_v, float(_px_v),
+                                                     _today_c, source="committee"):
+                                    n_rec += 1
+                        if n_rec:
+                            _where = _save_cmt_log(log)
+                            st.caption(f"📝 已記錄 {n_rec} 筆委員會決策（{_where}）"
+                                       "→ 5 個交易日後在計分板結算")
+                    except Exception:
+                        pass
+                    # 會後推播結論到 Telegram（用「即時警報」頁設定的 Bot；未設定就跳過）
+                    try:
+                        _tg_cfg = _load_alerts_config().get("telegram", {})
+                        if (_tg_cfg.get("enabled") and _tg_cfg.get("token")
+                                and _tg_cfg.get("chat_id")):
+                            if multi:
+                                _v_lines = "\n".join(
+                                    f"• {tk}: {mres['verdicts'].get(tk) or '—'}"
+                                    for tk in ok_tks)
+                                _tg_msg = (f"🏛 *委員會裁決*（{'、'.join(ok_tks)}）\n{_v_lines}\n"
+                                           f"首選: {mres.get('top_pick') or '無'}　"
+                                           f"信心: {mres.get('confidence') or '—'}")
+                            else:
+                                _q0 = quants.get(ok_tks[0]) or {}
+                                _tg_msg = (f"🏛 *委員會裁決* {ok_tks[0]}: "
+                                           f"{verdict_c.get('verdict') or '—'}"
+                                           f"（信心 {verdict_c.get('confidence') or '—'}）\n"
+                                           f"量化評分 {_q0.get('score', '—')}　"
+                                           f"{(cross_c or {}).get('agreement', '')}")
+                            _tg_msg += "\n_非投資建議_"
+                            _send_telegram(_tg_cfg["token"], _tg_cfg["chat_id"], _tg_msg)
+                            st.caption("📨 結論已推播到 Telegram")
+                    except Exception:
+                        pass
                     prog.update(label="✅ 決策會議完成", state="complete")
                 except Exception as e:
                     prog.update(label=f"失敗：{e}", state="error")
@@ -2161,6 +2218,53 @@ def page_ai_assistant():
                                f"committee_{'_'.join(_tks_r)}.md", "text/markdown",
                                key="cmt_dl")
             st.caption("⚠️ 模擬機構決策流程屬研究輔助；LLM 委員會無經驗證的長期實績，非投資建議。")
+
+        # ── 📊 決策者計分板：量化 vs 委員會，誰過去比較準（5 日結算）──────
+        st.markdown("---")
+        if st.button("📊 更新決策者計分板", key="sb_go",
+                     help="結算已滿 5 日的委員會決策，合併 Bot 量化訊號的反思紀錄，比較各決策者命中率"):
+            try:
+                import json as _json2
+
+                import reflection as _rfl3
+                from sector_scan import _batch_closes as _bc2
+                log = _load_cmt_log()
+                _pend_tks = {p["ticker"] for p in
+                             log.get("reflections", {}).get("pending", [])}
+                _today_s2 = pd.Timestamp.now().strftime("%Y-%m-%d")
+                if _pend_tks:
+                    _cls = _bc2(sorted(_pend_tks), "5d", min_len=1)
+                    _pxs = {t: float(s.iloc[-1]) for t, s in _cls.items() if len(s)}
+                    if _rfl3.evaluate_pending(log, _pxs, _today_s2):
+                        _save_cmt_log(log)
+                hist_all = list(log.get("reflections", {}).get("history", []))
+                try:
+                    _sf3 = Path("watchlist_state.json")
+                    if _sf3.exists():
+                        hist_all += (_json2.loads(_sf3.read_text(encoding="utf-8"))
+                                     .get("reflections", {}).get("history", []))
+                except Exception:
+                    pass
+                st.session_state["sb_result"] = (
+                    _rfl3.scoreboard(hist_all),
+                    len(log.get("reflections", {}).get("pending", [])))
+            except Exception as e:
+                st.error(f"計分板更新失敗：{e}")
+        _sb = st.session_state.get("sb_result")
+        if _sb:
+            import reflection as _rfl4
+            sb_rows, n_pend = _sb
+            if sb_rows:
+                st.dataframe(pd.DataFrame([{
+                    "決策者": _rfl4.SOURCE_LABELS.get(r["source"], r["source"]),
+                    "已結算": r["n"],
+                    "命中率": f"{r['hit_rate']:.0%}" if r["hit_rate"] is not None else "—",
+                    "平均5日對齊報酬": f"{r['avg_fwd']:+.2%}" if r["avg_fwd"] is not None else "—",
+                } for r in sb_rows]), use_container_width=True, hide_index=True)
+                st.caption(f"待結算 {n_pend} 筆　·　量化=Bot 掃描強訊號、委員會=本模式裁決"
+                           "　·　樣本少時勿過度解讀；這張表是「找出最佳決策方向」的長期證據")
+            else:
+                st.info("尚無已結算的決策——開幾場會議，5 個交易日後回來按此鈕結算。")
 
     if "asst_chat" not in st.session_state:
         st.session_state["asst_chat"] = []
@@ -2418,6 +2522,111 @@ def _cached_watchlist_closes(tickers: tuple):
     return _batch_closes(list(tickers), "5d", min_len=2)
 
 
+def _health_checks() -> list[dict]:
+    """逐一 ping 各資料源（每項獨立 try，總耗時 ~20-40 秒）。回狀態列清單。"""
+    import os as _os
+    import time as _t
+    out: list[dict] = []
+
+    def run(name, fn, skip_reason=None):
+        if skip_reason:
+            out.append({"資料源": name, "狀態": "⚪ 未設定", "說明": skip_reason, "耗時ms": None})
+            return
+        t0 = _t.time()
+        try:
+            note = fn()
+            status = "🟡 部分" if isinstance(note, str) and note.startswith("WARN:") else "🟢 正常"
+            note = note[5:].strip() if (isinstance(note, str) and note.startswith("WARN:")) else (note or "OK")
+            out.append({"資料源": name, "狀態": status, "說明": str(note)[:70],
+                        "耗時ms": int((_t.time() - t0) * 1000)})
+        except Exception as e:
+            out.append({"資料源": name, "狀態": "🔴 失敗", "說明": str(e)[:70],
+                        "耗時ms": int((_t.time() - t0) * 1000)})
+
+    def _yf_hist():
+        from sector_scan import _batch_closes
+        c = _batch_closes(["AAPL"], "5d", min_len=2)
+        if not c:
+            raise RuntimeError("批次下載回空")
+        return f"AAPL 收盤 {float(c['AAPL'].iloc[-1]):.2f}"
+
+    def _yf_info():
+        import yfinance as yf
+        info = yf.Ticker("AAPL").info or {}
+        if info.get("trailingPE"):
+            return f"P/E {info['trailingPE']:.1f}"
+        return "WARN: .info 疑似被限流（備援鏈會接手）"
+
+    def _finnhub():
+        import requests
+        k = _os.environ.get("FINNHUB_API_KEY", "")
+        r = requests.get("https://finnhub.io/api/v1/quote",
+                         params={"symbol": "AAPL", "token": k}, timeout=15)
+        c = (r.json() or {}).get("c") if r.ok else None
+        if not c:
+            raise RuntimeError(f"HTTP {r.status_code}")
+        return f"AAPL 現價 {c}"
+
+    def _fred():
+        import macro as _m
+        s = _m._fred_get("FEDFUNDS", os.environ.get("FRED_API_KEY", ""), limit=1)
+        if not s:
+            raise RuntimeError("無回傳")
+        return f"Fed 利率 {s[0][1]}"
+
+    def _finra():
+        import short_data as sd
+        v = sd.fetch_short_volume(["AAPL"], lookback_days=6)
+        if not v:
+            raise RuntimeError("近 6 日檔案皆抓不到")
+        a = v["AAPL"]
+        return f"做空占比 {a['ratio']:.0%}（{a.get('as_of')}）"
+
+    def _edgar():
+        import requests
+        import sec_insider as si
+        r = requests.get("https://data.sec.gov/submissions/CIK0000320193.json",
+                         headers=si._ua(), timeout=15)
+        if not r.ok:
+            raise RuntimeError(f"HTTP {r.status_code}")
+        return (r.json() or {}).get("name", "OK")
+
+    def _cboe():
+        import options_sentiment as ops
+        s = ops._fetch_cboe("AAPL")
+        if not s:
+            raise RuntimeError("無鏈資料")
+        return f"PCR(OI) {s.get('pcr_oi'):.2f}" if s.get("pcr_oi") else "有鏈但缺 OI"
+
+    def _twse():
+        import tw_flows as twf
+        a = twf.fetch_flows("2330", days=1, lookback=6)
+        if not a:
+            raise RuntimeError("近 6 日皆查無（假日或格式變動）")
+        return f"2330 三大法人 {a['total_lots']:+,.0f} 張"
+
+    def _gh():
+        import requests
+        r = requests.get(f"https://api.github.com/repos/{_GH_REPO}",
+                         headers={"Authorization": f"Bearer {_gh_token()}"}, timeout=15)
+        if not r.ok:
+            raise RuntimeError(f"HTTP {r.status_code}（token 權限？）")
+        return "repo 可存取（計分板可持久化）"
+
+    fred_k = os.environ.get("FRED_API_KEY", "")
+    run("yfinance 歷史價格", _yf_hist)
+    run("yfinance .info 基本面", _yf_info)
+    run("Finnhub 備援", _finnhub,
+        None if _os.environ.get("FINNHUB_API_KEY") else "無 FINNHUB_API_KEY")
+    run("FRED 總經", _fred, None if fred_k else "無 FRED_API_KEY")
+    run("FINRA 做空量", _finra)
+    run("SEC EDGAR", _edgar)
+    run("CBOE 選擇權", _cboe)
+    run("TWSE 三大法人", _twse)
+    run("GitHub 持久化", _gh, None if _gh_token() else "無 GITHUB_TOKEN（計分板僅本地暫存）")
+    return out
+
+
 def page_market_overview():
     st.title("🏠 市場總覽")
     now_str = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M")
@@ -2428,6 +2637,21 @@ def page_market_overview():
         _fetch_market_snapshot.clear()
         _cached_market_rss.clear()
         st.rerun()
+
+    # ── 🩺 資料源健康檢查（驗收/除錯用）─────────────────────────────
+    with st.expander("🩺 資料源健康檢查（一鍵 ping 全部資料源，約 30 秒）", expanded=False):
+        if st.button("開始檢查", key="hc_go"):
+            with st.spinner("逐一測試各資料源…"):
+                st.session_state["hc_result"] = (_health_checks(),
+                                                 pd.Timestamp.now().strftime("%H:%M:%S"))
+        _hc = st.session_state.get("hc_result")
+        if _hc:
+            rows_hc, ts_hc = _hc
+            st.dataframe(pd.DataFrame(rows_hc), use_container_width=True, hide_index=True)
+            n_ok = sum(1 for r in rows_hc if r["狀態"].startswith("🟢"))
+            st.caption(f"檢查時間 {ts_hc}　·　{n_ok}/{len(rows_hc)} 正常　·　"
+                       "🔴 表示該資料源目前抓不到（相關功能會優雅降級）；"
+                       "⚪ 表示未設定對應 key。")
 
     with st.spinner("載入市場數據…"):
         snapshot, sectors = _fetch_market_snapshot()
@@ -4109,11 +4333,99 @@ def _cached_shorts(ticker: str):
     return sd.fetch_short_overview(ticker)
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def _cached_tw_flows(ticker: str):
+    """快取台股三大法人近 5 日買賣超（1 小時；TWSE 每日盤後更新）。"""
+    import tw_flows as twf
+    return twf.fetch_flows(ticker, days=5)
+
+
 @st.cache_data(ttl=21600, show_spinner=False)
 def _cached_whale(cik: str, name: str):
     """快取單一機構 13F 兩季比較（6 小時；季度資料本就低頻）。"""
     import whales_13f as wf
     return wf.fetch_whale(cik, name)
+
+
+# ── 委員會決策紀錄的持久化 ─────────────────────────────────────────────────────
+# Streamlit Cloud 容器在每次 repo 有新 commit 時重啟（Bot 每 15 分鐘就會 push 狀態檔），
+# 本地檔案活不久 → 有 GITHUB_TOKEN 時直接 commit 進 repo，跨重啟持久。
+_CMT_LOG_PATH = "committee_log.json"
+_GH_REPO = "RoyARVSA/RBS_claude_finance"
+_GH_BRANCH = "claude/optimize-analysis-dashboard-NZUKB"
+
+
+def _gh_token() -> str:
+    import os as _os
+    tk = _os.environ.get("GITHUB_TOKEN", "")
+    if not tk:
+        try:
+            tk = st.secrets.get("GITHUB_TOKEN", "") or ""
+        except Exception:
+            tk = ""
+    return tk
+
+
+def _load_cmt_log() -> dict:
+    import json as _json
+    tk = _gh_token()
+    if tk:
+        try:
+            import base64
+
+            import requests as _rq
+            r = _rq.get(f"https://api.github.com/repos/{_GH_REPO}/contents/{_CMT_LOG_PATH}",
+                        params={"ref": _GH_BRANCH},
+                        headers={"Authorization": f"Bearer {tk}",
+                                 "Accept": "application/vnd.github+json"}, timeout=15)
+            if r.ok:
+                j = r.json()
+                data = _json.loads(base64.b64decode(j["content"]).decode("utf-8"))
+                data["_sha"] = j.get("sha")
+                return data
+            if r.status_code == 404:
+                return {}
+        except Exception:
+            pass
+    try:
+        p = Path(_CMT_LOG_PATH)
+        if p.exists():
+            return _json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return {}
+
+
+def _save_cmt_log(log: dict) -> str:
+    """存決策紀錄，回存放位置描述。"""
+    import json as _json
+    sha = log.pop("_sha", None)
+    payload = _json.dumps(log, ensure_ascii=False, indent=1)
+    tk = _gh_token()
+    if tk:
+        try:
+            import base64
+
+            import requests as _rq
+            body = {"message": "Update committee decision log",
+                    "branch": _GH_BRANCH,
+                    "content": base64.b64encode(payload.encode("utf-8")).decode()}
+            if sha:
+                body["sha"] = sha
+            r = _rq.put(f"https://api.github.com/repos/{_GH_REPO}/contents/{_CMT_LOG_PATH}",
+                        headers={"Authorization": f"Bearer {tk}",
+                                 "Accept": "application/vnd.github+json"},
+                        json=body, timeout=20)
+            if r.ok:
+                return "GitHub（跨重啟持久）"
+        except Exception:
+            pass
+    try:
+        Path(_CMT_LOG_PATH).write_text(payload, encoding="utf-8")
+        return ("本地暫存（GitHub 保存失敗，稍後重試）" if tk
+                else "本地暫存（app 重啟會消失；設 GITHUB_TOKEN secret 可持久化）")
+    except Exception:
+        return "保存失敗"
 
 
 def page_company_analysis():
@@ -4387,8 +4699,43 @@ def page_company_analysis():
     section("做空籌碼（Short Data）")
     st.caption("FINRA 日做空量占比 + 短倉/流通比 + 回補天數 + SEC 失券（FTD）。僅美股。")
     tkr_sh = data.get("ticker", "")
-    if "." in tkr_sh:
-        st.info("此標的非美股，FINRA/SEC 做空數據僅涵蓋美國市場。")
+    if tkr_sh.endswith((".TW", ".TWO")):
+        # 台股籌碼面 = 三大法人買賣超（上市 TWSE / 上櫃 TPEX，免 key）
+        if st.button("查詢三大法人買賣超", key="twf_go"):
+            with st.spinner(f"抓取 {tkr_sh} 近 5 日法人動向（TWSE）…"):
+                try:
+                    st.session_state["twf_result"] = (tkr_sh, _cached_tw_flows(tkr_sh))
+                except Exception as e:
+                    st.error(f"查詢失敗：{e}")
+        _twf_saved = st.session_state.get("twf_result")
+        if _twf_saved and _twf_saved[0] == tkr_sh:
+            twf_acc = _twf_saved[1]
+            if not twf_acc:
+                st.warning("查無法人資料（TWSE/TPEX 皆無回應，或非上市/上櫃普通股）。")
+            else:
+                import tw_flows as _twf2
+                f1, f2, f3, f4 = st.columns(4)
+                with f1:
+                    metric_card("外資（5日）", f"{twf_acc['foreign_lots']:+,.0f} 張"
+                                if twf_acc.get("foreign_lots") is not None else "—",
+                                positive=bool((twf_acc.get("foreign_lots") or 0) > 0))
+                with f2:
+                    metric_card("投信（5日）", f"{twf_acc['trust_lots']:+,.0f} 張"
+                                if twf_acc.get("trust_lots") is not None else "—",
+                                positive=bool((twf_acc.get("trust_lots") or 0) > 0))
+                with f3:
+                    metric_card("自營（5日）", f"{twf_acc['dealer_lots']:+,.0f} 張"
+                                if twf_acc.get("dealer_lots") is not None else "—")
+                with f4:
+                    metric_card("外資/投信連買", f"{twf_acc.get('foreign_streak', 0)} / "
+                                                f"{twf_acc.get('trust_streak', 0)} 日")
+                _ft = _twf2.flows_text(twf_acc)
+                if _ft:
+                    st.markdown(f"- {_ft}")
+                st.caption(f"資料 {twf_acc.get('market', 'TWSE')} 盤後 · "
+                           "外資含陸資、不含外資自營商 · 非投資建議。")
+    elif "." in tkr_sh:
+        st.info("此標的非美股/台股上市，做空與法人數據暫不支援。")
     else:
         if st.button("查詢做空數據", key="sh_go"):
             with st.spinner(f"抓取 {tkr_sh} 做空數據（FINRA + SEC）…"):
@@ -4463,6 +4810,113 @@ def page_company_analysis():
             st.caption(f"統計視窗 {ins.get('window_days', 90)} 天　·　"
                        f"解析 {ins.get('n_filings', 0)} 份 Form 4　·　資料來源 SEC EDGAR。"
                        "內部人交易屬輔助訊號，需搭配基本面與趨勢，非投資建議。")
+
+    # ⑧ 一鍵完整研究報告（組裝本頁已載入的全部區塊 + 回測/量化，純組裝零 LLM 成本）─
+    section("完整研究報告")
+    st.caption("把本頁的基本面/分析師/籌碼/內部人 + 技術回測 + 委員會裁決（若剛開過會）"
+               "組裝成一份可下載的 Markdown 研究報告。上方各區塊先查詢過的內容會被納入。")
+    if st.button("📄 產生完整研究報告", key="rpt_go"):
+        with st.spinner("組裝報告（含回測，約 10-30 秒）…"):
+            try:
+                _rt = data.get("ticker", "")
+                _R = [f"# {data.get('name', _rt)}（{_rt}）研究報告",
+                      f"_產生時間 {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')} · "
+                      "RBS Finance Dashboard · 分析教育用途，非投資建議_\n"]
+
+                def _rv(v, pct=False, dp=2):
+                    if v is None:
+                        return "—"
+                    return f"{v * 100:.1f}%" if pct else f"{v:.{dp}f}"
+
+                import fundamentals as _fa9
+                _hs9 = _fa9.health_score(data)
+                _R.append("## 基本面\n"
+                          f"- 財務健康：{_rv(_hs9.get('score'), dp=0)}（{_hs9.get('rating', '')}）\n"
+                          f"- P/E {_rv(data.get('pe'))}　P/B {_rv(data.get('pb'))}　"
+                          f"ROE {_rv(data.get('roe'), 1)}　淨利率 {_rv(data.get('net_margin'), 1)}\n"
+                          f"- 營收成長 {_rv(data.get('revenue_growth'), 1)}　"
+                          f"盈餘成長 {_rv(data.get('earnings_growth'), 1)}　"
+                          f"負債權益比 {_rv(data.get('debt_to_equity'))}")
+                _an9 = st.session_state.get("an_result")
+                if _an9 and _an9[0] == _rt and _an9[1]:
+                    an9 = _an9[1]
+                    r9, t9, s9 = an9.get("ratings"), an9.get("targets"), an9.get("surprises")
+                    seg = []
+                    if r9:
+                        seg.append(f"評等共識 {r9['score']:+.2f}（{r9['label']}，{r9['total']} 位）")
+                    if t9:
+                        seg.append(f"目標價上檔 {t9['upside_mean']:+.1%}")
+                    if s9:
+                        seg.append(f"EPS Beat 率 {s9['beat_rate']:.0%}（{s9['n']} 季）")
+                    if seg:
+                        _R.append("## 分析師共識\n- " + "\n- ".join(seg))
+                _chip9 = []
+                _sh9 = st.session_state.get("sh_result")
+                if _sh9 and _sh9[0] == _rt and _sh9[1]:
+                    _chip9 += [f"- {n}" for n in _sh9[1].get("notes", [])]
+                _twf9 = st.session_state.get("twf_result")
+                if _twf9 and _twf9[0] == _rt and _twf9[1]:
+                    import tw_flows as _twf10
+                    _ft9 = _twf10.flows_text(_twf9[1])
+                    if _ft9:
+                        _chip9.append(f"- {_ft9}")
+                _ins9 = st.session_state.get("ins_result")
+                if _ins9 and _ins9[0] == _rt and _ins9[1]:
+                    import sec_insider as _si9
+                    _chip9.append("- " + _si9.format_insider_text(_ins9[1]).replace("\n", "\n- "))
+                if _chip9:
+                    _R.append("## 籌碼面\n" + "\n".join(_chip9))
+                try:
+                    _info9, hist9, _n9 = _cached_ticker_data(_rt, "1y")
+                    if hist9 is not None and not hist9.empty:
+                        import sector_scan as _ssc9
+                        t9m = _ssc9.price_metrics(hist9["Close"]) or {}
+                        t9m.update(_trend_fields(hist9["Close"]))
+                        _R.append("## 技術面\n"
+                                  f"- 現價 {_rv(t9m.get('price'))}　近1月 {_rv(t9m.get('return_1m'), 1)}　"
+                                  f"近3月 {_rv(t9m.get('return_3m'), 1)}　RSI {_rv(t9m.get('rsi'), dp=0)}\n"
+                                  f"- 年化波動 {_rv(t9m.get('ann_vol'), 1)}　"
+                                  f"距52週高 {_rv(t9m.get('pct_from_52w_high'), 1)}　"
+                                  f"vs MA200 {_rv(t9m.get('vs_ma200'), 1)}")
+                        try:
+                            import scan_signals as _ss9
+                            q9 = _ss9._composite_score(hist9["Close"], hist9.get("High"),
+                                                       hist9.get("Low"), hist9.get("Volume"))
+                            if q9:
+                                _R.append(f"## 量化綜合評分\n- **{q9['score']:+.2f}**（{q9.get('rating', '')}）")
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+                try:
+                    bt9 = _run_backtest_tool(_rt)
+                    if bt9 and bt9.get("ok") and bt9.get("top"):
+                        _R.append("## 訊號回測（已扣成本、無前視）\n" + "\n".join(
+                            f"- {x['rule']}：勝率 {x['win_rate']:.0%}、獲利因子 "
+                            f"{x['profit_factor']:.2f}、{x['trades']} 筆"
+                            for x in bt9["top"][:3]))
+                except Exception:
+                    pass
+                _cmt9 = st.session_state.get("cmt_result")
+                if _cmt9 and _rt in _cmt9.get("tickers", []):
+                    if _cmt9["multi"]:
+                        _vd9 = (_cmt9.get("mres") or {}).get("verdicts", {}).get(_rt)
+                    else:
+                        _vd9 = (_cmt9.get("verdict") or {}).get("verdict")
+                    _R.append(f"## 委員會裁決\n- 結論：**{_vd9 or '—'}**\n\n{_cmt9['pm']}")
+                if st.session_state.get("fa_ai_out"):
+                    _R.append("## AI 解讀\n" + st.session_state["fa_ai_out"])
+                _R.append("\n---\n_資料源：yfinance / Finnhub / FINRA / SEC EDGAR / CBOE / "
+                          "TWSE·TPEX / FRED　·　本報告為系統自動組裝，非投資建議_")
+                st.session_state["rpt_md"] = (_rt, "\n\n".join(_R))
+            except Exception as e:
+                st.error(f"報告組裝失敗：{e}")
+    _rpt = st.session_state.get("rpt_md")
+    if _rpt and _rpt[0] == data.get("ticker"):
+        st.download_button("⬇ 下載研究報告 (.md)", _rpt[1].encode("utf-8"),
+                           f"report_{_rpt[0]}.md", "text/markdown", key="rpt_dl")
+        with st.expander("預覽報告"):
+            st.markdown(_rpt[1])
 
     st.markdown(
         "<small style='color:#B8C0D0'>⚠️ 資料來源 yfinance，季報更新、非即時；"
