@@ -1926,7 +1926,7 @@ def page_ai_assistant():
                                 _cp.append("做空面：" + "；".join(sh_c["notes"]))
                         except Exception:
                             pass
-                        if tk.endswith(".TW"):
+                        if tk.endswith((".TW", ".TWO")):
                             try:
                                 import tw_flows as _twf3
                                 _twacc = _cached_tw_flows(tk)
@@ -4699,8 +4699,8 @@ def page_company_analysis():
     section("做空籌碼（Short Data）")
     st.caption("FINRA 日做空量占比 + 短倉/流通比 + 回補天數 + SEC 失券（FTD）。僅美股。")
     tkr_sh = data.get("ticker", "")
-    if tkr_sh.endswith(".TW"):
-        # 台股籌碼面 = 三大法人買賣超（TWSE 免 key）
+    if tkr_sh.endswith((".TW", ".TWO")):
+        # 台股籌碼面 = 三大法人買賣超（上市 TWSE / 上櫃 TPEX，免 key）
         if st.button("查詢三大法人買賣超", key="twf_go"):
             with st.spinner(f"抓取 {tkr_sh} 近 5 日法人動向（TWSE）…"):
                 try:
@@ -4711,7 +4711,7 @@ def page_company_analysis():
         if _twf_saved and _twf_saved[0] == tkr_sh:
             twf_acc = _twf_saved[1]
             if not twf_acc:
-                st.warning("查無法人資料（非上市股票、或 TWSE 暫時無回應；上櫃股票暫不支援）。")
+                st.warning("查無法人資料（TWSE/TPEX 皆無回應，或非上市/上櫃普通股）。")
             else:
                 import tw_flows as _twf2
                 f1, f2, f3, f4 = st.columns(4)
@@ -4732,7 +4732,8 @@ def page_company_analysis():
                 _ft = _twf2.flows_text(twf_acc)
                 if _ft:
                     st.markdown(f"- {_ft}")
-                st.caption("資料 TWSE（上市）盤後 · 外資含陸資、不含外資自營商 · 非投資建議。")
+                st.caption(f"資料 {twf_acc.get('market', 'TWSE')} 盤後 · "
+                           "外資含陸資、不含外資自營商 · 非投資建議。")
     elif "." in tkr_sh:
         st.info("此標的非美股/台股上市，做空與法人數據暫不支援。")
     else:
@@ -4809,6 +4810,113 @@ def page_company_analysis():
             st.caption(f"統計視窗 {ins.get('window_days', 90)} 天　·　"
                        f"解析 {ins.get('n_filings', 0)} 份 Form 4　·　資料來源 SEC EDGAR。"
                        "內部人交易屬輔助訊號，需搭配基本面與趨勢，非投資建議。")
+
+    # ⑧ 一鍵完整研究報告（組裝本頁已載入的全部區塊 + 回測/量化，純組裝零 LLM 成本）─
+    section("完整研究報告")
+    st.caption("把本頁的基本面/分析師/籌碼/內部人 + 技術回測 + 委員會裁決（若剛開過會）"
+               "組裝成一份可下載的 Markdown 研究報告。上方各區塊先查詢過的內容會被納入。")
+    if st.button("📄 產生完整研究報告", key="rpt_go"):
+        with st.spinner("組裝報告（含回測，約 10-30 秒）…"):
+            try:
+                _rt = data.get("ticker", "")
+                _R = [f"# {data.get('name', _rt)}（{_rt}）研究報告",
+                      f"_產生時間 {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')} · "
+                      "RBS Finance Dashboard · 分析教育用途，非投資建議_\n"]
+
+                def _rv(v, pct=False, dp=2):
+                    if v is None:
+                        return "—"
+                    return f"{v * 100:.1f}%" if pct else f"{v:.{dp}f}"
+
+                import fundamentals as _fa9
+                _hs9 = _fa9.health_score(data)
+                _R.append("## 基本面\n"
+                          f"- 財務健康：{_rv(_hs9.get('score'), dp=0)}（{_hs9.get('rating', '')}）\n"
+                          f"- P/E {_rv(data.get('pe'))}　P/B {_rv(data.get('pb'))}　"
+                          f"ROE {_rv(data.get('roe'), 1)}　淨利率 {_rv(data.get('net_margin'), 1)}\n"
+                          f"- 營收成長 {_rv(data.get('revenue_growth'), 1)}　"
+                          f"盈餘成長 {_rv(data.get('earnings_growth'), 1)}　"
+                          f"負債權益比 {_rv(data.get('debt_to_equity'))}")
+                _an9 = st.session_state.get("an_result")
+                if _an9 and _an9[0] == _rt and _an9[1]:
+                    an9 = _an9[1]
+                    r9, t9, s9 = an9.get("ratings"), an9.get("targets"), an9.get("surprises")
+                    seg = []
+                    if r9:
+                        seg.append(f"評等共識 {r9['score']:+.2f}（{r9['label']}，{r9['total']} 位）")
+                    if t9:
+                        seg.append(f"目標價上檔 {t9['upside_mean']:+.1%}")
+                    if s9:
+                        seg.append(f"EPS Beat 率 {s9['beat_rate']:.0%}（{s9['n']} 季）")
+                    if seg:
+                        _R.append("## 分析師共識\n- " + "\n- ".join(seg))
+                _chip9 = []
+                _sh9 = st.session_state.get("sh_result")
+                if _sh9 and _sh9[0] == _rt and _sh9[1]:
+                    _chip9 += [f"- {n}" for n in _sh9[1].get("notes", [])]
+                _twf9 = st.session_state.get("twf_result")
+                if _twf9 and _twf9[0] == _rt and _twf9[1]:
+                    import tw_flows as _twf10
+                    _ft9 = _twf10.flows_text(_twf9[1])
+                    if _ft9:
+                        _chip9.append(f"- {_ft9}")
+                _ins9 = st.session_state.get("ins_result")
+                if _ins9 and _ins9[0] == _rt and _ins9[1]:
+                    import sec_insider as _si9
+                    _chip9.append("- " + _si9.format_insider_text(_ins9[1]).replace("\n", "\n- "))
+                if _chip9:
+                    _R.append("## 籌碼面\n" + "\n".join(_chip9))
+                try:
+                    _info9, hist9, _n9 = _cached_ticker_data(_rt, "1y")
+                    if hist9 is not None and not hist9.empty:
+                        import sector_scan as _ssc9
+                        t9m = _ssc9.price_metrics(hist9["Close"]) or {}
+                        t9m.update(_trend_fields(hist9["Close"]))
+                        _R.append("## 技術面\n"
+                                  f"- 現價 {_rv(t9m.get('price'))}　近1月 {_rv(t9m.get('return_1m'), 1)}　"
+                                  f"近3月 {_rv(t9m.get('return_3m'), 1)}　RSI {_rv(t9m.get('rsi'), dp=0)}\n"
+                                  f"- 年化波動 {_rv(t9m.get('ann_vol'), 1)}　"
+                                  f"距52週高 {_rv(t9m.get('pct_from_52w_high'), 1)}　"
+                                  f"vs MA200 {_rv(t9m.get('vs_ma200'), 1)}")
+                        try:
+                            import scan_signals as _ss9
+                            q9 = _ss9._composite_score(hist9["Close"], hist9.get("High"),
+                                                       hist9.get("Low"), hist9.get("Volume"))
+                            if q9:
+                                _R.append(f"## 量化綜合評分\n- **{q9['score']:+.2f}**（{q9.get('rating', '')}）")
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+                try:
+                    bt9 = _run_backtest_tool(_rt)
+                    if bt9 and bt9.get("ok") and bt9.get("top"):
+                        _R.append("## 訊號回測（已扣成本、無前視）\n" + "\n".join(
+                            f"- {x['rule']}：勝率 {x['win_rate']:.0%}、獲利因子 "
+                            f"{x['profit_factor']:.2f}、{x['trades']} 筆"
+                            for x in bt9["top"][:3]))
+                except Exception:
+                    pass
+                _cmt9 = st.session_state.get("cmt_result")
+                if _cmt9 and _rt in _cmt9.get("tickers", []):
+                    if _cmt9["multi"]:
+                        _vd9 = (_cmt9.get("mres") or {}).get("verdicts", {}).get(_rt)
+                    else:
+                        _vd9 = (_cmt9.get("verdict") or {}).get("verdict")
+                    _R.append(f"## 委員會裁決\n- 結論：**{_vd9 or '—'}**\n\n{_cmt9['pm']}")
+                if st.session_state.get("fa_ai_out"):
+                    _R.append("## AI 解讀\n" + st.session_state["fa_ai_out"])
+                _R.append("\n---\n_資料源：yfinance / Finnhub / FINRA / SEC EDGAR / CBOE / "
+                          "TWSE·TPEX / FRED　·　本報告為系統自動組裝，非投資建議_")
+                st.session_state["rpt_md"] = (_rt, "\n\n".join(_R))
+            except Exception as e:
+                st.error(f"報告組裝失敗：{e}")
+    _rpt = st.session_state.get("rpt_md")
+    if _rpt and _rpt[0] == data.get("ticker"):
+        st.download_button("⬇ 下載研究報告 (.md)", _rpt[1].encode("utf-8"),
+                           f"report_{_rpt[0]}.md", "text/markdown", key="rpt_dl")
+        with st.expander("預覽報告"):
+            st.markdown(_rpt[1])
 
     st.markdown(
         "<small style='color:#B8C0D0'>⚠️ 資料來源 yfinance，季報更新、非即時；"

@@ -119,45 +119,93 @@ def flows_text(acc: dict) -> str | None:
     return "；".join(parts) + f"（至 {acc.get('last_date', '?')}）"
 
 
+# ── TPEX（上櫃）───────────────────────────────────────────────────────────────
+# 端點回傳 aaData 純陣列（無欄名），採 hedge 版 24 欄的社群共識版面：
+#   4=外資及陸資買賣超(不含外資自營商)、13=投信買賣超、22=自營商買賣超(合計)、
+#   23=三大法人買賣超股數合計。有長度防護；版面若改版會整批回 None（待部署實測）。
+
+TPEX_URL = "https://www.tpex.org.tw/web/stock/3insti/daily_trade/3itrade_hedge_result.php"
+_TPEX_COLS = {"foreign": 4, "trust": 13, "dealer": 22, "total": 23}
+
+
+def parse_tpex(payload: dict, stock_no: str) -> dict | None:
+    """從 TPEX 上櫃法人日報 JSON 取某檔的買賣超（純函數）。查無/版面異常回 None。"""
+    rows = (payload or {}).get("aaData") or []
+    code = stock_no.strip()
+    for row in rows:
+        try:
+            if len(row) >= 24 and str(row[0]).strip() == code:
+                out = {k: _num(row[i]) for k, i in _TPEX_COLS.items()}
+                return out if out.get("total") is not None else None
+        except (TypeError, IndexError):
+            continue
+    return None
+
+
+def _roc_date(d) -> str:
+    return f"{d.year - 1911}/{d.month:02d}/{d.day:02d}"
+
+
 # ── 抓取層（需網路；開發環境斷網，部署後實測）──────────────────────────────────
 
-def fetch_flows(ticker: str, days: int = 5, lookback: int = 12) -> dict | None:
-    """
-    抓某台股近 N 個交易日的法人買賣超並彙總。ticker 接受 2330 / 2330.TW。
-    只支援上市（TWSE）；抓不到回 None。
-    """
+def _walk_back(fetch_one, days: int, lookback: int) -> list[dict]:
+    """從今天往回逐日呼叫 fetch_one(date)→row|None，收滿 days 筆或試完 lookback 天。"""
     import datetime as _dt
     import time
-
-    import requests
-    code = ticker.upper().replace(".TW", "").strip()
-    if not code.isdigit():
-        return None
     got: list[dict] = []
     d = _dt.date.today()
     tried = 0
-    sess = requests.Session()
-    sess.headers.update({"User-Agent": "Mozilla/5.0"})
     while len(got) < days and tried < lookback:
-        ymd = d.strftime("%Y%m%d")
         try:
-            r = sess.get(T86_URL, params={"date": ymd, "selectType": "ALLBUT0999",
-                                          "response": "json"}, timeout=15)
-            if r.ok:
-                row = parse_t86(r.json(), code)
-                if row is not None:
-                    row["date"] = d.isoformat()
-                    got.append(row)
-            time.sleep(0.4)                       # 對 TWSE 客氣點
+            row = fetch_one(d)
+            if row is not None:
+                row["date"] = d.isoformat()
+                got.append(row)
+            time.sleep(0.4)                       # 對交易所客氣點
         except Exception:
             pass
         d -= _dt.timedelta(days=1)
         tried += 1
-    if not got:
+    return got
+
+
+def fetch_flows(ticker: str, days: int = 5, lookback: int = 12) -> dict | None:
+    """
+    抓某台股近 N 個交易日的法人買賣超並彙總。
+    接受 2330 / 2330.TW / 6488.TWO。.TWO 直接查上櫃；其餘先查上市（TWSE），
+    整段查無再退上櫃（TPEX）。抓不到回 None。
+    """
+    import requests
+    t = ticker.upper().strip()
+    otc_first = t.endswith(".TWO")
+    code = t.replace(".TWO", "").replace(".TW", "")
+    if not code.isdigit():
         return None
-    acc = accumulate_flows(got)
-    acc["ticker"] = f"{code}.TW"
-    return acc
+    sess = requests.Session()
+    sess.headers.update({"User-Agent": "Mozilla/5.0"})
+
+    def _twse_one(d):
+        r = sess.get(T86_URL, params={"date": d.strftime("%Y%m%d"),
+                                      "selectType": "ALLBUT0999",
+                                      "response": "json"}, timeout=15)
+        return parse_t86(r.json(), code) if r.ok else None
+
+    def _tpex_one(d):
+        r = sess.get(TPEX_URL, params={"l": "zh-tw", "o": "json",
+                                       "se": "EW", "t": "D",
+                                       "d": _roc_date(d)}, timeout=15)
+        return parse_tpex(r.json(), code) if r.ok else None
+
+    order = ([(_tpex_one, "TPEX")] if otc_first
+             else [(_twse_one, "TWSE"), (_tpex_one, "TPEX")])
+    for fetch_one, market in order:
+        got = _walk_back(fetch_one, days, lookback)
+        if got:
+            acc = accumulate_flows(got)
+            acc["ticker"] = f"{code}.{'TWO' if market == 'TPEX' else 'TW'}"
+            acc["market"] = market
+            return acc
+    return None
 
 
 # ── CLI 自我測試（純解析）─────────────────────────────────────────────────────
@@ -208,5 +256,18 @@ if __name__ == "__main__":
     print(txt)
     assert "投信連 4 日買超" in txt and "+3,300 張" in txt
     assert flows_text({}) is None
+
+    # TPEX 24 欄 hedge 版
+    tpex_row = ["6488", "環球晶"] + ["0"] * 22
+    tpex_row[4], tpex_row[13], tpex_row[22], tpex_row[23] = \
+        "1,200,000", "300,000", "-50,000", "1,450,000"
+    tp = parse_tpex({"aaData": [tpex_row]}, "6488")
+    print("tpex 6488:", tp)
+    assert tp["foreign"] == 1_200_000 and tp["trust"] == 300_000
+    assert tp["dealer"] == -50_000 and tp["total"] == 1_450_000
+    assert parse_tpex({"aaData": [["6488", "短列"]]}, "6488") is None   # 欄數不足防護
+    assert parse_tpex({}, "6488") is None
+    import datetime as _dt
+    assert _roc_date(_dt.date(2026, 7, 5)) == "115/07/05"
 
     print("\n✅ tw_flows 純解析測試通過")
