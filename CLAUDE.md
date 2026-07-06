@@ -46,7 +46,7 @@ Streamlit 金融儀表板（`app.py`，13 頁）+ Telegram 訊號 Bot（`scan_si
 
 ## 完工定義 DoD（加功能時逐項核對——這清單裡每一項都真實漏過、出過包）
 
-- [ ] 模組自我測試通過：`python3 <module>.py`
+- [ ] 模組自我測試通過：`python3 <module>.py`（backtest 用 `--offline`）；新模組記得加進 `.github/workflows/ci.yml` 的自測清單
 - [ ] `python3 -c "import ast; ast.parse(open('app.py').read())"`（app.py 不能直接 import——開發環境沒裝 streamlit）
 - [ ] **新增環境變數 key？四處同步**：app.py 開機 secrets→env 複製清單（搜 `_os_boot`）、
       `.github/workflows/signal_scan.yml` env、`GITHUB_ACTIONS.md` Secrets 表、`README.md` API Keys 表

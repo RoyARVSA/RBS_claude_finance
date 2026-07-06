@@ -462,18 +462,51 @@ def optimize_params(
 
 # ── CLI 自我測試 ──────────────────────────────────────────────────────────────
 
+def _synthetic_ohlc(n: int = 420, seed: int = 42) -> pd.DataFrame:
+    """離線自我測試用：確定性隨機漫步 OHLCV（開發環境無網路時跑純邏輯）。"""
+    rng = np.random.default_rng(seed)
+    ret = rng.normal(0.0005, 0.015, n)
+    close = 100.0 * np.cumprod(1 + ret)
+    high = close * (1 + rng.uniform(0.0, 0.01, n))
+    low = close * (1 - rng.uniform(0.0, 0.01, n))
+    open_ = np.concatenate(([close[0]], close[:-1]))
+    vol = rng.integers(1_000_000, 5_000_000, n).astype(float)
+    idx = pd.bdate_range("2020-01-01", periods=n)
+    return pd.DataFrame({"Open": open_, "High": high, "Low": low,
+                         "Close": close, "Volume": vol}, index=idx)
+
+
+def _offline_selftest() -> None:
+    df = _synthetic_ohlc()
+    bt = backtest_all(df, tp=0.05, sl=0.03, horizon=10)
+    assert not bt.empty, "backtest_all 應回傳非空結果"
+    assert {"trades", "win_rate", "expectancy"} <= set(bt.columns), list(bt.columns)
+    scores = rule_edge_scores(df)
+    assert scores and all(-1.0 <= v <= 1.0 for v in scores.values()), scores
+    wf = walk_forward(df, n_splits=3)
+    assert isinstance(wf, dict), wf
+    det = walk_forward_details(df, str(bt.index[0]), n_splits=3)
+    assert isinstance(det, list), det
+    print(f"✅ backtest 離線自我測試通過（{len(bt)} 規則、walk-forward {len(det)} 段）")
+
+
 if __name__ == "__main__":
     import sys
+
+    if "--offline" in sys.argv:
+        _offline_selftest(); sys.exit(0)
+
+    ticker = next((a for a in sys.argv[1:] if not a.startswith("-")), "AAPL")
     try:
         import yfinance as yf
-    except ImportError:
-        print("需要 yfinance 才能跑 CLI 測試"); sys.exit(1)
-
-    ticker = sys.argv[1] if len(sys.argv) > 1 else "AAPL"
-    print(f"下載 {ticker} 2 年資料…")
-    raw = yf.download(ticker, period="2y", auto_adjust=True, progress=False)
-    if raw.empty:
-        print("無資料"); sys.exit(1)
+        print(f"下載 {ticker} 2 年資料…")
+        raw = yf.download(ticker, period="2y", auto_adjust=True, progress=False)
+    except Exception as e:
+        print(f"下載不可用（{type(e).__name__}）→ 改跑離線自我測試")
+        _offline_selftest(); sys.exit(0)
+    if raw is None or raw.empty:
+        print("無資料（網路不通？）→ 改跑離線自我測試")
+        _offline_selftest(); sys.exit(0)
     df = normalize_ohlc(raw, ticker)
 
     print(f"\n=== {ticker} 訊號回測（停利5% / 停損3% / 持有10天）===\n")

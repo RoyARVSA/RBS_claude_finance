@@ -19,7 +19,6 @@ quant_tools.py – 部位配置與風險管理工具（可重用，無 Streamlit
 from __future__ import annotations
 
 import numpy as np
-import pandas as pd
 
 
 # ── 單筆部位 ─────────────────────────────────────────────────────────────────

@@ -48,14 +48,12 @@ Telegram 指令（傳給 Bot）：
 from __future__ import annotations
 
 import json
-import math
 import os
 import sys
 from datetime import datetime, date, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-import numpy as np
 import pandas as pd
 import requests
 import yfinance as yf
@@ -1100,7 +1098,6 @@ def _macd(close: pd.Series) -> dict:
     hist = macd_line - signal_line
 
     prev_hist, curr_hist = float(hist.iloc[-2]), float(hist.iloc[-1])
-    prev_macd = float(macd_line.iloc[-2])
     curr_macd = float(macd_line.iloc[-1])
 
     if prev_hist < 0 and curr_hist > 0:
@@ -1125,8 +1122,7 @@ def _bollinger(close: pd.Series, period: int = 20, std_dev: float = 2.0) -> dict
     lower = ma - std_dev * std
 
     price = float(close.iloc[-1])
-    u, l, m = float(upper.iloc[-1]), float(lower.iloc[-1]), float(ma.iloc[-1])
-    bandwidth = (u - l) / m if m != 0 else 0
+    u, l = float(upper.iloc[-1]), float(lower.iloc[-1])
     pct_b = (price - l) / (u - l) if (u - l) > 0 else 0.5
 
     prev_price = float(close.iloc[-2])
@@ -1197,7 +1193,6 @@ def _ma_trend(close: pd.Series) -> dict:
         return {"signal": "neutral", "label": ""}
     ma20 = float(close.rolling(20).mean().iloc[-1])
     ma50 = float(close.rolling(50).mean().iloc[-1])
-    price = float(close.iloc[-1])
 
     prev_ma20 = float(close.rolling(20).mean().iloc[-2])
     prev_ma50 = float(close.rolling(50).mean().iloc[-2])
@@ -2335,7 +2330,6 @@ def main() -> int:
         print("WARNING: TELEGRAM_TOKEN / TELEGRAM_CHAT_ID not set. Signals printed only.")
 
     state = load_state()
-    state_changed = False
 
     # Step 1: Process incoming Telegram commands
     if TELEGRAM_TOKEN:
@@ -2348,7 +2342,6 @@ def main() -> int:
             print(f"Command processing error: {e}")
             changed = True
         if changed:
-            state_changed = True
             save_state(state)
             print("State updated from commands.")
 
