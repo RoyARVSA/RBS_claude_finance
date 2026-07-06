@@ -2106,6 +2106,30 @@ def page_ai_assistant():
                                        "→ 5 個交易日後在計分板結算")
                     except Exception:
                         pass
+                    # 會後推播結論到 Telegram（用「即時警報」頁設定的 Bot；未設定就跳過）
+                    try:
+                        _tg_cfg = _load_alerts_config().get("telegram", {})
+                        if (_tg_cfg.get("enabled") and _tg_cfg.get("token")
+                                and _tg_cfg.get("chat_id")):
+                            if multi:
+                                _v_lines = "\n".join(
+                                    f"• {tk}: {mres['verdicts'].get(tk) or '—'}"
+                                    for tk in ok_tks)
+                                _tg_msg = (f"🏛 *委員會裁決*（{'、'.join(ok_tks)}）\n{_v_lines}\n"
+                                           f"首選: {mres.get('top_pick') or '無'}　"
+                                           f"信心: {mres.get('confidence') or '—'}")
+                            else:
+                                _q0 = quants.get(ok_tks[0]) or {}
+                                _tg_msg = (f"🏛 *委員會裁決* {ok_tks[0]}: "
+                                           f"{verdict_c.get('verdict') or '—'}"
+                                           f"（信心 {verdict_c.get('confidence') or '—'}）\n"
+                                           f"量化評分 {_q0.get('score', '—')}　"
+                                           f"{(cross_c or {}).get('agreement', '')}")
+                            _tg_msg += "\n_非投資建議_"
+                            _send_telegram(_tg_cfg["token"], _tg_cfg["chat_id"], _tg_msg)
+                            st.caption("📨 結論已推播到 Telegram")
+                    except Exception:
+                        pass
                     prog.update(label="✅ 決策會議完成", state="complete")
                 except Exception as e:
                     prog.update(label=f"失敗：{e}", state="error")
@@ -2498,6 +2522,111 @@ def _cached_watchlist_closes(tickers: tuple):
     return _batch_closes(list(tickers), "5d", min_len=2)
 
 
+def _health_checks() -> list[dict]:
+    """逐一 ping 各資料源（每項獨立 try，總耗時 ~20-40 秒）。回狀態列清單。"""
+    import os as _os
+    import time as _t
+    out: list[dict] = []
+
+    def run(name, fn, skip_reason=None):
+        if skip_reason:
+            out.append({"資料源": name, "狀態": "⚪ 未設定", "說明": skip_reason, "耗時ms": None})
+            return
+        t0 = _t.time()
+        try:
+            note = fn()
+            status = "🟡 部分" if isinstance(note, str) and note.startswith("WARN:") else "🟢 正常"
+            note = note[5:].strip() if (isinstance(note, str) and note.startswith("WARN:")) else (note or "OK")
+            out.append({"資料源": name, "狀態": status, "說明": str(note)[:70],
+                        "耗時ms": int((_t.time() - t0) * 1000)})
+        except Exception as e:
+            out.append({"資料源": name, "狀態": "🔴 失敗", "說明": str(e)[:70],
+                        "耗時ms": int((_t.time() - t0) * 1000)})
+
+    def _yf_hist():
+        from sector_scan import _batch_closes
+        c = _batch_closes(["AAPL"], "5d", min_len=2)
+        if not c:
+            raise RuntimeError("批次下載回空")
+        return f"AAPL 收盤 {float(c['AAPL'].iloc[-1]):.2f}"
+
+    def _yf_info():
+        import yfinance as yf
+        info = yf.Ticker("AAPL").info or {}
+        if info.get("trailingPE"):
+            return f"P/E {info['trailingPE']:.1f}"
+        return "WARN: .info 疑似被限流（備援鏈會接手）"
+
+    def _finnhub():
+        import requests
+        k = _os.environ.get("FINNHUB_API_KEY", "")
+        r = requests.get("https://finnhub.io/api/v1/quote",
+                         params={"symbol": "AAPL", "token": k}, timeout=15)
+        c = (r.json() or {}).get("c") if r.ok else None
+        if not c:
+            raise RuntimeError(f"HTTP {r.status_code}")
+        return f"AAPL 現價 {c}"
+
+    def _fred():
+        import macro as _m
+        s = _m._fred_get("FEDFUNDS", os.environ.get("FRED_API_KEY", ""), limit=1)
+        if not s:
+            raise RuntimeError("無回傳")
+        return f"Fed 利率 {s[0][1]}"
+
+    def _finra():
+        import short_data as sd
+        v = sd.fetch_short_volume(["AAPL"], lookback_days=6)
+        if not v:
+            raise RuntimeError("近 6 日檔案皆抓不到")
+        a = v["AAPL"]
+        return f"做空占比 {a['ratio']:.0%}（{a.get('as_of')}）"
+
+    def _edgar():
+        import requests
+        import sec_insider as si
+        r = requests.get("https://data.sec.gov/submissions/CIK0000320193.json",
+                         headers=si._ua(), timeout=15)
+        if not r.ok:
+            raise RuntimeError(f"HTTP {r.status_code}")
+        return (r.json() or {}).get("name", "OK")
+
+    def _cboe():
+        import options_sentiment as ops
+        s = ops._fetch_cboe("AAPL")
+        if not s:
+            raise RuntimeError("無鏈資料")
+        return f"PCR(OI) {s.get('pcr_oi'):.2f}" if s.get("pcr_oi") else "有鏈但缺 OI"
+
+    def _twse():
+        import tw_flows as twf
+        a = twf.fetch_flows("2330", days=1, lookback=6)
+        if not a:
+            raise RuntimeError("近 6 日皆查無（假日或格式變動）")
+        return f"2330 三大法人 {a['total_lots']:+,.0f} 張"
+
+    def _gh():
+        import requests
+        r = requests.get(f"https://api.github.com/repos/{_GH_REPO}",
+                         headers={"Authorization": f"Bearer {_gh_token()}"}, timeout=15)
+        if not r.ok:
+            raise RuntimeError(f"HTTP {r.status_code}（token 權限？）")
+        return "repo 可存取（計分板可持久化）"
+
+    fred_k = os.environ.get("FRED_API_KEY", "")
+    run("yfinance 歷史價格", _yf_hist)
+    run("yfinance .info 基本面", _yf_info)
+    run("Finnhub 備援", _finnhub,
+        None if _os.environ.get("FINNHUB_API_KEY") else "無 FINNHUB_API_KEY")
+    run("FRED 總經", _fred, None if fred_k else "無 FRED_API_KEY")
+    run("FINRA 做空量", _finra)
+    run("SEC EDGAR", _edgar)
+    run("CBOE 選擇權", _cboe)
+    run("TWSE 三大法人", _twse)
+    run("GitHub 持久化", _gh, None if _gh_token() else "無 GITHUB_TOKEN（計分板僅本地暫存）")
+    return out
+
+
 def page_market_overview():
     st.title("🏠 市場總覽")
     now_str = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M")
@@ -2508,6 +2637,21 @@ def page_market_overview():
         _fetch_market_snapshot.clear()
         _cached_market_rss.clear()
         st.rerun()
+
+    # ── 🩺 資料源健康檢查（驗收/除錯用）─────────────────────────────
+    with st.expander("🩺 資料源健康檢查（一鍵 ping 全部資料源，約 30 秒）", expanded=False):
+        if st.button("開始檢查", key="hc_go"):
+            with st.spinner("逐一測試各資料源…"):
+                st.session_state["hc_result"] = (_health_checks(),
+                                                 pd.Timestamp.now().strftime("%H:%M:%S"))
+        _hc = st.session_state.get("hc_result")
+        if _hc:
+            rows_hc, ts_hc = _hc
+            st.dataframe(pd.DataFrame(rows_hc), use_container_width=True, hide_index=True)
+            n_ok = sum(1 for r in rows_hc if r["狀態"].startswith("🟢"))
+            st.caption(f"檢查時間 {ts_hc}　·　{n_ok}/{len(rows_hc)} 正常　·　"
+                       "🔴 表示該資料源目前抓不到（相關功能會優雅降級）；"
+                       "⚪ 表示未設定對應 key。")
 
     with st.spinner("載入市場數據…"):
         snapshot, sectors = _fetch_market_snapshot()
