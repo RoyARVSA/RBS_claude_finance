@@ -1,0 +1,55 @@
+name: CI — 離線自我測試
+
+# 每次 push/PR 自動跑全模組純邏輯自測 + app.py 語法檢查，
+# 防止改壞了才在 Streamlit Cloud / cron 上炸開。全程不需任何 API key。
+on:
+  push:
+    paths:
+      - '**.py'
+      - 'requirements.txt'
+      - '.github/workflows/ci.yml'
+  pull_request:
+    paths:
+      - '**.py'
+      - 'requirements.txt'
+      - '.github/workflows/ci.yml'
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: 安裝相依套件
+        run: pip install -r requirements.txt pyflakes
+
+      - name: app.py 語法檢查（不 import——CI 沒有 Streamlit runtime）
+        run: python3 -c "import ast; ast.parse(open('app.py').read()); print('app.py syntax OK')"
+
+      - name: Bot 匯入檢查
+        run: python3 -c "import scan_signals, bot_daemon; print('bot imports OK')"
+
+      - name: 模組自我測試（純邏輯、離線可跑）
+        run: |
+          set -e
+          python3 backtest.py --offline
+          for m in quant_tools rbs_lib fundamentals macro finnhub_data sector_scan \
+                   assistant assistant_tools options_sentiment sec_insider perf_report \
+                   portfolio_opt analyst_data short_data whales_13f ledger reflection \
+                   tw_flows committee alpaca_trader stock_db; do
+            echo "── $m ──"
+            python3 "$m.py"
+          done
+
+      - name: pyflakes（undefined name 視為錯誤；其餘僅列出）
+        run: |
+          python3 -m pyflakes *.py | tee /tmp/pyflakes.txt || true
+          if grep -E "undefined name" /tmp/pyflakes.txt; then
+            echo "::error::發現 undefined name（潛在 NameError）"; exit 1
+          fi

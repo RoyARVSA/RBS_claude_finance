@@ -371,3 +371,36 @@ def calculate_woe_iv(
     )
     woe_df["iv"] = (woe_df["dist_good"] - woe_df["dist_bad"]) * woe_df["woe"]
     return woe_df, float(woe_df["iv"].sum()) if len(woe_df) else 0.0
+
+
+# ── CLI 自我測試（離線純邏輯）─────────────────────────────────────────────────
+if __name__ == "__main__":
+    rng = np.random.default_rng(7)
+    rets = pd.DataFrame(rng.normal(0.0005, 0.01, (300, 3)), columns=["A", "B", "C"])
+    w = pd.Series([0.4, 0.4, 0.2], index=["A", "B", "C"])
+
+    hv = historical_var(rets["A"], 0.95)
+    cv = conditional_var(rets["A"], 0.95)
+    dv = delta_normal_var(rets["A"], 0.95)
+    # 本庫 VaR 慣例：回傳分位數本身（損失為負值）；CVaR 應更深（更負）
+    assert cv <= hv < 0 and dv < 0, (hv, cv, dv)
+
+    cov = ewma_cov(rets)
+    assert cov.shape == (3, 3) and np.allclose(cov, cov.T), cov.shape
+    cov2 = lw_cov(rets)
+    assert cov2.shape == (3, 3), cov2.shape
+
+    prices = 100.0 * (1 + rets).cumprod()
+    pv = portfolio_var(prices, w)
+    assert pv.vol_ann > 0 and pv.var_pct != 0, (pv.vol_ann, pv.var_pct)
+
+    var_series = pd.Series(hv, index=rets.index)
+    kup = kupiec_pof_test(rets["A"], var_series, alpha=0.95)
+    assert 0.0 <= kup.p_value <= 1.0, kup
+
+    woe_data = pd.DataFrame({"x": rng.normal(0, 1, 300),
+                             "y": rng.integers(0, 2, 300)})
+    _, iv = calculate_woe_iv(woe_data, "x", "y", bins=5)
+    assert iv >= 0.0, iv
+
+    print("✅ rbs_lib 離線自我測試通過（VaR/CVaR/共變異/Kupiec/WoE）")

@@ -29,23 +29,13 @@ if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
 from rbs_lib import (
-    apply_shocks,
-    calculate_volatility,
-    calculate_woe_iv,
-    conditional_var,
-    delta_normal_var,
-    ewma_cov,
     historical_replay,
-    historical_var,
     kupiec_pof_test,
     load_price_data,
-    lw_cov,
     mc_portfolio_pnl,
     portfolio_var,
     rolling_portfolio_var,
     scenario_pnl_value,
-    scorecard_transform,
-    to_returns,
 )
 
 # ─────────────────────────── Page Config ────────────────────────────
@@ -267,8 +257,6 @@ with st.sidebar:
 def page_portfolio_performance():
     st.title("📈 持倉分析")
     st.caption("多資產組合分析：權益曲線、回撤、Sharpe、資訊比率、Beta")
-
-    import yfinance as yf
 
     # ── 📒 交易帳本（Ghostfolio 式：真實買賣紀錄 → 成本/損益/TWR/XIRR/股息）──
     with st.expander("📒 交易帳本（輸入真實買賣紀錄 → 成本基礎 / 損益 / TWR / XIRR / 股息）",
@@ -1675,7 +1663,6 @@ def _run_options_tool(ticker):
 
 def _run_insider_tool(ticker):
     """SEC 內部人交易（Form 4）：買賣人數/金額、cluster buy、情緒。"""
-    import sec_insider as si
     summ = _cached_insider(ticker)
     if not summ:
         return {"tool": "insider", "ok": False, "ticker": ticker,
@@ -2569,7 +2556,7 @@ def _health_checks() -> list[dict]:
 
     def _fred():
         import macro as _m
-        s = _m._fred_get("FEDFUNDS", os.environ.get("FRED_API_KEY", ""), limit=1)
+        s = _m._fred_get("FEDFUNDS", _os.environ.get("FRED_API_KEY", ""), limit=1)
         if not s:
             raise RuntimeError("無回傳")
         return f"Fed 利率 {s[0][1]}"
@@ -2613,7 +2600,7 @@ def _health_checks() -> list[dict]:
             raise RuntimeError(f"HTTP {r.status_code}（token 權限？）")
         return "repo 可存取（計分板可持久化）"
 
-    fred_k = os.environ.get("FRED_API_KEY", "")
+    fred_k = _os.environ.get("FRED_API_KEY", "")
     run("yfinance 歷史價格", _yf_hist)
     run("yfinance .info 基本面", _yf_info)
     run("Finnhub 備援", _finnhub,
@@ -4021,7 +4008,6 @@ def page_stock_research():
                             st.session_state["wf_details"] = _wfd
                     det = (_wfd or {}).get("det") or []
                     if det:
-                        wf_df = pd.DataFrame(det)
                         fig_wf = go.Figure(go.Bar(
                             x=[f"第{d['fold']}段\n{d['start']}~{d['end']}" for d in det],
                             y=[d["expectancy"] if d["expectancy"] is not None else 0 for d in det],

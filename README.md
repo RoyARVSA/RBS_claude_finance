@@ -130,7 +130,7 @@ alpaca_trader.py        Alpaca 紙上交易：下單決策(decide_orders) + REST
 stock_db.py             選股資料庫（5 市場、30+ 產業、200+ 標的，含 AI 供應鏈瓶頸主題）
 rbs_lib.py              風險計算函式庫（VaR/CVaR/共變異數/情境）
 streamlit_app.py        雲端部署進入點
-.github/workflows/      GitHub Actions 排程掃描
+.github/workflows/      GitHub Actions：排程掃描（signal_scan）+ CI 離線自測（ci）
 watchlist_state.json    Bot 狀態（清單/門檻/校準/訊號歷史，自動維護）
 ```
 

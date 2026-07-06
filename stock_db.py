@@ -497,3 +497,24 @@ MAVOID: dict[str, str] = {
     "defensive": "避免具有高財務槓桿、現金流不穩定的所謂「防禦型」標的",
     "macro":     "避免過度集中單一宏觀主題，宏觀預測失準時損失集中",
 }
+
+
+# ── CLI 自我測試（資料結構完整性）────────────────────────────────────────────
+if __name__ == "__main__":
+    n_ind = n_tk = 0
+    for mkt, industries in ADB.items():
+        assert mkt in MKTS.values(), f"未知市場 {mkt}"
+        for ind, d in industries.items():
+            n_ind += 1
+            assert d.get("tickers"), f"{mkt}/{ind} 無 tickers"
+            assert d.get("asset_type") in ("股票", "ETF", "REIT"), f"{mkt}/{ind} asset_type 異常"
+            assert d.get("desc"), f"{mkt}/{ind} 缺 desc"
+            for s in d.get("strats", []):
+                assert s in STRATS, f"{mkt}/{ind} 未知策略 {s}"
+            n_tk += len(d["tickers"])
+            assert all(isinstance(t, str) and t for t in d["tickers"]), f"{mkt}/{ind} ticker 格式異常"
+    for k in MWARN:
+        assert k in MKTS.values(), f"MWARN 未知市場 {k}"
+    for k in MAVOID:
+        assert k in STRATS, f"MAVOID 未知策略 {k}"
+    print(f"✅ stock_db 結構檢查通過（{len(ADB)} 市場、{n_ind} 產業、{n_tk} 標的）")
