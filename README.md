@@ -43,6 +43,7 @@ Streamlit 網頁應用 + 獨立的訊號掃描 Bot（GitHub Actions 排程版 / 
 - **到價警報**：`/alert AAPL 200` 突破/跌破即推播，觸發後自動移除（上限 20 個）
 - **Alpaca 模擬交易**：訊號自動下模擬單驗證策略實效（預設關閉，`/autotrade on` 啟用）
 - **當日交易計畫**：`/today [帳戶 風險%]` 盤中訂單票（VWAP/ORB/RVOL 進場、停損/停利/股數、財報日迴避）；進場票自動記入決策計分板（隔日結算，與量化/委員會同板比較）
+- **當日計畫歷史回測**：`/plantest` 用過去 ~60 交易日 5 分 K 逐日重放訂單票（無前視、扣成本、停損優先），統計各型態實證勝率/R 期望值；`/plantest apply` 把 walk-forward 校準（負期望型態停用、不穩定降信心）套進 /today——**讓判定吃歷史實證自我修正**
 - **Telegram 指令**：清單 `/add /remove /list`、分析 `/rank /fundamentals /options /insider /whales /earnings /briefing /weekly /today`、
   **AI `/committee`（手機開機構決策會議）**、警報 `/alert`、風控 `/risk /protections /calibrate`、
   模擬交易 `/autotrade /positions /pnl /journal /closeall`（`/help` 看全部）
@@ -127,6 +128,7 @@ ledger.py               交易帳本：平均成本/已未實現損益/TWR/XIRR/
 reflection.py           AI 反思記憶：判斷 vs N 日後結果 → 命中率 + 決策者計分板（FinMem 式）
 trade_plan.py           當日交易計畫：VWAP/ORB/RVOL 盤中訂單票 + Alpaca IEX 即時價備援（免費）
 rebalance.py            持倉再平衡顧問：現有持倉 vs 目標權重 → 加減碼清單（免費）
+plan_backtest.py        當日計畫歷史回測：60 日 5 分 K 逐日重放 + walk-forward 校準（免費）
 tw_flows.py             台股三大法人買賣超（TWSE T86 上市 + TPEX 上櫃，免 key）：外資/投信/自營 + 連買天數
 committee.py            機構決策委員會：角色提示/立場解析/硬風控閘門/量化交叉比較，支援多檔與深度模式（TradingAgents 式）
 alpaca_trader.py        Alpaca 紙上交易：下單決策(decide_orders) + REST client

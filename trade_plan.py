@@ -123,9 +123,12 @@ def daily_gate(daily: pd.DataFrame) -> dict:
 
 def build_ticket(ticker: str, m: dict, gate: dict,
                  account: float = 100_000.0, risk_pct: float = 0.01,
-                 days_to_earnings: int | None = None) -> dict:
+                 days_to_earnings: int | None = None,
+                 calib: dict | None = None) -> dict:
     """盤中指標 + 日線閘門 → 當日訂單票。永遠回傳 dict（action 可能是 觀望/迴避）。
-    days_to_earnings：距下次財報天數（0=今天）；0-1 天內一律迴避（事件跳空風險）。"""
+    days_to_earnings：距下次財報天數（0=今天）；0-1 天內一律迴避（事件跳空風險）。
+    calib：plan_backtest walk-forward 校準（{"setups": {setup: {enabled, conf_delta}}}）；
+    只降不升——負期望型態停用、不穩定型態降信心。"""
     reasons: list[str] = []
     t = {"ticker": ticker, "action": "觀望", "setup": "", "entry_lo": None,
          "entry_hi": None, "stop": None, "target": None, "shares": 0,
@@ -185,6 +188,20 @@ def build_ticket(ticker: str, m: dict, gate: dict,
         t["action"] = "觀望"
         reasons.append(f"價格在 VWAP {vwap:.2f} 之下——盤中弱勢，今日不進場")
         return t
+
+    # 歷史回測校準（/plantest apply 後生效；只降不升）
+    c_ = ((calib or {}).get("setups") or {}).get(setup)
+    if c_:
+        if not c_.get("enabled", True):
+            t["action"] = "觀望"
+            t["setup"] = setup
+            t["confidence"] = conf
+            reasons.append(f"📜 歷史回測負期望——{setup} 型態暫停用（/plantest 校準）")
+            return t
+        d_ = int(c_.get("conf_delta", 0))
+        if d_:
+            conf += d_
+            reasons.append(f"📜 歷史回測不穩定——信心 {d_:+d}（/plantest 校準）")
 
     if conf < 2:
         t["action"] = "觀望"
@@ -306,8 +323,10 @@ def fetch_plan_data(tickers: list[str]) -> dict[str, dict]:
 
 
 def build_plans(tickers: list[str], account: float = 100_000.0,
-                risk_pct: float = 0.01) -> tuple[list[dict], str | None]:
-    """端到端：抓資料 → 訂單票。回傳 (tickets, 即時價來源標籤或 None)。"""
+                risk_pct: float = 0.01,
+                calib: dict | None = None) -> tuple[list[dict], str | None]:
+    """端到端：抓資料 → 訂單票。回傳 (tickets, 即時價來源標籤或 None)。
+    calib：plan_backtest 校準（見 build_ticket）。"""
     data = fetch_plan_data(tickers)
     # 非美股（.TW 等）不能進 Alpaca 請求——一顆壞代碼會讓整批 400
     us_only = [t for t in data if t.split(".")[-1] not in _NON_US_SUFFIX or "." not in t]
@@ -316,13 +335,23 @@ def build_plans(tickers: list[str], account: float = 100_000.0,
     tickets = []
     for tk, dd in data.items():
         sess_min = 270.0 if tk.upper().endswith((".TW", ".TWO")) else 390.0
-        m = intraday_metrics(dd["bars"], dd["daily"], session_minutes=sess_min)
+        # 日線閘門/ATR/量能基準只用「今日以前」的日線——與 plan_backtest 重放同一母體，
+        # 也修正 avg_v20 把今日未完成量算進分母而虛增 RVOL 的偏差
+        daily_tk = dd["daily"]
+        try:
+            _sd = dd["bars"].index[-1].date()
+            _hist = daily_tk[daily_tk.index.date < _sd]
+            if len(_hist) >= 60:
+                daily_tk = _hist
+        except Exception:
+            pass
+        m = intraday_metrics(dd["bars"], daily_tk, session_minutes=sess_min)
         if not m:
             continue
         if tk in live:                       # 用即時價覆蓋延遲現價
             m["last"] = live[tk]
             m["above_vwap"] = m["last"] >= m["vwap"]
-        gate = daily_gate(dd["daily"])
+        gate = daily_gate(daily_tk)
         d2e = None
         try:                                 # 財報日事件閘門（抓不到就略過）
             from fundamentals import next_earnings_date
@@ -333,7 +362,7 @@ def build_plans(tickers: list[str], account: float = 100_000.0,
         except Exception:
             pass
         tickets.append(build_ticket(tk, m, gate, account, risk_pct,
-                                    days_to_earnings=d2e))
+                                    days_to_earnings=d2e, calib=calib))
     order = {"買進": 0, "小量試單": 1, "觀望": 2, "迴避": 3}
     tickets.sort(key=lambda t: (order.get(t["action"], 9), -(t["confidence"] or 0)))
     return tickets, src
@@ -399,6 +428,16 @@ if __name__ == "__main__":
     m3 = dict(m); m3["above_vwap"] = False
     t3 = build_ticket("WEAK", m3, gate)
     assert t3["action"] == "觀望", t3
+
+    # 校準回饋：型態停用 → 觀望；conf_delta=-1 → 信心降級（只降不升）
+    _cal = {"setups": {"ORB 突破": {"enabled": False},
+                       "VWAP 回踩": {"enabled": True, "conf_delta": -1}}}
+    t_cal = build_ticket("CAL", m, gate, calib=_cal)
+    assert t_cal["action"] == "觀望" and any("暫停用" in r for r in t_cal["reasons"]), t_cal
+    _cal2 = {"setups": {"ORB 突破": {"enabled": True, "conf_delta": -1}}}
+    t_cal2 = build_ticket("CAL2", m, gate, calib=_cal2)
+    t_nocal = build_ticket("NC", m, gate)
+    assert t_cal2["confidence"] == t_nocal["confidence"] - 1, (t_cal2, t_nocal)
 
     # 財報日迴避：明日財報 → 就算盤面完美也擋
     t5 = build_ticket("ERN", m, gate, days_to_earnings=1)

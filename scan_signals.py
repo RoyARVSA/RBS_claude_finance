@@ -34,6 +34,7 @@ Telegram 指令（傳給 Bot）：
   /rebalance [配置法]     – 再平衡顧問：Alpaca 持倉 vs HRP/Sharpe/風險平價 → 加減碼清單
   /briefing               – 立即生成每日 AI 晨報（每交易日 ET 08:30 自動推送）
   /today [帳戶 風險%]     – 當日交易計畫：VWAP/ORB/RVOL 訂單票（別名 /plan）
+  /plantest [apply|clear] – 當日計畫 60 日歷史回測；apply 把 walk-forward 校準套進 /today
   /weekly                 – 立即生成每週深度週報（每週日 ET 18:00 後自動推送）
   /committee TICKER       – 機構決策會議：分析師×4→對辯→交易員→風控→PM（別名 /cmt）
   /set mtf_enabled on/off – 週線同向確認（日線分數與週線同向加強、背離減弱）
@@ -288,6 +289,7 @@ def _cmd_help() -> str:
         "`/earnings [天數]` — 觀察清單近期財報日\n"
         "`/briefing` — 立即生成每日晨報\n"
         "`/today [帳戶 風險%]`（或 `/plan`）— 當日交易計畫：VWAP/ORB 進場票（進場/停損/停利/股數）\n"
+        "`/plantest [apply|clear]` — 當日計畫 60 日回測（勝率/期望值/R 倍數）；apply 套用校準\n"
         "`/weekly` — 立即生成每週深度週報（指數/強弱/計分板/RRG/下週行事曆）\n"
         "`/committee NVDA`（或 `/cmt`）— 開一場機構決策會議（需 LLM key，約 1-3 分）\n\n"
         "🤖 *模擬交易（Alpaca paper）*\n"
@@ -1003,7 +1005,8 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                 if not wl:
                     reply = "觀察清單是空的——先 `/add AAPL NVDA`"
                 else:
-                    _tickets, _tp_src = _tpl.build_plans(wl, acct, rk)
+                    _tickets, _tp_src = _tpl.build_plans(wl, acct, rk,
+                                                         calib=state.get("plan_calib"))
                     reply = (_tpl.plan_text(_tickets, acct, rk, _tp_src)
                              if _tickets else "抓不到盤中資料（休市或資料源異常）")
                     # 進場票記入決策計分板（source=day_plan，隔日結算）
@@ -1111,6 +1114,38 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                     lines.append(f"{icon} {t}　{e.get('side','').upper()} {e.get('symbol')} "
                                  f"x{e.get('qty')}　評分 {sc_s}")
                 reply = "\n".join(lines)
+
+        elif cmd == "/plantest":
+            sub = args[0].lower() if args else ""
+            if sub == "clear":
+                had = state.pop("plan_calib", None)
+                changed = bool(had)
+                reply = "🧹 已清除當日計畫校準（/today 回到原始規則）" if had \
+                        else "目前沒有已套用的校準"
+            else:
+                wl = state["watchlist"][:12]
+                if not wl:
+                    reply = "觀察清單是空的——先 `/add AAPL NVDA`"
+                else:
+                    _tg_send(token, src_chat or chat_id,
+                             f"📜 回測當日計畫（{len(wl)} 檔 × ~60 交易日，約 1-3 分鐘）…")
+                    try:
+                        import plan_backtest as pbt
+                        agg_, cal_, _tr = pbt.run(wl)
+                        reply = pbt.stats_text(agg_, cal_, n_tickers=len(wl))
+                        if sub == "apply":
+                            if cal_.get("setups"):
+                                cal_["as_of"] = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                                state["plan_calib"] = cal_
+                                changed = True
+                                reply += ("\n\n✅ 校準已套用——之後的 /today 會吃這份實證"
+                                          "（`/plantest clear` 還原）")
+                            else:
+                                reply += "\n\n（樣本不足，未產生可套用的校準）"
+                        else:
+                            reply += "\n\n（僅報告；`/plantest apply` 套用、`/plantest clear` 還原）"
+                    except Exception as e:
+                        reply = f"❌ 回測失敗：{e}"
 
         elif cmd == "/rebalance":
             key, secret = _alpaca_keys()
