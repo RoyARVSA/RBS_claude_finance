@@ -32,6 +32,7 @@ Telegram 指令（傳給 Bot）：
   /positions /pnl /closeall – 模擬持倉 / 帳戶報酬 / 一鍵平倉
   /journal [N]            – 交易日誌（每筆自動交易的評分與原因）
   /briefing               – 立即生成每日 AI 晨報（每交易日 ET 08:30 自動推送）
+  /today [帳戶 風險%]     – 當日交易計畫：VWAP/ORB/RVOL 訂單票（別名 /plan）
   /weekly                 – 立即生成每週深度週報（每週日 ET 18:00 後自動推送）
   /committee TICKER       – 機構決策會議：分析師×4→對辯→交易員→風控→PM（別名 /cmt）
   /set mtf_enabled on/off – 週線同向確認（日線分數與週線同向加強、背離減弱）
@@ -285,6 +286,7 @@ def _cmd_help() -> str:
         "`/alert AAPL 200` — 到價警報（`/alert` 看清單、`/alert del AAPL` 刪）\n"
         "`/earnings [天數]` — 觀察清單近期財報日\n"
         "`/briefing` — 立即生成每日晨報\n"
+        "`/today [帳戶 風險%]`（或 `/plan`）— 當日交易計畫：VWAP/ORB 進場票（進場/停損/停利/股數）\n"
         "`/weekly` — 立即生成每週深度週報（指數/強弱/計分板/RRG/下週行事曆）\n"
         "`/committee NVDA`（或 `/cmt`）— 開一場機構決策會議（需 LLM key，約 1-3 分）\n\n"
         "🤖 *模擬交易（Alpaca paper）*\n"
@@ -976,6 +978,34 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
             reply = "☀️ 生成晨報中，約需 20-40 秒…"
             _tg_send(token, src_chat or chat_id, reply)
             reply = daily_briefing(state, force=True) or "晨報生成失敗"
+
+        elif cmd in ("/today", "/plan"):
+            th = state["thresholds"]
+            acct = float(th.get("account_size", 100000))
+            rk = float(th.get("risk_pct", 0.01))
+            if args:
+                try:
+                    acct = float(args[0].replace(",", ""))
+                except ValueError:
+                    pass
+            if len(args) >= 2:
+                try:
+                    rk = float(args[1]) / 100.0
+                except ValueError:
+                    pass
+            _tg_send(token, src_chat or chat_id,
+                     "🎯 產生當日交易計畫（VWAP/ORB/RVOL，約 30-60 秒）…")
+            try:
+                import trade_plan as _tpl
+                wl = state["watchlist"][:10]
+                if not wl:
+                    reply = "觀察清單是空的——先 `/add AAPL NVDA`"
+                else:
+                    _tickets, _tp_src = _tpl.build_plans(wl, acct, rk)
+                    reply = (_tpl.plan_text(_tickets, acct, rk, _tp_src)
+                             if _tickets else "抓不到盤中資料（休市或資料源異常）")
+            except Exception as e:
+                reply = f"❌ 計畫產生失敗：{e}"
 
         elif cmd in ("/committee", "/cmt"):
             if not args:

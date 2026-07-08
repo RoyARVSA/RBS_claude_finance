@@ -58,7 +58,7 @@
 | 分類 | 指令 |
 |------|------|
 | 清單 | `/add AAPL`、`/remove AAPL`、`/list` |
-| 分析 | `/rank`、`/fundamentals AAPL`（`/f`）、`/options AAPL`（`/opt`，選擇權情緒）、`/insider AAPL`（`/ins`，SEC 內部人）、`/whales [編號]`（13F 大戶動向）、`/earnings [天數]`、`/briefing`、`/weekly`（每週深度週報） |
+| 分析 | `/rank`、`/fundamentals AAPL`（`/f`）、`/options AAPL`（`/opt`，選擇權情緒）、`/insider AAPL`（`/ins`，SEC 內部人）、`/whales [編號]`（13F 大戶動向）、`/earnings [天數]`、`/briefing`、`/weekly`（每週深度週報）、`/today [帳戶 風險%]`（`/plan`）— 當日交易計畫：VWAP/ORB/RVOL 訂單票（進場/停損/停利/股數；排程版最多延遲 ~15 分處理） |
 | 警報 | `/alert AAPL 200`（到價通知，觸發自動移除）、`/alert`（清單）、`/alert del AAPL` |
 | AI | `/committee NVDA`（`/cmt`）— 機構決策會議：分析師×4→多空對辯→交易員→風控→投資經理，裁決自動記入計分板（需 `LLM_API_KEY`，約 1-3 分鐘） |
 | 風控 | `/risk [帳戶 風險%]`、`/protections`、`/calibrate` |
