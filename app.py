@@ -4918,8 +4918,8 @@ def page_alerts():
 
     cfg = _load_alerts_config()
 
-    tab1, tab2, tab3, tab4 = st.tabs([
-        "📋 監控清單", "📊 即時走勢", "⚡ 訊號掃描", "🔔 通知設定",
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "📋 監控清單", "📊 即時走勢", "⚡ 訊號掃描", "🔔 通知設定", "🎯 當日計畫",
     ])
 
     # ── Tab 1: Watchlist editor ────────────────────────────────────
@@ -5199,6 +5199,83 @@ def page_alerts():
                 ok, info = _send_email(em_host, int(em_port), em_user, em_pwd,
                                        em_to, "RBS 測試", "RBS Dashboard 測試成功！")
                 st.success("已送出") if ok else st.error(f"失敗：{info}")
+
+    # ── Tab 5: 當日交易計畫（盤中決策建議）─────────────────────────
+    with tab5:
+        section("🎯 當日交易計畫（盤中下單建議）")
+        st.caption(
+            "日線趨勢閘門 ＋ 盤中確認（VWAP／開盤區間 ORB／相對量能 RVOL／跳空）"
+            "→ 具體訂單票：進場區間、停損、停利、建議股數。"
+            "盤中數據約延遲 15 分鐘；設 Alpaca key 時以免費 IEX 即時價校正現價。"
+            "**模擬教育用途，非投資建議。**")
+
+        tp_c1, tp_c2, tp_c3 = st.columns([1.2, 1, 1.2])
+        with tp_c1:
+            tp_account = st.number_input("帳戶規模 ($)", 1000.0, 1e9, 100_000.0,
+                                         step=10_000.0, key="tp_account")
+        with tp_c2:
+            tp_risk = st.number_input("單筆風險 (%)", 0.1, 5.0, 1.0, step=0.1,
+                                      key="tp_risk")
+        with tp_c3:
+            tp_wl = cfg.get("watchlist", [])[:10]
+            tp_tickers = st.multiselect("標的（預設監控清單前 10）", cfg.get("watchlist", []),
+                                        default=tp_wl, key="tp_tickers")
+
+        if st.button("⚡ 產生今日計畫", type="primary", key="tp_go",
+                     disabled=not tp_tickers):
+            import trade_plan as tpl
+            if len(tp_tickers) > 10:
+                st.caption(f"⚠️ 一次最多 10 檔（已取前 10；共選 {len(tp_tickers)}）")
+            with st.spinner(f"抓取 {min(len(tp_tickers), 10)} 檔盤中數據並計算…"):
+                try:
+                    tickets, tp_src = tpl.build_plans(
+                        tp_tickers[:10], float(tp_account), float(tp_risk) / 100.0)
+                    st.session_state["tp_result"] = {
+                        "tickets": tickets, "src": tp_src,
+                        "account": float(tp_account), "risk": float(tp_risk) / 100.0}
+                except Exception as e:
+                    st.error(f"計畫產生失敗：{e}")
+
+        tp_res = st.session_state.get("tp_result")
+        if tp_res:
+            tickets, tp_src = tp_res["tickets"], tp_res["src"]
+            if not tickets:
+                st.warning("抓不到盤中資料（休市？代碼有誤？）——開盤時間再試。")
+            else:
+                if tp_src:
+                    st.success(f"現價來源：{tp_src}（即時）")
+                else:
+                    st.info("現價來源：yfinance（約延遲 15 分鐘）。設 ALPACA_KEY_ID/SECRET 可升級為 IEX 即時價。")
+                rows = []
+                for t in tickets:
+                    rows.append({
+                        "代碼": t["ticker"], "動作": t["action"], "型態": t["setup"] or "—",
+                        "信心": f"{t['confidence']}/5" if t["confidence"] else "—",
+                        "現價": t["last"], "VWAP": round(t["vwap"], 2),
+                        "進場": (f"{t['entry_lo']}–{t['entry_hi']}" if t["entry_lo"] else "—"),
+                        "停損": t["stop"] or "—", "停利": t["target"] or "—",
+                        "R:R": t["rr"] or "—", "股數": t["shares"] or "—",
+                        "RVOL": round(t["rvol"], 1), "跳空%": round(t["gap_pct"], 1),
+                    })
+                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+                for t in tickets:
+                    if t["action"] in ("買進", "小量試單"):
+                        with st.expander(f"🟢 {t['ticker']} — {t['action']}｜{t['setup']}"
+                                         f"（信心 {t['confidence']}/5）", expanded=False):
+                            st.markdown(
+                                f"**進場區間** {t['entry_lo']}–{t['entry_hi']}　"
+                                f"**停損** {t['stop']}　**停利** {t['target']}（R:R {t['rr']}）　"
+                                f"**建議股數** {t['shares']}　**效期** {t['valid']}")
+                            for r in t["reasons"]:
+                                st.markdown(f"- {r}")
+
+                import trade_plan as tpl2
+                st.download_button(
+                    "⬇️ 下載計畫（文字）",
+                    tpl2.plan_text(tickets, tp_res["account"], tp_res["risk"], tp_src),
+                    file_name="today_trade_plan.txt", key="tp_dl")
+                st.caption("⚠️ 模擬教育用途，非投資建議。訂單票效期僅當日；隔日請重新產生。")
 
 
 # ════════════════════════════════════════════════════════════════════
