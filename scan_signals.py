@@ -1004,6 +1004,19 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                     _tickets, _tp_src = _tpl.build_plans(wl, acct, rk)
                     reply = (_tpl.plan_text(_tickets, acct, rk, _tp_src)
                              if _tickets else "抓不到盤中資料（休市或資料源異常）")
+                    # 進場票記入決策計分板（source=day_plan，隔日結算）
+                    try:
+                        import reflection as rfl
+                        _today_s = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                        for _t in _tickets or []:
+                            if _t["action"] in ("買進", "小量試單"):
+                                if rfl.record_pick(state, _t["ticker"],
+                                                   round(_t["confidence"] / 5.0, 2),
+                                                   _t["last"], _today_s,
+                                                   source="day_plan", horizon=1):
+                                    changed = True
+                    except Exception:
+                        pass
             except Exception as e:
                 reply = f"❌ 計畫產生失敗：{e}"
 
@@ -2000,7 +2013,7 @@ def weekly_report(state: dict) -> str:
             if r_["hit_rate"] is not None:
                 lines.append(f"🎯 {rfl.SOURCE_LABELS.get(r_['source'], r_['source'])}"
                              f"近 {r_['n']} 次命中率 {r_['hit_rate']:.0%}"
-                             + (f"、平均5日對齊報酬 {r_['avg_fwd']:+.1%}"
+                             + (f"、平均對齊報酬 {r_['avg_fwd']:+.1%}"
                                 if r_["avg_fwd"] is not None else ""))
     except Exception:
         pass

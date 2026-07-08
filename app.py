@@ -2246,7 +2246,7 @@ def page_ai_assistant():
                     "決策者": _rfl4.SOURCE_LABELS.get(r["source"], r["source"]),
                     "已結算": r["n"],
                     "命中率": f"{r['hit_rate']:.0%}" if r["hit_rate"] is not None else "—",
-                    "平均5日對齊報酬": f"{r['avg_fwd']:+.2%}" if r["avg_fwd"] is not None else "—",
+                    "平均對齊報酬": f"{r['avg_fwd']:+.2%}" if r["avg_fwd"] is not None else "—",
                 } for r in sb_rows]), use_container_width=True, hide_index=True)
                 st.caption(f"待結算 {n_pend} 筆　·　量化=Bot 掃描強訊號、委員會=本模式裁決"
                            "　·　樣本少時勿過度解讀；這張表是「找出最佳決策方向」的長期證據")
@@ -5259,6 +5259,10 @@ def page_alerts():
                     })
                 st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
+                import os as _os
+                import trade_plan as _tplm
+                _apk = _os.environ.get("ALPACA_KEY_ID", "")
+                _aps = _os.environ.get("ALPACA_SECRET_KEY", "")
                 for t in tickets:
                     if t["action"] in ("買進", "小量試單"):
                         with st.expander(f"🟢 {t['ticker']} — {t['action']}｜{t['setup']}"
@@ -5269,6 +5273,27 @@ def page_alerts():
                                 f"**建議股數** {t['shares']}　**效期** {t['valid']}")
                             for r in t["reasons"]:
                                 st.markdown(f"- {r}")
+                            # BRK.B 等類股後綴是美股；只有 .TW/.HK 等市場後綴才擋
+                            _is_us = ("." not in t["ticker"] or
+                                      t["ticker"].split(".")[-1].upper()
+                                      not in _tplm._NON_US_SUFFIX)
+                            if _apk and _aps and _is_us and t["shares"]:
+                                if st.button(
+                                        f"📤 送出 Alpaca 模擬 bracket 單"
+                                        f"（限價 {t['entry_hi']}、{t['shares']} 股）",
+                                        key=f"tp_ord_{t['ticker']}"):
+                                    import alpaca_trader as _at
+                                    ok, info = _at.submit_bracket(
+                                        _apk, _aps, t["ticker"], t["shares"],
+                                        float(t["entry_hi"]), float(t["stop"]),
+                                        float(t["target"]))
+                                    if ok:
+                                        st.success(f"✅ 模擬單已送出（id {info[:8]}…）—"
+                                                   "進場成交後自動掛停損/停利，收盤未成交自動失效")
+                                    else:
+                                        st.error(f"下單失敗：{info}")
+                            elif not _is_us and t["shares"]:
+                                st.caption("（台股/非美股無法送 Alpaca 模擬單）")
 
                 import trade_plan as tpl2
                 st.download_button(

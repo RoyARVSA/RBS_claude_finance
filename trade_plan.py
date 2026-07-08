@@ -122,8 +122,10 @@ def daily_gate(daily: pd.DataFrame) -> dict:
 
 
 def build_ticket(ticker: str, m: dict, gate: dict,
-                 account: float = 100_000.0, risk_pct: float = 0.01) -> dict:
-    """盤中指標 + 日線閘門 → 當日訂單票。永遠回傳 dict（action 可能是 觀望/迴避）。"""
+                 account: float = 100_000.0, risk_pct: float = 0.01,
+                 days_to_earnings: int | None = None) -> dict:
+    """盤中指標 + 日線閘門 → 當日訂單票。永遠回傳 dict（action 可能是 觀望/迴避）。
+    days_to_earnings：距下次財報天數（0=今天）；0-1 天內一律迴避（事件跳空風險）。"""
     reasons: list[str] = []
     t = {"ticker": ticker, "action": "觀望", "setup": "", "entry_lo": None,
          "entry_hi": None, "stop": None, "target": None, "shares": 0,
@@ -131,6 +133,12 @@ def build_ticket(ticker: str, m: dict, gate: dict,
          "last": m["last"], "vwap": m["vwap"], "rvol": m["rvol"],
          "gap_pct": m["gap_pct"], "session_date": m["session_date"],
          "valid": "當日有效（DAY）"}
+
+    if days_to_earnings is not None and 0 <= days_to_earnings <= 1:
+        t["action"] = "迴避"
+        when = "今日" if days_to_earnings == 0 else "明日"
+        reasons.append(f"⚠️ {when}財報——事件跳空風險，當日票一律迴避")
+        return t
 
     if gate["bias"] == "bearish":
         t["action"] = "迴避"
@@ -315,7 +323,17 @@ def build_plans(tickers: list[str], account: float = 100_000.0,
             m["last"] = live[tk]
             m["above_vwap"] = m["last"] >= m["vwap"]
         gate = daily_gate(dd["daily"])
-        tickets.append(build_ticket(tk, m, gate, account, risk_pct))
+        d2e = None
+        try:                                 # 財報日事件閘門（抓不到就略過）
+            from fundamentals import next_earnings_date
+            import datetime as _dt
+            ed = next_earnings_date(tk)
+            if ed:
+                d2e = (ed - _dt.date.today()).days
+        except Exception:
+            pass
+        tickets.append(build_ticket(tk, m, gate, account, risk_pct,
+                                    days_to_earnings=d2e))
     order = {"買進": 0, "小量試單": 1, "觀望": 2, "迴避": 3}
     tickets.sort(key=lambda t: (order.get(t["action"], 9), -(t["confidence"] or 0)))
     return tickets, src
@@ -381,6 +399,12 @@ if __name__ == "__main__":
     m3 = dict(m); m3["above_vwap"] = False
     t3 = build_ticket("WEAK", m3, gate)
     assert t3["action"] == "觀望", t3
+
+    # 財報日迴避：明日財報 → 就算盤面完美也擋
+    t5 = build_ticket("ERN", m, gate, days_to_earnings=1)
+    assert t5["action"] == "迴避" and "財報" in t5["reasons"][0], t5
+    t5b = build_ticket("ERN2", m, gate, days_to_earnings=7)   # 一週後 → 不影響
+    assert t5b["action"] != "迴避" or "財報" not in (t5b["reasons"][0] if t5b["reasons"] else ""), t5b
 
     # 低波動大型股：風險式股數不得超過名目上限（30% 帳戶）
     m4 = dict(m); m4["atr"] = m4["last"] * 0.004      # ATR 僅 0.4% 價格
