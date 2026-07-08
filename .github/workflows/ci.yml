@@ -42,7 +42,7 @@ jobs:
           for m in quant_tools rbs_lib fundamentals macro finnhub_data sector_scan \
                    assistant assistant_tools options_sentiment sec_insider perf_report \
                    portfolio_opt analyst_data short_data whales_13f ledger reflection \
-                   tw_flows committee alpaca_trader stock_db trade_plan; do
+                   tw_flows committee alpaca_trader stock_db trade_plan rebalance; do
             echo "── $m ──"
             python3 "$m.py"
           done

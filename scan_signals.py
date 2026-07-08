@@ -31,6 +31,7 @@ Telegram 指令（傳給 Bot）：
   /autotrade on|off       – Alpaca 模擬自動交易總開關（預設關）
   /positions /pnl /closeall – 模擬持倉 / 帳戶報酬 / 一鍵平倉
   /journal [N]            – 交易日誌（每筆自動交易的評分與原因）
+  /rebalance [配置法]     – 再平衡顧問：Alpaca 持倉 vs HRP/Sharpe/風險平價 → 加減碼清單
   /briefing               – 立即生成每日 AI 晨報（每交易日 ET 08:30 自動推送）
   /today [帳戶 風險%]     – 當日交易計畫：VWAP/ORB/RVOL 訂單票（別名 /plan）
   /weekly                 – 立即生成每週深度週報（每週日 ET 18:00 後自動推送）
@@ -294,6 +295,7 @@ def _cmd_help() -> str:
         "`/positions` — 目前持倉 + 損益\n"
         "`/pnl` — 帳戶淨值 + 報酬\n"
         "`/journal [N]` — 交易日誌（含評分/原因）\n"
+        "`/rebalance [hrp|max_sharpe|min_vol|erc|equal]` — 再平衡顧問（持倉 vs 目標權重 → 加減碼清單）\n"
         "`/closeall` — 一鍵平倉\n"
         "`/scan` — 立即掃描（忽略靜音/冷卻）\n"
         "`/calibrate` — 回測校準訊號權重（自我優化）\n\n"
@@ -1109,6 +1111,42 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                     lines.append(f"{icon} {t}　{e.get('side','').upper()} {e.get('symbol')} "
                                  f"x{e.get('qty')}　評分 {sc_s}")
                 reply = "\n".join(lines)
+
+        elif cmd == "/rebalance":
+            key, secret = _alpaca_keys()
+            import rebalance as rbl
+            sch = args[0].lower() if args else "hrp"
+            if not key or not secret:
+                reply = "⚠️ 未設定 Alpaca key（此指令以 Alpaca 模擬持倉為基準）"
+            elif sch not in rbl.SCHEMES:
+                reply = ("用法：`/rebalance [配置法]`\n" +
+                         "\n".join(f"`{k}` — {v}" for k, v in rbl.SCHEMES.items()))
+            else:
+                _tg_send(token, src_chat or chat_id,
+                         f"⚖️ 計算再平衡中（目標：{rbl.SCHEMES[sch]}）…")
+                try:
+                    import alpaca_trader as at
+                    pos = at.get_positions(key, secret)
+                    qty = {s: p["qty"] for s, p in pos.items() if p["qty"] > 0}  # 空頭不進權重
+                    if len(qty) < 2:
+                        reply = "⚠️ Alpaca 模擬多頭持倉不足 2 檔，無法做配置優化（先 /autotrade on 建倉）"
+                    else:
+                        px = {s: pos[s]["market_value"] / pos[s]["qty"] for s in qty}
+                        raw = yf.download(list(qty), period="1y",
+                                          auto_adjust=True, progress=False)
+                        close = (raw["Close"] if isinstance(raw.columns, pd.MultiIndex)
+                                 else raw[["Close"]])
+                        rets = close.pct_change().dropna(how="all").dropna(axis=1)
+                        tw = rbl.target_weights(rets, sch)
+                        if tw is None:
+                            reply = "❌ 目標權重計算失敗（歷史數據不足：需 ≥2 檔、≥40 交易日）"
+                        else:
+                            no_hist = [s for s in qty if s not in rets.columns]
+                            res = rbl.rebalance_orders(qty, px, tw.to_dict(),
+                                                       no_data=no_hist)
+                            reply = rbl.rebalance_text(res, rbl.SCHEMES[sch])
+                except Exception as e:
+                    reply = f"❌ 再平衡失敗：{e}"
 
         else:
             reply = f"❓ 未知指令：{cmd}\n輸入 /help 查看說明"

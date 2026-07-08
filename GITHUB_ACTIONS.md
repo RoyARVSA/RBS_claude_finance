@@ -62,7 +62,7 @@
 | 警報 | `/alert AAPL 200`（到價通知，觸發自動移除）、`/alert`（清單）、`/alert del AAPL` |
 | AI | `/committee NVDA`（`/cmt`）— 機構決策會議：分析師×4→多空對辯→交易員→風控→投資經理，裁決自動記入計分板（需 `LLM_API_KEY`，約 1-3 分鐘） |
 | 風控 | `/risk [帳戶 風險%]`、`/protections`、`/calibrate` |
-| 模擬交易 | `/autotrade on\|off`、`/positions`、`/pnl`、`/journal [N]`、`/closeall` |
+| 模擬交易 | `/autotrade on\|off`、`/positions`、`/pnl`、`/journal [N]`、`/rebalance [hrp\|max_sharpe\|min_vol\|erc\|equal]`（持倉再平衡顧問）、`/closeall` |
 
 > `/options`、`/insider` 僅美股；選擇權走 yfinance、內部人走 SEC EDGAR，皆免 key。
 

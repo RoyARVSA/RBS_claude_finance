@@ -574,6 +574,68 @@ def page_portfolio_performance():
     out_df = pd.concat([port_val.rename("Portfolio_Value"), bench_px.rename("Benchmark"), port_ret.rename("Port_Return"), bench_ret.rename("Bench_Return")], axis=1)
     st.download_button("⬇ Download time-series CSV", data=out_df.to_csv().encode("utf-8"), file_name="portfolio_series.csv", mime="text/csv")
 
+    # ── ⚖️ 再平衡顧問（現有持倉 vs 目標權重 → 加減碼清單）──────────────
+    with st.expander("⚖️ 再平衡顧問（HRP / 最大 Sharpe / 風險平價 → 具體加減碼股數）",
+                     expanded=False):
+        import rebalance as rb
+        st.caption("用側欄的 Holdings 當現有持倉，選一個目標配置法 → 給出每檔買賣股數。"
+                   "門檻內的小漂移自動略過（省摩擦成本）。**模擬教育用途，非投資建議。**")
+        rb_c1, rb_c2 = st.columns([1.4, 1])
+        with rb_c1:
+            rb_scheme = st.selectbox("目標配置法", list(rb.SCHEMES),
+                                     format_func=lambda k: rb.SCHEMES[k], key="rb_scheme")
+        with rb_c2:
+            rb_minpct = st.number_input("最小交易門檻（%總值）", 0.1, 10.0, 1.0,
+                                        step=0.1, key="rb_minpct")
+        if st.button("⚖️ 計算再平衡", type="primary", key="rb_go"):
+            try:
+                rb_tks = list(dict.fromkeys(tickers))   # 去重：重複列會讓權重折疊 <1
+                # 目標權重要用「日線」報酬估計——重抓未重採樣的收盤價（有快取）
+                raw_rb = _cached_portfolio_prices(tuple(rb_tks), str(start))
+                px_rb = (raw_rb["Close"] if isinstance(raw_rb.columns, pd.MultiIndex)
+                         else raw_rb)[rb_tks].dropna(how="all").ffill()
+                rets_rb = px_rb.pct_change().dropna(how="all").dropna(axis=1)
+                tw = rb.target_weights(rets_rb, rb_scheme)
+                if tw is None:
+                    st.error("目標權重計算失敗（需 ≥2 檔、≥40 個交易日數據）")
+                else:
+                    last_px = px_rb.ffill().iloc[-1].to_dict()
+                    no_hist = [t for t in rb_tks if t not in rets_rb.columns]
+                    res = rb.rebalance_orders(
+                        {t: float(shares.get(t, 0)) for t in rb_tks}, last_px,
+                        tw.to_dict(), min_trade_pct=float(rb_minpct) / 100.0,
+                        no_data=no_hist)
+                    st.session_state["rb_result"] = {"res": res, "scheme": rb_scheme}
+            except Exception as e:
+                st.error(f"計算失敗：{e}")
+
+        _rb = st.session_state.get("rb_result")
+        if _rb:
+            res, sch = _rb["res"], _rb["scheme"]
+            rc1, rc2, rc3 = st.columns(3)
+            with rc1: metric_card("組合總市值", f"${res['total_value']:,.0f}")
+            with rc2: metric_card("建議單數", str(len(res["orders"])))
+            with rc3: metric_card("單邊換手率", f"{res['turnover']:.1%}")
+            if res["orders"]:
+                st.dataframe(pd.DataFrame([{
+                    "動作": o["action"], "代碼": o["ticker"], "股數": o["shares"],
+                    "金額": f"${o['value']:,.0f}", "現價": o["price"],
+                    "目前權重": f"{o['cur_w']:.1%}", "目標權重": f"{o['tgt_w']:.1%}",
+                    "漂移": f"{o['drift']:+.1%}",
+                } for o in res["orders"]]), use_container_width=True, hide_index=True)
+            else:
+                st.success("漂移皆在門檻內——目前無需再平衡。")
+            if res["skipped_small"]:
+                st.caption(f"門檻內略過：{'、'.join(res['skipped_small'])}")
+            if res["skipped_no_price"]:
+                st.caption(f"缺價/非多頭略過：{'、'.join(res['skipped_no_price'])}")
+            if res.get("skipped_no_history"):
+                st.caption(f"歷史不足未進優化（持倉不動）：{'、'.join(res['skipped_no_history'])}")
+            st.download_button("⬇️ 下載再平衡清單",
+                               rb.rebalance_text(res, rb.SCHEMES[sch]),
+                               file_name="rebalance_plan.txt", key="rb_dl")
+            st.caption("賣單在前（先騰資金）· 未含手續費/稅/滑價 · 非投資建議。")
+
 
 # ════════════════════════════════════════════════════════════════════
 # PAGE: News & Sentiment
