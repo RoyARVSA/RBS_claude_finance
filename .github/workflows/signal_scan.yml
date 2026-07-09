@@ -19,7 +19,7 @@ permissions:
 jobs:
   scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20   # /plantest opt（參數尋優）最長 ~4 分 + 掃描；留裕度防超時
 
     steps:
       - name: Checkout repository

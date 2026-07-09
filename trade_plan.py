@@ -122,8 +122,16 @@ def daily_gate(daily: pd.DataFrame) -> dict:
 
 
 def build_ticket(ticker: str, m: dict, gate: dict,
-                 account: float = 100_000.0, risk_pct: float = 0.01) -> dict:
-    """盤中指標 + 日線閘門 → 當日訂單票。永遠回傳 dict（action 可能是 觀望/迴避）。"""
+                 account: float = 100_000.0, risk_pct: float = 0.01,
+                 days_to_earnings: int | None = None,
+                 calib: dict | None = None,
+                 stop_atr_mult: float = STOP_ATR_MULT,
+                 target_rr: float = TARGET_RR) -> dict:
+    """盤中指標 + 日線閘門 → 當日訂單票。永遠回傳 dict（action 可能是 觀望/迴避）。
+    days_to_earnings：距下次財報天數（0=今天）；0-1 天內一律迴避（事件跳空風險）。
+    calib：plan_backtest walk-forward 校準（{"setups": {setup: {enabled, conf_delta}}}）；
+    只降不升——負期望型態停用、不穩定型態降信心。
+    stop_atr_mult / target_rr：停損 ATR 倍數與目標 R:R——/plantest opt 參數尋優可調。"""
     reasons: list[str] = []
     t = {"ticker": ticker, "action": "觀望", "setup": "", "entry_lo": None,
          "entry_hi": None, "stop": None, "target": None, "shares": 0,
@@ -131,6 +139,12 @@ def build_ticket(ticker: str, m: dict, gate: dict,
          "last": m["last"], "vwap": m["vwap"], "rvol": m["rvol"],
          "gap_pct": m["gap_pct"], "session_date": m["session_date"],
          "valid": "當日有效（DAY）"}
+
+    if days_to_earnings is not None and 0 <= days_to_earnings <= 1:
+        t["action"] = "迴避"
+        when = "今日" if days_to_earnings == 0 else "明日"
+        reasons.append(f"⚠️ {when}財報——事件跳空風險，當日票一律迴避")
+        return t
 
     if gate["bias"] == "bearish":
         t["action"] = "迴避"
@@ -163,7 +177,7 @@ def build_ticket(ticker: str, m: dict, gate: dict,
     if m["above_vwap"] and last > m["orb_high"]:
         setup = "ORB 突破"
         entry_lo, entry_hi = last, round(last + 0.25 * atr, 2)
-        stop = round(max(m["orb_low"], last - STOP_ATR_MULT * atr), 2)
+        stop = round(max(m["orb_low"], last - stop_atr_mult * atr), 2)
         reasons.append(f"站上 VWAP 且突破開盤區間高點 {m['orb_high']:.2f}")
         conf += 1
     elif m["above_vwap"]:
@@ -171,12 +185,26 @@ def build_ticket(ticker: str, m: dict, gate: dict,
         entry_lo, entry_hi = round(vwap, 2), round(min(last, vwap + 0.3 * atr), 2)
         if entry_hi < entry_lo:
             entry_hi = round(entry_lo + 0.1 * atr, 2)
-        stop = round(vwap - STOP_ATR_MULT * atr, 2)
+        stop = round(vwap - stop_atr_mult * atr, 2)
         reasons.append(f"價格在 VWAP {vwap:.2f} 之上，等回踩不追高")
     else:
         t["action"] = "觀望"
         reasons.append(f"價格在 VWAP {vwap:.2f} 之下——盤中弱勢，今日不進場")
         return t
+
+    # 歷史回測校準（/plantest apply 後生效；只降不升）
+    c_ = ((calib or {}).get("setups") or {}).get(setup)
+    if c_:
+        if not c_.get("enabled", True):
+            t["action"] = "觀望"
+            t["setup"] = setup
+            t["confidence"] = conf
+            reasons.append(f"📜 歷史回測負期望——{setup} 型態暫停用（/plantest 校準）")
+            return t
+        d_ = int(c_.get("conf_delta", 0))
+        if d_:
+            conf += d_
+            reasons.append(f"📜 歷史回測不穩定——信心 {d_:+d}（/plantest 校準）")
 
     if conf < 2:
         t["action"] = "觀望"
@@ -190,8 +218,8 @@ def build_ticket(ticker: str, m: dict, gate: dict,
         t["action"] = "觀望"
         reasons.append("停損距離異常（entry ≤ stop）")
         return t
-    target = round(entry_mid + TARGET_RR * risk_ps, 2)
-    pos = atr_position_size(account, risk_pct, entry_mid, atr, atr_mult=STOP_ATR_MULT)
+    target = round(entry_mid + target_rr * risk_ps, 2)
+    pos = atr_position_size(account, risk_pct, entry_mid, atr, atr_mult=stop_atr_mult)
     shares = int(pos["shares"])
     # 用實際票面停損重新校正股數（風險預算 / 每股風險）
     shares = int(min(shares if shares > 0 else 0,
@@ -298,8 +326,10 @@ def fetch_plan_data(tickers: list[str]) -> dict[str, dict]:
 
 
 def build_plans(tickers: list[str], account: float = 100_000.0,
-                risk_pct: float = 0.01) -> tuple[list[dict], str | None]:
-    """端到端：抓資料 → 訂單票。回傳 (tickets, 即時價來源標籤或 None)。"""
+                risk_pct: float = 0.01,
+                calib: dict | None = None) -> tuple[list[dict], str | None]:
+    """端到端：抓資料 → 訂單票。回傳 (tickets, 即時價來源標籤或 None)。
+    calib：plan_backtest 校準（見 build_ticket）。"""
     data = fetch_plan_data(tickers)
     # 非美股（.TW 等）不能進 Alpaca 請求——一顆壞代碼會讓整批 400
     us_only = [t for t in data if t.split(".")[-1] not in _NON_US_SUFFIX or "." not in t]
@@ -308,14 +338,39 @@ def build_plans(tickers: list[str], account: float = 100_000.0,
     tickets = []
     for tk, dd in data.items():
         sess_min = 270.0 if tk.upper().endswith((".TW", ".TWO")) else 390.0
-        m = intraday_metrics(dd["bars"], dd["daily"], session_minutes=sess_min)
+        # 日線閘門/ATR/量能基準只用「今日以前」的日線——與 plan_backtest 重放同一母體，
+        # 也修正 avg_v20 把今日未完成量算進分母而虛增 RVOL 的偏差
+        daily_tk = dd["daily"]
+        try:
+            _sd = dd["bars"].index[-1].date()
+            _hist = daily_tk[daily_tk.index.date < _sd]
+            if len(_hist) >= 60:
+                daily_tk = _hist
+        except Exception:
+            pass
+        prm = (calib or {}).get("params") or {}   # /plantest opt apply 的尋優參數
+        m = intraday_metrics(dd["bars"], daily_tk,
+                             orb_minutes=int(prm.get("orb_minutes", ORB_MINUTES)),
+                             session_minutes=sess_min)
         if not m:
             continue
         if tk in live:                       # 用即時價覆蓋延遲現價
             m["last"] = live[tk]
             m["above_vwap"] = m["last"] >= m["vwap"]
-        gate = daily_gate(dd["daily"])
-        tickets.append(build_ticket(tk, m, gate, account, risk_pct))
+        gate = daily_gate(daily_tk)
+        d2e = None
+        try:                                 # 財報日事件閘門（抓不到就略過）
+            from fundamentals import next_earnings_date
+            import datetime as _dt
+            ed = next_earnings_date(tk)
+            if ed:
+                d2e = (ed - _dt.date.today()).days
+        except Exception:
+            pass
+        tickets.append(build_ticket(
+            tk, m, gate, account, risk_pct, days_to_earnings=d2e, calib=calib,
+            stop_atr_mult=float(prm.get("stop_atr_mult", STOP_ATR_MULT)),
+            target_rr=float(prm.get("target_rr", TARGET_RR))))
     order = {"買進": 0, "小量試單": 1, "觀望": 2, "迴避": 3}
     tickets.sort(key=lambda t: (order.get(t["action"], 9), -(t["confidence"] or 0)))
     return tickets, src
@@ -381,6 +436,33 @@ if __name__ == "__main__":
     m3 = dict(m); m3["above_vwap"] = False
     t3 = build_ticket("WEAK", m3, gate)
     assert t3["action"] == "觀望", t3
+
+    # 校準回饋：型態停用 → 觀望；conf_delta=-1 → 信心降級（只降不升）
+    _cal = {"setups": {"ORB 突破": {"enabled": False},
+                       "VWAP 回踩": {"enabled": True, "conf_delta": -1}}}
+    t_cal = build_ticket("CAL", m, gate, calib=_cal)
+    assert t_cal["action"] == "觀望" and any("暫停用" in r for r in t_cal["reasons"]), t_cal
+    _cal2 = {"setups": {"ORB 突破": {"enabled": True, "conf_delta": -1}}}
+    t_cal2 = build_ticket("CAL2", m, gate, calib=_cal2)
+    t_nocal = build_ticket("NC", m, gate)
+    assert t_cal2["confidence"] == t_nocal["confidence"] - 1, (t_cal2, t_nocal)
+
+    # 參數化：target_rr 直接反映在停利與 R:R；stop_atr_mult 拉大 → VWAP 型停損更遠
+    t_rr = build_ticket("RR", m, gate, target_rr=3.0)
+    assert t_rr["rr"] == 3.0 and t_rr["target"] > t_nocal["target"], (t_rr, t_nocal)
+    # 強制走 VWAP 回踩分支（orb_high 抬高到 last 之上，ORB 突破不成立）
+    m_vwap = {**m, "last": m["vwap"] * 1.001, "orb_high": m["vwap"] * 1.10}
+    tw_a = build_ticket("SA", m_vwap, gate, stop_atr_mult=1.0)
+    tw_b = build_ticket("SB", m_vwap, gate, stop_atr_mult=2.0)
+    assert tw_a["setup"] == tw_b["setup"] == "VWAP 回踩", (tw_a["setup"], tw_b["setup"])
+    assert tw_a["stop"] is not None and tw_b["stop"] is not None, (tw_a, tw_b)
+    assert tw_b["stop"] < tw_a["stop"], (tw_a["stop"], tw_b["stop"])
+
+    # 財報日迴避：明日財報 → 就算盤面完美也擋
+    t5 = build_ticket("ERN", m, gate, days_to_earnings=1)
+    assert t5["action"] == "迴避" and "財報" in t5["reasons"][0], t5
+    t5b = build_ticket("ERN2", m, gate, days_to_earnings=7)   # 一週後 → 不影響
+    assert t5b["action"] != "迴避" or "財報" not in (t5b["reasons"][0] if t5b["reasons"] else ""), t5b
 
     # 低波動大型股：風險式股數不得超過名目上限（30% 帳戶）
     m4 = dict(m); m4["atr"] = m4["last"] * 0.004      # ATR 僅 0.4% 價格

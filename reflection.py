@@ -26,9 +26,11 @@ def _refl(state: dict) -> dict:
 
 
 def record_pick(state: dict, ticker: str, score: float, price: float,
-                date: str, source: str = "quant") -> bool:
+                date: str, source: str = "quant",
+                horizon: int | None = None) -> bool:
     """記錄一筆方向判斷（同日同代碼同來源去重）。score 正=偏多、負=偏空。
-    source：quant=量化訊號、committee=委員會、analyst=單分析師…（計分板分組用）。"""
+    source：quant=量化訊號、committee=委員會、day_plan=當日計畫…（計分板分組用）。
+    horizon：此筆的結算天數；None 用預設 HORIZON_DAYS（當日計畫用 1）。"""
     if not ticker or price is None or price <= 0:
         return False
     ticker = ticker.upper()          # 先正規化再去重，小寫呼叫端才不會繞過
@@ -36,8 +38,11 @@ def record_pick(state: dict, ticker: str, score: float, price: float,
     if any(p["ticker"] == ticker and p["date"] == date
            and p.get("source", "quant") == source for p in r["pending"]):
         return False
-    r["pending"].append({"ticker": ticker, "score": round(float(score), 2),
-                         "price": float(price), "date": date, "source": source})
+    rec = {"ticker": ticker, "score": round(float(score), 2),
+           "price": float(price), "date": date, "source": source}
+    if horizon is not None:
+        rec["horizon"] = max(1, int(horizon))
+    r["pending"].append(rec)
     r["pending"] = r["pending"][-PENDING_CAP:]
     return True
 
@@ -56,12 +61,13 @@ def evaluate_pending(state: dict, prices: dict, today: str) -> int:
         except ValueError:
             continue                      # 壞日期直接丟
         px = prices.get(p["ticker"])
-        if age >= HORIZON_DAYS and px:
+        hz = max(1, int(p.get("horizon", HORIZON_DAYS)))
+        if age >= hz and px:
             fwd = float(px) / p["price"] - 1
             hit = (p["score"] > 0) == (fwd > 0) if p["score"] != 0 else None
             matured.append({**p, "fwd_ret": round(fwd, 4),
                             "hit": hit, "settled": today})
-        elif age <= HORIZON_DAYS * 6:     # 太舊又一直抓不到價 → 放棄
+        elif age <= max(hz * 6, 10):      # 太舊又一直抓不到價 → 放棄
             keep.append(p)
     r["pending"] = keep
     r["history"] = (r["history"] + matured)[-HISTORY_CAP:]
@@ -77,7 +83,7 @@ def summary_text(state: dict, n: int = 20) -> str | None:
     hits = sum(1 for h in recent if h["hit"])
     rate = hits / len(recent)
     misses = [h for h in reversed(recent) if not h["hit"]][:2]
-    parts = [f"AI 判斷回顧（近 {len(recent)} 次、{HORIZON_DAYS} 日後結算）：命中率 {rate:.0%}"]
+    parts = [f"AI 判斷回顧（近 {len(recent)} 次、各筆到期結算）：命中率 {rate:.0%}"]
     for m in misses:
         direction = "看多" if m["score"] > 0 else "看空"
         parts.append(f"最近失誤：{m['ticker']} {direction}（評分 {m['score']:+.2f}）"
@@ -113,7 +119,8 @@ def scoreboard(history: list) -> list[dict]:
     return out
 
 
-SOURCE_LABELS = {"quant": "量化訊號", "committee": "委員會", "analyst": "AI 分析師"}
+SOURCE_LABELS = {"quant": "量化訊號", "committee": "委員會", "analyst": "AI 分析師",
+                 "day_plan": "當日計畫"}
 
 
 # ── CLI 自我測試 ──────────────────────────────────────────────────────────────
@@ -172,5 +179,15 @@ if __name__ == "__main__":
     assert record_pick(st2, "NVDA", 0.8, 100, "2026-07-05", source="committee")
     assert not record_pick(st2, "NVDA", 0.8, 100, "2026-07-05", source="committee")
     print("scoreboard OK:", [(x['source'], round(x['hit_rate'], 2)) for x in sb])
+
+    # 自訂 horizon：day_plan 隔日即結算、預設 5 日的同日紀錄不受影響
+    st3: dict = {}
+    assert record_pick(st3, "SPY", 0.8, 500.0, "2026-07-06", source="day_plan", horizon=1)
+    assert record_pick(st3, "SPY", 0.8, 500.0, "2026-07-06", source="quant")   # 預設 5 日
+    n3 = evaluate_pending(st3, {"SPY": 505.0}, "2026-07-07")
+    assert n3 == 1, n3                                          # 只有 day_plan 到期
+    h3 = st3["reflections"]["history"][0]
+    assert h3["source"] == "day_plan" and h3["hit"] is True, h3
+    assert len(st3["reflections"]["pending"]) == 1              # quant 那筆還在等
 
     print("✅ reflection 純邏輯測試通過")

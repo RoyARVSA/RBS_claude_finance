@@ -277,6 +277,42 @@ def portfolio_history(key: str, secret: str, period: str = "1M") -> dict:
         return {}
 
 
+def submit_bracket(key: str, secret: str, symbol: str, qty: int,
+                   limit_price: float, stop_price: float,
+                   target_price: float) -> tuple[bool, str]:
+    """Bracket 買單（限價進場 + 自動掛停損/停利），time_in_force=day。
+    僅 paper API（_base() 安全鎖）。回 (成功, 訂單 id 或錯誤訊息)。
+    價格規則：≥$1 標的限價最多 2 位小數；bracket 不允許碎股 → qty 取整。"""
+    import requests
+    qty = int(qty)
+
+    def _px(p: float) -> float:
+        # sub-penny 規則：≥$1 最多 2 位小數、<$1 最多 4 位（違反會 422）
+        return round(float(p), 2 if p >= 1 else 4)
+
+    lp, sp, tp = _px(limit_price), _px(stop_price), _px(target_price)
+    # Alpaca 要求 TP ≥ 進場+0.01、SL ≤ 進場−0.01；用「分」比較避免浮點誤拒
+    lp_c, sp_c, tp_c = round(lp * 100), round(sp * 100), round(tp * 100)
+    if qty <= 0 or not (sp_c <= lp_c - 1 and tp_c >= lp_c + 1):
+        return False, (f"參數不合法：qty={qty}，需 stop≤limit-0.01≤target-0.02"
+                       f"（rounding 後 {sp}/{lp}/{tp}）")
+    try:
+        payload = {
+            "symbol": symbol.upper(), "qty": str(qty), "side": "buy",
+            "type": "limit", "limit_price": str(lp),
+            "time_in_force": "day", "order_class": "bracket",
+            "take_profit": {"limit_price": str(tp)},
+            "stop_loss": {"stop_price": str(sp)},
+        }
+        r = requests.post(f"{_base()}/v2/orders", headers=_headers(key, secret),
+                          json=payload, timeout=20)
+        if r.ok:
+            return True, (r.json() or {}).get("id", "OK")
+        return False, f"{r.status_code}: {r.text[:200]}"
+    except Exception as e:
+        return False, str(e)
+
+
 def close_all(key: str, secret: str) -> tuple[bool, str]:
     import requests
     try:
@@ -312,3 +348,10 @@ if __name__ == "__main__":
 
     print("\n=== account_return ===")
     print("  ", account_return({"equity": "102500", "last_equity": "100000"}))
+
+    print("\n=== submit_bracket 參數驗證（不打網路）===")
+    ok1, _m1 = submit_bracket("k", "s", "AAPL", 0, 100.0, 98.0, 104.0)      # qty=0
+    ok2, _m2 = submit_bracket("k", "s", "AAPL", 10, 100.0, 99.995, 100.005)  # 間距不足
+    ok3, _m3 = submit_bracket("k", "s", "AAPL", 10, 100.0, 104.0, 98.0)     # stop/target 顛倒
+    assert not ok1 and not ok2 and not ok3, (ok1, ok2, ok3)
+    print("  不合法參數全數擋下 OK（qty=0 / 0.01 間距 / 顛倒）")

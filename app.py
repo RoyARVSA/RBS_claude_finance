@@ -574,6 +574,68 @@ def page_portfolio_performance():
     out_df = pd.concat([port_val.rename("Portfolio_Value"), bench_px.rename("Benchmark"), port_ret.rename("Port_Return"), bench_ret.rename("Bench_Return")], axis=1)
     st.download_button("⬇ Download time-series CSV", data=out_df.to_csv().encode("utf-8"), file_name="portfolio_series.csv", mime="text/csv")
 
+    # ── ⚖️ 再平衡顧問（現有持倉 vs 目標權重 → 加減碼清單）──────────────
+    with st.expander("⚖️ 再平衡顧問（HRP / 最大 Sharpe / 風險平價 → 具體加減碼股數）",
+                     expanded=False):
+        import rebalance as rb
+        st.caption("用側欄的 Holdings 當現有持倉，選一個目標配置法 → 給出每檔買賣股數。"
+                   "門檻內的小漂移自動略過（省摩擦成本）。**模擬教育用途，非投資建議。**")
+        rb_c1, rb_c2 = st.columns([1.4, 1])
+        with rb_c1:
+            rb_scheme = st.selectbox("目標配置法", list(rb.SCHEMES),
+                                     format_func=lambda k: rb.SCHEMES[k], key="rb_scheme")
+        with rb_c2:
+            rb_minpct = st.number_input("最小交易門檻（%總值）", 0.1, 10.0, 1.0,
+                                        step=0.1, key="rb_minpct")
+        if st.button("⚖️ 計算再平衡", type="primary", key="rb_go"):
+            try:
+                rb_tks = list(dict.fromkeys(tickers))   # 去重：重複列會讓權重折疊 <1
+                # 目標權重要用「日線」報酬估計——重抓未重採樣的收盤價（有快取）
+                raw_rb = _cached_portfolio_prices(tuple(rb_tks), str(start))
+                px_rb = (raw_rb["Close"] if isinstance(raw_rb.columns, pd.MultiIndex)
+                         else raw_rb)[rb_tks].dropna(how="all").ffill()
+                rets_rb = px_rb.pct_change().dropna(how="all").dropna(axis=1)
+                tw = rb.target_weights(rets_rb, rb_scheme)
+                if tw is None:
+                    st.error("目標權重計算失敗（需 ≥2 檔、≥40 個交易日數據）")
+                else:
+                    last_px = px_rb.ffill().iloc[-1].to_dict()
+                    no_hist = [t for t in rb_tks if t not in rets_rb.columns]
+                    res = rb.rebalance_orders(
+                        {t: float(shares.get(t, 0)) for t in rb_tks}, last_px,
+                        tw.to_dict(), min_trade_pct=float(rb_minpct) / 100.0,
+                        no_data=no_hist)
+                    st.session_state["rb_result"] = {"res": res, "scheme": rb_scheme}
+            except Exception as e:
+                st.error(f"計算失敗：{e}")
+
+        _rb = st.session_state.get("rb_result")
+        if _rb:
+            res, sch = _rb["res"], _rb["scheme"]
+            rc1, rc2, rc3 = st.columns(3)
+            with rc1: metric_card("組合總市值", f"${res['total_value']:,.0f}")
+            with rc2: metric_card("建議單數", str(len(res["orders"])))
+            with rc3: metric_card("單邊換手率", f"{res['turnover']:.1%}")
+            if res["orders"]:
+                st.dataframe(pd.DataFrame([{
+                    "動作": o["action"], "代碼": o["ticker"], "股數": o["shares"],
+                    "金額": f"${o['value']:,.0f}", "現價": o["price"],
+                    "目前權重": f"{o['cur_w']:.1%}", "目標權重": f"{o['tgt_w']:.1%}",
+                    "漂移": f"{o['drift']:+.1%}",
+                } for o in res["orders"]]), use_container_width=True, hide_index=True)
+            else:
+                st.success("漂移皆在門檻內——目前無需再平衡。")
+            if res["skipped_small"]:
+                st.caption(f"門檻內略過：{'、'.join(res['skipped_small'])}")
+            if res["skipped_no_price"]:
+                st.caption(f"缺價/非多頭略過：{'、'.join(res['skipped_no_price'])}")
+            if res.get("skipped_no_history"):
+                st.caption(f"歷史不足未進優化（持倉不動）：{'、'.join(res['skipped_no_history'])}")
+            st.download_button("⬇️ 下載再平衡清單",
+                               rb.rebalance_text(res, rb.SCHEMES[sch]),
+                               file_name="rebalance_plan.txt", key="rb_dl")
+            st.caption("賣單在前（先騰資金）· 未含手續費/稅/滑價 · 非投資建議。")
+
 
 # ════════════════════════════════════════════════════════════════════
 # PAGE: News & Sentiment
@@ -2246,7 +2308,7 @@ def page_ai_assistant():
                     "決策者": _rfl4.SOURCE_LABELS.get(r["source"], r["source"]),
                     "已結算": r["n"],
                     "命中率": f"{r['hit_rate']:.0%}" if r["hit_rate"] is not None else "—",
-                    "平均5日對齊報酬": f"{r['avg_fwd']:+.2%}" if r["avg_fwd"] is not None else "—",
+                    "平均對齊報酬": f"{r['avg_fwd']:+.2%}" if r["avg_fwd"] is not None else "—",
                 } for r in sb_rows]), use_container_width=True, hide_index=True)
                 st.caption(f"待結算 {n_pend} 筆　·　量化=Bot 掃描強訊號、委員會=本模式裁決"
                            "　·　樣本少時勿過度解讀；這張表是「找出最佳決策方向」的長期證據")
@@ -5226,12 +5288,20 @@ def page_alerts():
             import trade_plan as tpl
             if len(tp_tickers) > 10:
                 st.caption(f"⚠️ 一次最多 10 檔（已取前 10；共選 {len(tp_tickers)}）")
+            # Bot 用 /plantest apply 套用的校準會 commit 進 watchlist_state.json——網頁共用
+            _tp_cal = None
+            try:
+                import json as _json
+                _tp_cal = _json.load(open("watchlist_state.json")).get("plan_calib")
+            except Exception:
+                pass
             with st.spinner(f"抓取 {min(len(tp_tickers), 10)} 檔盤中數據並計算…"):
                 try:
                     tickets, tp_src = tpl.build_plans(
-                        tp_tickers[:10], float(tp_account), float(tp_risk) / 100.0)
+                        tp_tickers[:10], float(tp_account), float(tp_risk) / 100.0,
+                        calib=_tp_cal)
                     st.session_state["tp_result"] = {
-                        "tickets": tickets, "src": tp_src,
+                        "tickets": tickets, "src": tp_src, "calib": _tp_cal,
                         "account": float(tp_account), "risk": float(tp_risk) / 100.0}
                 except Exception as e:
                     st.error(f"計畫產生失敗：{e}")
@@ -5246,6 +5316,10 @@ def page_alerts():
                     st.success(f"現價來源：{tp_src}（即時）")
                 else:
                     st.info("現價來源：yfinance（約延遲 15 分鐘）。設 ALPACA_KEY_ID/SECRET 可升級為 IEX 即時價。")
+                _calshow = tp_res.get("calib") or {}
+                if _calshow.get("setups") or _calshow.get("params"):
+                    _src_c = "每週自動校準" if _calshow.get("auto") else "/plantest apply"
+                    st.caption(f"📜 已套用歷史回測校準（{_calshow.get('as_of', '?')}，{_src_c}）")
                 rows = []
                 for t in tickets:
                     rows.append({
@@ -5259,6 +5333,10 @@ def page_alerts():
                     })
                 st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
+                import os as _os
+                import trade_plan as _tplm
+                _apk = _os.environ.get("ALPACA_KEY_ID", "")
+                _aps = _os.environ.get("ALPACA_SECRET_KEY", "")
                 for t in tickets:
                     if t["action"] in ("買進", "小量試單"):
                         with st.expander(f"🟢 {t['ticker']} — {t['action']}｜{t['setup']}"
@@ -5269,13 +5347,117 @@ def page_alerts():
                                 f"**建議股數** {t['shares']}　**效期** {t['valid']}")
                             for r in t["reasons"]:
                                 st.markdown(f"- {r}")
+                            # BRK.B 等類股後綴是美股；只有 .TW/.HK 等市場後綴才擋
+                            _is_us = ("." not in t["ticker"] or
+                                      t["ticker"].split(".")[-1].upper()
+                                      not in _tplm._NON_US_SUFFIX)
+                            if _apk and _aps and _is_us and t["shares"]:
+                                if st.button(
+                                        f"📤 送出 Alpaca 模擬 bracket 單"
+                                        f"（限價 {t['entry_hi']}、{t['shares']} 股）",
+                                        key=f"tp_ord_{t['ticker']}"):
+                                    import alpaca_trader as _at
+                                    ok, info = _at.submit_bracket(
+                                        _apk, _aps, t["ticker"], t["shares"],
+                                        float(t["entry_hi"]), float(t["stop"]),
+                                        float(t["target"]))
+                                    if ok:
+                                        st.success(f"✅ 模擬單已送出（id {info[:8]}…）—"
+                                                   "進場成交後自動掛停損/停利，收盤未成交自動失效")
+                                    else:
+                                        st.error(f"下單失敗：{info}")
+                            elif not _is_us and t["shares"]:
+                                st.caption("（台股/非美股無法送 Alpaca 模擬單）")
 
                 import trade_plan as tpl2
                 st.download_button(
                     "⬇️ 下載計畫（文字）",
                     tpl2.plan_text(tickets, tp_res["account"], tp_res["risk"], tp_src),
                     file_name="today_trade_plan.txt", key="tp_dl")
-                st.caption("⚠️ 模擬教育用途，非投資建議。訂單票效期僅當日；隔日請重新產生。")
+
+        # ── 📜 歷史回測：過去 ~60 交易日逐日重放，驗證這套規則到底行不行 ──
+        st.divider()
+        st.markdown("##### 📜 歷史回測（60 日重放 + walk-forward 校準）")
+        st.caption("用過去 ~60 個交易日的 5 分 K 逐日重放訂單票：無前視（日線只用當日以前）、"
+                   "同根 K 停損優先、扣 0.1% 成本。分型態/信心統計勝率與 R 期望值；"
+                   "校準建議**只降不升**（負期望停用、不穩定降信心），由 Bot `/plantest apply` 套用。")
+        bt_c1, bt_c2 = st.columns(2)
+        with bt_c2:
+            if st.button("🔧 參數尋優（27 組、約 2-4 分）", key="tp_opt_go",
+                         disabled=not tp_tickers):
+                import plan_backtest as pbt_o
+                with st.spinner(f"掃 {min(len(tp_tickers), 8)} 檔 × 27 組參數（2-4 分鐘）…"):
+                    try:
+                        opt_r = pbt_o.optimize(tp_tickers[:8])
+                        st.session_state["tp_opt"] = opt_r
+                    except Exception as e:
+                        st.error(f"尋優失敗：{e}")
+        _opt = st.session_state.get("tp_opt")
+        if _opt:
+            import plan_backtest as pbt_o2
+            if _opt["recommend"]:
+                p_ = {**pbt_o2._BASELINE, **_opt["recommend"]["params"]}
+                st.success(f"✅ 推薦參數：ORB {p_['orb_minutes']} 分、停損 "
+                           f"{p_['stop_atr_mult']}×ATR、目標 {p_['target_rr']}R——"
+                           "Telegram 傳 `/plantest opt apply` 套用")
+            else:
+                st.info("➖ 無組合在驗證段明確勝過現行預設——維持預設（不為調而調）")
+            with st.expander("完整尋優報告", expanded=False):
+                st.text(pbt_o2.opt_text(_opt, top_n=8))
+
+        with bt_c1:
+            _bt_go = st.button("📜 跑 60 日回測", key="tp_bt_go", disabled=not tp_tickers)
+        if _bt_go:
+            import plan_backtest as pbt
+            with st.spinner(f"重放 {min(len(tp_tickers), 10)} 檔 × ~60 交易日（1-3 分鐘）…"):
+                try:
+                    agg_bt, cal_bt, tr_bt = pbt.run(tp_tickers[:10])
+                    st.session_state["tp_bt"] = {"agg": agg_bt, "cal": cal_bt,
+                                                 "n": min(len(tp_tickers), 10),
+                                                 "trades": len(tr_bt)}
+                except Exception as e:
+                    st.error(f"回測失敗：{e}")
+        _bt = st.session_state.get("tp_bt")
+        if _bt:
+            agg_bt, cal_bt = _bt["agg"], _bt["cal"]
+            ov = agg_bt["overall"]
+            if ov["n"] == 0:
+                st.warning("期間內無成交訊號（清單太保守或資料不足）。")
+            else:
+                b1, b2, b3, b4 = st.columns(4)
+                with b1: metric_card("成交筆數", f"{ov['n']}（訊號 {ov['signals']}）")
+                with b2: metric_card("勝率", f"{ov['win_rate']:.0%}",
+                                     positive=ov["win_rate"] >= 0.5)
+                with b3: metric_card("平均 R", f"{ov['avg_r']:+.2f}",
+                                     positive=ov["avg_r"] > 0)
+                with b4: metric_card("累計 R", f"{ov['total_r']:+.1f}",
+                                     positive=ov["total_r"] > 0)
+                brows = []
+                for grp, d_ in (("型態", agg_bt["by_setup"]), ("信心", agg_bt["by_conf"])):
+                    for k, g in d_.items():
+                        if g["n"]:
+                            brows.append({"分組": f"{grp}｜{k}", "筆數": g["n"],
+                                          "勝率": f"{g['win_rate']:.0%}",
+                                          "平均R": f"{g['avg_r']:+.2f}",
+                                          "累計R": f"{g['total_r']:+.1f}"})
+                st.dataframe(pd.DataFrame(brows), use_container_width=True, hide_index=True)
+                if cal_bt.get("setups"):
+                    st.markdown("**🔧 walk-forward 校準建議**（訓練 ≤"
+                                f"{cal_bt['split_date']}、其後驗證）")
+                    for s_, c_ in cal_bt["setups"].items():
+                        icon = "⛔" if not c_["enabled"] else ("⬇️" if c_["conf_delta"] else "✅")
+                        st.markdown(f"- {icon} **{s_}**：{c_['why']}（訓練 {c_['train']['n']} 筆"
+                                    f" avg {c_['train']['avg_r'] if c_['train']['avg_r'] is not None else '—'}R、"
+                                    f"驗證 {c_['val']['n']} 筆"
+                                    f" avg {c_['val']['avg_r'] if c_['val']['avg_r'] is not None else '—'}R）")
+                    st.caption("套用方式：Telegram 傳 `/plantest apply`（存進 Bot 狀態檔，"
+                               "網頁與 Bot 的 /today 都會生效）；`/plantest clear` 還原。")
+                import plan_backtest as pbt2
+                st.download_button("⬇️ 下載回測報告",
+                                   pbt2.stats_text(agg_bt, cal_bt, n_tickers=_bt["n"]),
+                                   file_name="plan_backtest_report.txt", key="tp_bt_dl")
+            st.caption("歷史模擬非未來保證；60 日窗受 yfinance 5 分 K 上限所限 · 非投資建議。")
+        st.caption("⚠️ 模擬教育用途，非投資建議。訂單票效期僅當日；隔日請重新產生。")
 
 
 # ════════════════════════════════════════════════════════════════════

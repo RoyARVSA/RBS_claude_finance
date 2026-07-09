@@ -58,11 +58,11 @@
 | 分類 | 指令 |
 |------|------|
 | 清單 | `/add AAPL`、`/remove AAPL`、`/list` |
-| 分析 | `/rank`、`/fundamentals AAPL`（`/f`）、`/options AAPL`（`/opt`，選擇權情緒）、`/insider AAPL`（`/ins`，SEC 內部人）、`/whales [編號]`（13F 大戶動向）、`/earnings [天數]`、`/briefing`、`/weekly`（每週深度週報）、`/today [帳戶 風險%]`（`/plan`）— 當日交易計畫：VWAP/ORB/RVOL 訂單票（進場/停損/停利/股數；排程版最多延遲 ~15 分處理） |
+| 分析 | `/rank`、`/fundamentals AAPL`（`/f`）、`/options AAPL`（`/opt`，選擇權情緒）、`/insider AAPL`（`/ins`，SEC 內部人）、`/whales [編號]`（13F 大戶動向）、`/earnings [天數]`、`/briefing`、`/weekly`（每週深度週報）、`/today [帳戶 風險%]`（`/plan`）— 當日交易計畫：VWAP/ORB/RVOL 訂單票（進場/停損/停利/股數；財報日自動迴避；進場票記入決策計分板隔日結算；排程版最多延遲 ~15 分處理）、`/plantest [apply\|clear]`（當日計畫 60 日回測；apply 套用 walk-forward 校準到 /today；每週自動重跑）、`/plantest opt [apply]`（參數尋優：ORB×停損×R:R 掃 27 組，驗證段勝過預設才推薦） |
 | 警報 | `/alert AAPL 200`（到價通知，觸發自動移除）、`/alert`（清單）、`/alert del AAPL` |
 | AI | `/committee NVDA`（`/cmt`）— 機構決策會議：分析師×4→多空對辯→交易員→風控→投資經理，裁決自動記入計分板（需 `LLM_API_KEY`，約 1-3 分鐘） |
 | 風控 | `/risk [帳戶 風險%]`、`/protections`、`/calibrate` |
-| 模擬交易 | `/autotrade on\|off`、`/positions`、`/pnl`、`/journal [N]`、`/closeall` |
+| 模擬交易 | `/autotrade on\|off`、`/positions`、`/pnl`、`/journal [N]`、`/rebalance [hrp\|max_sharpe\|min_vol\|erc\|equal]`（持倉再平衡顧問）、`/closeall` |
 
 > `/options`、`/insider` 僅美股；選擇權走 yfinance、內部人走 SEC EDGAR，皆免 key。
 
