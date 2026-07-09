@@ -38,5 +38,15 @@
     "reason": "評分 +0.74 ≥ 買進門檻 0.5",
     "submitted": true,
     "error": null
+  },
+  {
+    "time": "2026-07-09T18:25:41Z",
+    "symbol": "META",
+    "side": "buy",
+    "qty": 24,
+    "score": 0.532,
+    "reason": "評分 +0.53 ≥ 買進門檻 0.5",
+    "submitted": true,
+    "error": null
   }
 ]
