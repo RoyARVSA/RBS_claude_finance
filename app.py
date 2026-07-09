@@ -5316,8 +5316,10 @@ def page_alerts():
                     st.success(f"現價來源：{tp_src}（即時）")
                 else:
                     st.info("現價來源：yfinance（約延遲 15 分鐘）。設 ALPACA_KEY_ID/SECRET 可升級為 IEX 即時價。")
-                if tp_res.get("calib"):
-                    st.caption(f"📜 已套用歷史回測校準（{tp_res['calib'].get('as_of', '?')} 由 /plantest apply 產生）")
+                _calshow = tp_res.get("calib") or {}
+                if _calshow.get("setups") or _calshow.get("params"):
+                    _src_c = "每週自動校準" if _calshow.get("auto") else "/plantest apply"
+                    st.caption(f"📜 已套用歷史回測校準（{_calshow.get('as_of', '?')}，{_src_c}）")
                 rows = []
                 for t in tickets:
                     rows.append({
@@ -5379,7 +5381,33 @@ def page_alerts():
         st.caption("用過去 ~60 個交易日的 5 分 K 逐日重放訂單票：無前視（日線只用當日以前）、"
                    "同根 K 停損優先、扣 0.1% 成本。分型態/信心統計勝率與 R 期望值；"
                    "校準建議**只降不升**（負期望停用、不穩定降信心），由 Bot `/plantest apply` 套用。")
-        if st.button("📜 跑 60 日回測", key="tp_bt_go", disabled=not tp_tickers):
+        bt_c1, bt_c2 = st.columns(2)
+        with bt_c2:
+            if st.button("🔧 參數尋優（27 組、約 2-4 分）", key="tp_opt_go",
+                         disabled=not tp_tickers):
+                import plan_backtest as pbt_o
+                with st.spinner(f"掃 {min(len(tp_tickers), 8)} 檔 × 27 組參數（2-4 分鐘）…"):
+                    try:
+                        opt_r = pbt_o.optimize(tp_tickers[:8])
+                        st.session_state["tp_opt"] = opt_r
+                    except Exception as e:
+                        st.error(f"尋優失敗：{e}")
+        _opt = st.session_state.get("tp_opt")
+        if _opt:
+            import plan_backtest as pbt_o2
+            if _opt["recommend"]:
+                p_ = {**pbt_o2._BASELINE, **_opt["recommend"]["params"]}
+                st.success(f"✅ 推薦參數：ORB {p_['orb_minutes']} 分、停損 "
+                           f"{p_['stop_atr_mult']}×ATR、目標 {p_['target_rr']}R——"
+                           "Telegram 傳 `/plantest opt apply` 套用")
+            else:
+                st.info("➖ 無組合在驗證段明確勝過現行預設——維持預設（不為調而調）")
+            with st.expander("完整尋優報告", expanded=False):
+                st.text(pbt_o2.opt_text(_opt, top_n=8))
+
+        with bt_c1:
+            _bt_go = st.button("📜 跑 60 日回測", key="tp_bt_go", disabled=not tp_tickers)
+        if _bt_go:
             import plan_backtest as pbt
             with st.spinner(f"重放 {min(len(tp_tickers), 10)} 檔 × ~60 交易日（1-3 分鐘）…"):
                 try:

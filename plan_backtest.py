@@ -21,7 +21,8 @@ from __future__ import annotations
 
 import pandas as pd
 
-from trade_plan import build_ticket, daily_gate, intraday_metrics
+from trade_plan import (ORB_MINUTES, STOP_ATR_MULT, TARGET_RR,
+                        build_ticket, daily_gate, intraday_metrics)
 
 COST_RT = 0.001          # 來回交易成本（與 backtest.py 一致）
 STEP_BARS = 3            # 每 3 根 5 分 K（=15 分鐘）評估一次，貼近 bot cron 節奏
@@ -33,25 +34,50 @@ CONF_BUCKETS = ((2, "2"), (3, "3"), (4, "4+"))
 # ── 純邏輯：單日重放 ──────────────────────────────────────────────────────────
 
 def simulate_session(sess: pd.DataFrame, daily_upto: pd.DataFrame,
-                     ticker: str = "?", session_minutes: float = 390.0) -> dict | None:
+                     ticker: str = "?", session_minutes: float = 390.0,
+                     params: dict | None = None,
+                     cache: dict | None = None) -> dict | None:
     """
     重放一個交易日。sess：該日全部盤中 K（OHLCV，時間索引）；
     daily_upto：**只含該日以前**的日線（呼叫端負責切片——這是無前視的關鍵）。
+    params：{orb_minutes, stop_atr_mult, target_rr}（缺省用 trade_plan 預設）。
+    cache：尋優跨參數組重用（daily_gate 不隨參數變、intraday_metrics 只隨
+    orb_minutes 變——27 組網格可省 ~9 倍計算）。
     回一筆交易紀錄 {ticker,date,setup,conf,filled,fill,exit,exit_kind,r,win}
     或 None（整天無可執行訊號）。每個 ticker-日最多一筆（取第一個訊號）。
     """
     if sess is None or len(sess) < 8 or daily_upto is None or len(daily_upto) < 60:
         return None
-    gate = daily_gate(daily_upto)
+    prm = params or {}
+    orb_m = int(prm.get("orb_minutes", ORB_MINUTES))
+    stop_m = float(prm.get("stop_atr_mult", STOP_ATR_MULT))
+    tgt_rr = float(prm.get("target_rr", TARGET_RR))
+    day_key = str(sess.index[-1].date())
+    if cache is not None:
+        gk = ("gate", ticker, day_key)
+        gate = cache.get(gk)
+        if gate is None:
+            gate = daily_gate(daily_upto)
+            cache[gk] = gate
+    else:
+        gate = daily_gate(daily_upto)
 
     n = len(sess)
-    # 每 STEP_BARS 根評估一次（開盤 15 分後開始；ORB 未滿 30 分時與實盤一樣用部分區間）
+    # 每 STEP_BARS 根評估一次（開盤 15 分後開始；ORB 未滿時與實盤一樣用部分區間）
     for i in range(STEP_BARS, n - 1, STEP_BARS):
-        m = intraday_metrics(sess.iloc[:i + 1], daily_upto,
-                             session_minutes=session_minutes)
+        if cache is not None:
+            mk = ("m", ticker, day_key, i, orb_m)
+            m = cache.get(mk, False)
+            if m is False:
+                m = intraday_metrics(sess.iloc[:i + 1], daily_upto, orb_minutes=orb_m,
+                                     session_minutes=session_minutes)
+                cache[mk] = m
+        else:
+            m = intraday_metrics(sess.iloc[:i + 1], daily_upto, orb_minutes=orb_m,
+                                 session_minutes=session_minutes)
         if not m:
             continue
-        t = build_ticket(ticker, m, gate)
+        t = build_ticket(ticker, m, gate, stop_atr_mult=stop_m, target_rr=tgt_rr)
         if t["action"] not in ("買進", "小量試單"):
             continue
         entry_lo, entry_hi, stop, target = (t["entry_lo"], t["entry_hi"],
@@ -212,13 +238,9 @@ def fetch_history(tickers: list[str], period: str = "60d") -> dict[str, dict]:
     return out
 
 
-def run(tickers: list[str], max_tickers: int = 12) -> tuple[dict, dict, list[dict]]:
-    """
-    整條流程：抓資料 → 逐檔逐日重放 → (aggregate, calib, trades)。
-    台股（.TW/.TWO）session_minutes=270。
-    """
-    tickers = list(dict.fromkeys(tickers))[:max_tickers]
-    data = fetch_history(tickers)
+def _replay(data: dict, params: dict | None = None,
+            cache: dict | None = None) -> list[dict]:
+    """逐檔逐日重放（data 來自 fetch_history 或測試注入）。"""
     trades: list[dict] = []
     for tk, dd in data.items():
         bars, daily = dd["bars"], dd["daily"]
@@ -231,10 +253,131 @@ def run(tickers: list[str], max_tickers: int = 12) -> tuple[dict, dict, list[dic
             sess = bars[[d.date() == day for d in bars.index]]
             daily_upto = daily[daily.index.date < day]        # 無前視：只用該日以前
             rec = simulate_session(sess, daily_upto, ticker=tk,
-                                   session_minutes=sess_min)
+                                   session_minutes=sess_min, params=params,
+                                   cache=cache)
             if rec:
                 trades.append(rec)
+    return trades
+
+
+def run(tickers: list[str], max_tickers: int = 12,
+        params: dict | None = None,
+        data: dict | None = None) -> tuple[dict, dict, list[dict]]:
+    """
+    整條流程：抓資料 → 逐檔逐日重放 → (aggregate, calib, trades)。
+    台股（.TW/.TWO）session_minutes=270。data 可注入（尋優/測試重用免重抓）。
+    """
+    tickers = list(dict.fromkeys(tickers))[:max_tickers]
+    if data is None:
+        data = fetch_history(tickers)
+    trades = _replay(data, params)
     return aggregate(trades), walk_forward_calibrate(trades), trades
+
+
+# ── 參數尋優（walk-forward：訓練段排序、驗證段把關）──────────────────────────
+
+GRID = {"orb_minutes": (15, 30, 45),
+        "stop_atr_mult": (1.0, 1.5, 2.0),
+        "target_rr": (1.5, 2.0, 2.5)}
+
+_BASELINE = {"orb_minutes": ORB_MINUTES, "stop_atr_mult": STOP_ATR_MULT,
+             "target_rr": TARGET_RR}
+
+
+def _split_stats(trades: list[dict]) -> dict | None:
+    """依日期切 walk-forward（TRAIN_FRAC），回 train/val 統計；天數 <10 回 None。"""
+    dated = sorted([t for t in trades if t.get("date")], key=lambda t: t["date"])
+    days = sorted({t["date"] for t in dated})
+    if len(days) < 10:
+        return None
+    split = days[max(1, int(len(days) * TRAIN_FRAC)) - 1]
+    return {"split": split, "sessions": len(days),
+            "train": _agg([t for t in dated if t["date"] <= split]),
+            "val": _agg([t for t in dated if t["date"] > split])}
+
+
+def optimize(tickers: list[str], grid: dict | None = None,
+             max_tickers: int = 8, data: dict | None = None) -> dict:
+    """
+    網格掃參數（ORB 分鐘 × 停損 ATR 倍數 × 目標 R:R），每組完整重放。
+    穩健挑選：訓練段 avg_R 排序（樣本 ≥ MIN_TRADES）→ 取第一個「驗證段也正期望」
+    的組合為 best；再與現行預設比驗證段——**沒有明確勝過預設就不推薦**
+    （recommend=None＝維持預設，避免為調而調的過擬合）。
+    回 {"results", "best", "baseline", "recommend", "n_tickers"}；
+    results 各項含 params/train/val/trades。
+    """
+    from itertools import product
+    grid = grid or GRID
+    tickers = list(dict.fromkeys(tickers))[:max_tickers]
+    if data is None:
+        data = fetch_history(tickers)
+    keys = list(grid)
+    results = []
+    cache: dict = {}                 # 跨參數組共用 gate/metrics（省 ~9 倍計算）
+    for combo in product(*(grid[k] for k in keys)):
+        prm = dict(zip(keys, combo))
+        trades = _replay(data, prm, cache=cache)
+        ss = _split_stats(trades)
+        if ss:
+            results.append({"params": prm, "trades": trades, **ss})
+    out = {"results": results, "best": None, "baseline": None,
+           "recommend": None, "n_tickers": len(data)}
+    if not results:
+        return out
+    base_prm = {k: _BASELINE[k] for k in keys if k in _BASELINE}
+    baseline = next((r for r in results if r["params"] == base_prm), None)
+    if baseline is None:
+        tr_b = _replay(data, base_prm, cache=cache)
+        ss_b = _split_stats(tr_b)
+        if ss_b:
+            baseline = {"params": base_prm, "trades": tr_b, **ss_b}
+    out["baseline"] = baseline
+    eligible = [r for r in results if r["train"]["n"] >= MIN_TRADES]
+    eligible.sort(key=lambda r: r["train"]["avg_r"], reverse=True)
+    best = next((r for r in eligible
+                 if r["val"]["n"] >= max(2, MIN_TRADES // 2)
+                 and r["val"]["avg_r"] > 0), None)
+    out["best"] = best
+    if best and best["params"] != (baseline or {}).get("params"):
+        base_val = (baseline or {}).get("val") or {}
+        # 推薦門檻：驗證段 avg_R 至少比預設好 0.05R（預設無資料時只要驗證為正）
+        if base_val.get("avg_r") is None or \
+           best["val"]["avg_r"] >= base_val["avg_r"] + 0.05:
+            out["recommend"] = best
+    return out
+
+
+def opt_text(opt: dict, top_n: int = 5) -> str:
+    """尋優結果 → 文字（bot / 下載共用）。"""
+    lines = [f"🔧 當日計畫參數尋優（{opt['n_tickers']} 檔、{len(opt['results'])} 組參數、"
+             "walk-forward 前 60% 訓練/後 40% 驗證）"]
+    if not opt["results"]:
+        lines.append("資料不足（需 ≥10 個交易日），未產生結果。")
+        return "\n".join(lines)
+
+    def _fmt(r):
+        p = r["params"]
+        tr, va = r["train"], r["val"]
+        return (f"ORB{p.get('orb_minutes', '?')}分/停損{p.get('stop_atr_mult', '?')}×ATR/"
+                f"目標{p.get('target_rr', '?')}R → 訓練 {tr['n']} 筆 "
+                f"{(tr['avg_r'] if tr['avg_r'] is not None else 0):+.2f}R｜"
+                f"驗證 {va['n']} 筆 "
+                f"{(va['avg_r'] if va['avg_r'] is not None else 0):+.2f}R")
+
+    if opt["baseline"]:
+        lines.append(f"基準（現行預設）：{_fmt(opt['baseline'])}")
+    ranked = sorted([r for r in opt["results"] if r["train"]["n"] >= MIN_TRADES],
+                    key=lambda r: r["train"]["avg_r"], reverse=True)
+    for i, r in enumerate(ranked[:top_n], 1):
+        lines.append(f"{i}. {_fmt(r)}")
+    if opt["recommend"]:
+        p = {**_BASELINE, **opt["recommend"]["params"]}   # partial grid 用預設補齊
+        lines.append(f"\n✅ 推薦：ORB {p['orb_minutes']} 分、停損 {p['stop_atr_mult']}×ATR、"
+                     f"目標 {p['target_rr']}R（驗證段明確勝過預設）")
+    else:
+        lines.append("\n➖ 無組合在驗證段明確勝過現行預設——維持預設（不為調而調）")
+    lines.append("\n⚠️ 歷史尋優極易過擬合；只信「訓練與驗證都好」的組合。非投資建議。")
+    return "\n".join(lines)
 
 
 # ── CLI 自我測試（離線純邏輯，合成 K 棒）─────────────────────────────────────
@@ -323,6 +466,27 @@ if __name__ == "__main__":
 
     # 樣本 <10 天 → 不校準
     assert walk_forward_calibrate(trades[:6])["setups"] == {}
+
+    # 參數化重放：target_rr=0.5 → 情境 1 應改為快速停利出場（而非 eod）
+    rec1b = simulate_session(_sess(d0, path), daily, "UPUP",
+                             params={"target_rr": 0.5})
+    assert rec1b and rec1b["exit_kind"] == "target" and rec1b["r"] > 0, rec1b
+
+    # 參數尋優（注入 12 個合成上漲日；離線）
+    sessions = []
+    for k in range(12):
+        dk = str((daily.index[-1] + pd.Timedelta(days=k + 1)).date())
+        sessions.append(_sess(dk, path))
+    data_syn = {"SYN": {"bars": pd.concat(sessions), "daily": daily}}
+    opt = optimize(["SYN"], grid={"target_rr": (0.5, 8.0)}, data=data_syn)
+    assert len(opt["results"]) == 2 and opt["best"] is not None, opt["results"]
+    assert opt["baseline"] is not None            # 預設 2.0R 不在 grid → 另行計算
+    assert opt["baseline"]["params"]["target_rr"] == 2.0
+    ot = opt_text(opt)
+    assert ("推薦" in ot or "維持預設" in ot) and "過擬合" in ot
+    # run() 可注入 data + params（免網路）
+    agg_i, cal_i, tr_i = run(["SYN"], data=data_syn, params={"target_rr": 0.5})
+    assert agg_i["overall"]["n"] == 12 and agg_i["overall"]["win_rate"] == 1.0, agg_i
 
     print("✅ plan_backtest 離線自我測試通過"
           f"（情境1 {rec1['exit_kind']} {rec1['r']:+.2f}R、情境2 {rec2['r']:+.2f}R）")

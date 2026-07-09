@@ -43,7 +43,8 @@ Streamlit 網頁應用 + 獨立的訊號掃描 Bot（GitHub Actions 排程版 / 
 - **到價警報**：`/alert AAPL 200` 突破/跌破即推播，觸發後自動移除（上限 20 個）
 - **Alpaca 模擬交易**：訊號自動下模擬單驗證策略實效（預設關閉，`/autotrade on` 啟用）
 - **當日交易計畫**：`/today [帳戶 風險%]` 盤中訂單票（VWAP/ORB/RVOL 進場、停損/停利/股數、財報日迴避）；進場票自動記入決策計分板（隔日結算，與量化/委員會同板比較）
-- **當日計畫歷史回測**：`/plantest` 用過去 ~60 交易日 5 分 K 逐日重放訂單票（無前視、扣成本、停損優先），統計各型態實證勝率/R 期望值；`/plantest apply` 把 walk-forward 校準（負期望型態停用、不穩定降信心）套進 /today——**讓判定吃歷史實證自我修正**
+- **當日計畫歷史回測**：`/plantest` 用過去 ~60 交易日 5 分 K 逐日重放訂單票（無前視、扣成本、停損優先），統計各型態實證勝率/R 期望值；`/plantest apply` 把 walk-forward 校準（負期望型態停用、不穩定降信心）套進 /today——**讓判定吃歷史實證自我修正**；**每週自動重跑校準**（動作有變時推播通知，`/set plan_autocal_enabled off` 關閉）
+- **參數尋優**：`/plantest opt` 掃 ORB 分鐘 × 停損 ATR 倍數 × 目標 R:R 共 27 組參數，訓練段排序、**驗證段沒明確勝過現行預設就不推薦**（防過擬合）；`opt apply` 一鍵套用推薦參數＋對應校準
 - **Telegram 指令**：清單 `/add /remove /list`、分析 `/rank /fundamentals /options /insider /whales /earnings /briefing /weekly /today`、
   **AI `/committee`（手機開機構決策會議）**、警報 `/alert`、風控 `/risk /protections /calibrate`、
   模擬交易 `/autotrade /positions /pnl /journal /closeall`（`/help` 看全部）

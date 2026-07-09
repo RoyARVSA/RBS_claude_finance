@@ -34,7 +34,8 @@ Telegram 指令（傳給 Bot）：
   /rebalance [配置法]     – 再平衡顧問：Alpaca 持倉 vs HRP/Sharpe/風險平價 → 加減碼清單
   /briefing               – 立即生成每日 AI 晨報（每交易日 ET 08:30 自動推送）
   /today [帳戶 風險%]     – 當日交易計畫：VWAP/ORB/RVOL 訂單票（別名 /plan）
-  /plantest [apply|clear] – 當日計畫 60 日歷史回測；apply 把 walk-forward 校準套進 /today
+  /plantest [apply|clear] – 當日計畫 60 日歷史回測；apply 套用校準（每週亦自動跑）
+  /plantest opt [apply]   – 參數尋優（ORB 分鐘×停損 ATR×目標 R:R，walk-forward 把關）
   /weekly                 – 立即生成每週深度週報（每週日 ET 18:00 後自動推送）
   /committee TICKER       – 機構決策會議：分析師×4→對辯→交易員→風控→PM（別名 /cmt）
   /set mtf_enabled on/off – 週線同向確認（日線分數與週線同向加強、背離減弱）
@@ -289,7 +290,8 @@ def _cmd_help() -> str:
         "`/earnings [天數]` — 觀察清單近期財報日\n"
         "`/briefing` — 立即生成每日晨報\n"
         "`/today [帳戶 風險%]`（或 `/plan`）— 當日交易計畫：VWAP/ORB 進場票（進場/停損/停利/股數）\n"
-        "`/plantest [apply|clear]` — 當日計畫 60 日回測（勝率/期望值/R 倍數）；apply 套用校準\n"
+        "`/plantest [apply|clear]` — 當日計畫 60 日回測；apply 套用校準（每週自動跑，`/set plan_autocal_enabled off` 關）\n"
+        "`/plantest opt [apply]` — 參數尋優：ORB×停損×R:R 掃 27 組，驗證段勝過預設才推薦\n"
         "`/weekly` — 立即生成每週深度週報（指數/強弱/計分板/RRG/下週行事曆）\n"
         "`/committee NVDA`（或 `/cmt`）— 開一場機構決策會議（需 LLM key，約 1-3 分）\n\n"
         "🤖 *模擬交易（Alpaca paper）*\n"
@@ -845,7 +847,7 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
             bool_keys = {"macd_enabled", "bb_enabled", "atr_enabled", "scan_market_only",
                          "cooldown_enabled", "regime_filter_enabled",
                          "position_sizing_enabled", "briefing_enabled", "mtf_enabled",
-                         "autotrade_enabled", "weekly_enabled"}
+                         "autotrade_enabled", "weekly_enabled", "plan_autocal_enabled"}
             float_keys = {"rsi_oversold", "rsi_overbought", "price_change_pct",
                           "vol_spike_ratio", "cooldown_hours",
                           "account_size", "risk_pct", "atr_mult", "briefing_hour_et",
@@ -1120,8 +1122,37 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
             if sub == "clear":
                 had = state.pop("plan_calib", None)
                 changed = bool(had)
-                reply = "🧹 已清除當日計畫校準（/today 回到原始規則）" if had \
+                reply = "🧹 已清除當日計畫校準與參數（/today 回到原始規則）" if had \
                         else "目前沒有已套用的校準"
+            elif sub == "opt":
+                wl = state["watchlist"][:8]
+                do_apply = len(args) >= 2 and args[1].lower() == "apply"
+                if not wl:
+                    reply = "觀察清單是空的——先 `/add AAPL NVDA`"
+                else:
+                    _tg_send(token, src_chat or chat_id,
+                             f"🔧 參數尋優（{len(wl)} 檔 × 27 組參數 × ~60 日，約 2-4 分鐘）…")
+                    try:
+                        # 長操作前先落盤 last_update_id：萬一 runner 超時被殺，
+                        # 這則指令不會每 15 分鐘被重新處理（毒訊息迴圈）
+                        save_state(state)
+                        import plan_backtest as pbt
+                        opt = pbt.optimize(wl)
+                        reply = pbt.opt_text(opt)
+                        if do_apply:
+                            rec = opt.get("recommend")
+                            if rec:
+                                cal_o = pbt.walk_forward_calibrate(rec["trades"])
+                                cal_o["as_of"] = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                                cal_o["params"] = rec["params"]
+                                state["plan_calib"] = cal_o
+                                changed = True
+                                reply += ("\n\n✅ 已套用推薦參數＋對應型態校準"
+                                          "（`/plantest clear` 還原）")
+                            else:
+                                reply += "\n\n（無明確勝過預設的組合，未套用任何變更）"
+                    except Exception as e:
+                        reply = f"❌ 尋優失敗：{e}"
             else:
                 wl = state["watchlist"][:12]
                 if not wl:
@@ -1130,6 +1161,7 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                     _tg_send(token, src_chat or chat_id,
                              f"📜 回測當日計畫（{len(wl)} 檔 × ~60 交易日，約 1-3 分鐘）…")
                     try:
+                        save_state(state)      # 防超時毒訊息迴圈（同 opt）
                         import plan_backtest as pbt
                         agg_, cal_, _tr = pbt.run(wl)
                         reply = pbt.stats_text(agg_, cal_, n_tickers=len(wl))
@@ -2263,6 +2295,61 @@ def _calibration_weights(state: dict) -> dict:
     return cal
 
 
+def maybe_plan_calibrate(state: dict, max_age_days: int = 7) -> str | None:
+    """
+    當日計畫的每週自動回測校準（/plantest 的自動版；`/set plan_autocal_enabled off` 關閉）。
+    節奏與 maybe_calibrate 相同（7 天）；只在校準「動作有變」時回傳通知文字。
+    手動 /plantest opt apply 的參數（params）會被保留。
+    """
+    th = state["thresholds"]
+    if not th.get("plan_autocal_enabled", True) or not state["watchlist"]:
+        return None
+    old = state.get("plan_calib") or {}
+    upd = old.get("_auto_checked") or old.get("as_of")
+    if upd:
+        try:
+            age = datetime.now(timezone.utc) - datetime.fromisoformat(upd).replace(
+                tzinfo=timezone.utc)
+            if age.days < max_age_days:
+                return None
+        except ValueError:
+            pass
+    now_s = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    try:
+        import plan_backtest as pbt
+        prm = old.get("params")                    # 尊重手動尋優參數
+        _agg2, cal_new, _tr2 = pbt.run(state["watchlist"][:12], params=prm)
+    except Exception as e:
+        print(f"plan auto-calibration failed: {e}")
+        return None
+    if not cal_new.get("setups"):
+        # 樣本不足：只蓋時間戳避免每 15 分重試，不動現有校準
+        state.setdefault("plan_calib", {})["_auto_checked"] = now_s
+        return None
+    cal_new["as_of"] = now_s
+    cal_new["_auto_checked"] = now_s
+    cal_new["auto"] = True
+    if prm:
+        cal_new["params"] = prm
+    changed_actions = []
+    for s_, c_ in cal_new["setups"].items():
+        o_ = (old.get("setups") or {}).get(s_, {"enabled": True, "conf_delta": 0})
+        if (c_["enabled"], c_["conf_delta"]) != (o_.get("enabled", True),
+                                                 o_.get("conf_delta", 0)):
+            if not c_["enabled"]:
+                changed_actions.append(f"{s_} → ⛔ 停用（{c_['why']}）")
+            elif c_["conf_delta"]:
+                changed_actions.append(f"{s_} → ⬇️ 信心-1（{c_['why']}）")
+            else:
+                changed_actions.append(f"{s_} → ✅ 恢復正常")
+    state["plan_calib"] = cal_new
+    if changed_actions:
+        return ("🔧 *當日計畫自動校準*（每週回測 60 日）\n" +
+                "\n".join(f"・{a}" for a in changed_actions) +
+                "\n`/plantest` 看完整報告｜`/set plan_autocal_enabled off` 關閉自動校準")
+    return None
+
+
 # ── 自動掃描循環（main 與 daemon 共用，確保兩邊行為一致）─────────────────────────
 
 def evaluate_price_alerts(alerts: list, prices: dict) -> tuple[list, list]:
@@ -2308,6 +2395,13 @@ def scan_and_report(state: dict, timestamp: str) -> tuple[str | None, list[dict]
     # 每週自動回測校準（自我優化迴圈）
     if maybe_calibrate(state):
         print("Calibration refreshed from backtest edges.")
+
+    # 當日計畫每週自動校準（有動作變更時併入通知）
+    plan_cal_note = None
+    try:
+        plan_cal_note = maybe_plan_calibrate(state)
+    except Exception as e:
+        print(f"plan autocal error: {e}")
 
     # 掃描（校準加權評分）
     results = scan(state["watchlist"], th, calibration=_calibration_weights(state))
@@ -2357,6 +2451,9 @@ def scan_and_report(state: dict, timestamp: str) -> tuple[str | None, list[dict]
             rfl.evaluate_pending(state, _alert_prices(sorted(pend)), today_s)
     except Exception as e:
         print(f"reflection error: {e}")
+
+    if plan_cal_note:
+        message = (message + "\n\n" + plan_cal_note) if message else plan_cal_note
     return message, results
 
 
