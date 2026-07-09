@@ -28,5 +28,15 @@
     "reason": "評分 +0.60 ≥ 買進門檻 0.5",
     "submitted": true,
     "error": null
+  },
+  {
+    "time": "2026-07-09T14:04:20Z",
+    "symbol": "VRT",
+    "side": "buy",
+    "qty": 27,
+    "score": 0.743,
+    "reason": "評分 +0.74 ≥ 買進門檻 0.5",
+    "submitted": true,
+    "error": null
   }
 ]
