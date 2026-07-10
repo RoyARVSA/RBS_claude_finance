@@ -48,5 +48,25 @@
     "reason": "評分 +0.53 ≥ 買進門檻 0.5",
     "submitted": true,
     "error": null
+  },
+  {
+    "time": "2026-07-10T15:51:13Z",
+    "symbol": "NVDA",
+    "side": "buy",
+    "qty": 72,
+    "score": 0.598,
+    "reason": "評分 +0.60 ≥ 買進門檻 0.5",
+    "submitted": true,
+    "error": null
+  },
+  {
+    "time": "2026-07-10T15:51:13Z",
+    "symbol": "SPY",
+    "side": "buy",
+    "qty": 20,
+    "score": 0.526,
+    "reason": "評分 +0.53 ≥ 買進門檻 0.5",
+    "submitted": true,
+    "error": null
   }
 ]
