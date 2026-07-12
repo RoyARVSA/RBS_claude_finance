@@ -16,7 +16,7 @@ Streamlit 網頁應用 + 獨立的訊號掃描 Bot（GitHub Actions 排程版 / 
 | 頁面 | 功能 |
 |------|------|
 | 💬 AI 助理 | **資深分析師模式＋🏛 機構決策委員會（分析師×4→多空對辯→交易員→硬風控→投資經理，與量化評分交叉比較；支援多檔同場會議、深度模式(研究主管+風控對辯)、新聞逐篇多空標注、會議紀錄下載、Telegram 推播）＋📊 決策計分板（量化 vs 委員會誰更準）＋單輪多空對辯＋反思記憶** |
-| 🏠 市場總覽 | 即時指數/板塊/宏觀指標、**總經數據(FRED)**、市場快訊、**AI 自主市場分析**、**🩺 資料源健康檢查（9 大數據源一鍵驗收）** |
+| 🏠 市場總覽 | 即時指數/板塊/宏觀指標、**總經數據(FRED)**、市場快訊、**AI 自主市場分析**、**🎭 雙恐懼貪婪指數（美股 CNN + 加密，雙極端警示）**、**🇹🇼 台指期籌碼（三大法人淨未平倉 + 選擇權 P/C 比，TAIFEX）**、**🩺 資料源健康檢查（9 大數據源一鍵驗收）** |
 | 📈 持倉分析 | 多資產組合：權益曲線、回撤、Sharpe、IR、Beta、**績效報告（CAGR/Sortino/Calmar/月報酬熱力圖/回撤期間）**、**交易帳本（成本基礎/TWR/XIRR/股息收入）**、**⚖️ 再平衡顧問（HRP/最大 Sharpe/風險平價 目標權重 → 具體加減碼股數清單）** |
 | ⚠️ 風險管理 | VaR/CVaR、蒙地卡羅、Kupiec 回測、壓力測試、**風險平價 + 效率前緣（MPT）+ HRP 階層風險平價** |
 | 🔍 股票研究 | K 線+RSI、AI 深度報告、市場篩選器、**訊號回測 + 參數最佳化（含參數熱力圖與 walk-forward 逐段檢視）**、TradingView、**選擇權情緒(Put/Call、IV 偏斜)** |
@@ -131,6 +131,8 @@ trade_plan.py           當日交易計畫：VWAP/ORB/RVOL 盤中訂單票 + Alp
 rebalance.py            持倉再平衡顧問：現有持倉 vs 目標權重 → 加減碼清單（免費）
 plan_backtest.py        當日計畫歷史回測：60 日 5 分 K 逐日重放 + walk-forward 校準（免費）
 valuation.py            DCF+Comps 估值：FCF/WACC/期中折現/敏感度 + 同業倍數（方法論：Anthropic financial-services）
+sentiment_fg.py         雙恐懼貪婪指數：美股 CNN（含鏡像備援）+ 加密 alternative.me（免費免金鑰）
+taifex.py               台指期籌碼：三大法人淨未平倉 + 選擇權 P/C 比（TAIFEX 免費公開資料）
 tw_flows.py             台股三大法人買賣超（TWSE T86 上市 + TPEX 上櫃，免 key）：外資/投信/自營 + 連買天數
 committee.py            機構決策委員會：角色提示/立場解析/硬風控閘門/量化交叉比較，支援多檔與深度模式（TradingAgents 式）
 alpaca_trader.py        Alpaca 紙上交易：下單決策(decide_orders) + REST client

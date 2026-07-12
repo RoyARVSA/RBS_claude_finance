@@ -2534,6 +2534,26 @@ def _cached_intraday(ticker: str, period: str, interval: str):
                        auto_adjust=True, progress=False)
 
 
+@st.cache_data(ttl=1800, show_spinner=False)
+def _cached_fear_greed():
+    """雙恐懼貪婪指數（快取 30 分）。"""
+    try:
+        import sentiment_fg as sfg
+        return sfg.fetch_all()
+    except Exception:
+        return None
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def _cached_taifex():
+    """台指期三大法人 + P/C 比（快取 30 分；盤後資料）。"""
+    try:
+        import taifex as tfx
+        return tfx.fetch_summary()
+    except Exception:
+        return None
+
+
 @st.cache_data(ttl=86400, show_spinner=False)
 def _cached_dividends(tickers: tuple):
     """各代碼的歷史股息序列（快取 1 天；帳本股息收入用）。"""
@@ -2686,6 +2706,67 @@ def page_market_overview():
         _fetch_market_snapshot.clear()
         _cached_market_rss.clear()
         st.rerun()
+
+    # ── 🎭 恐懼貪婪指數（傳統 + 加密雙儀表）──────────────────────────
+    fg = _cached_fear_greed()
+    if fg and (fg.get("cnn") or fg.get("crypto")):
+        import sentiment_fg as sfg
+        f1, f2, f3 = st.columns(3)
+        _c = fg.get("cnn")
+        with f1:
+            if _c:
+                _lbl, _emo = sfg.classify(_c["score"])
+                _d = (f"{_c['score'] - _c['week_ago']:+.0f} vs 週前"
+                      if _c.get("week_ago") is not None else "")
+                metric_card(f"{_emo} 美股恐懼貪婪", f"{_c['score']:.0f}｜{_lbl}", delta=_d)
+            else:
+                metric_card("美股恐懼貪婪", "—")
+        _cr = fg.get("crypto")
+        with f2:
+            if _cr:
+                _lbl2, _emo2 = sfg.classify(_cr["score"])
+                _d2 = (f"{_cr['score'] - _cr['week_ago']:+.0f} vs 週前"
+                       if _cr.get("week_ago") is not None else "")
+                metric_card(f"{_emo2} 加密恐懼貪婪", f"{_cr['score']:.0f}｜{_lbl2}", delta=_d2)
+            else:
+                metric_card("加密恐懼貪婪", "—")
+        _sig = sfg.dual_signal(_c["score"] if _c else None, _cr["score"] if _cr else None)
+        with f3:
+            if _sig["note"]:
+                st.warning(f"⚡ {_sig['note']}")
+            else:
+                st.caption("情緒為反向參考指標之一；雙雙極端時才有訊號意義。非投資建議。")
+
+    # ── 🇹🇼 台指期籌碼（三大法人 + P/C 比，TAIFEX 免費公開資料）─────────
+    with st.expander("🇹🇼 台指期籌碼（外資期貨淨部位 + 選擇權 P/C 比）", expanded=False):
+        _tfx = _cached_taifex()
+        if _tfx and _tfx[0]:
+            _summ, _pcs = _tfx
+            tf1, tf2, tf3 = st.columns(3)
+            for _col_st, _ident in ((tf1, "外資"), (tf2, "投信"), (tf3, "自營商")):
+                _d3 = _summ.get(_ident)
+                with _col_st:
+                    if _d3:
+                        _dd = (f"5日 {_d3['chg_5d']:+,}" if _d3.get("chg_5d") is not None else "")
+                        metric_card(f"{_ident} 台指期淨未平倉",
+                                    f"{_d3['net_oi']:+,} 口", delta=_dd,
+                                    positive=_d3["net_oi"] > 0)
+                    else:
+                        metric_card(f"{_ident} 台指期淨未平倉", "—")
+            if _pcs:
+                _pcdf = pd.DataFrame(_pcs)
+                if "oi_ratio" in _pcdf.columns and _pcdf["oi_ratio"].notna().any():
+                    _figpc = go.Figure(go.Scatter(x=_pcdf["date"], y=_pcdf["oi_ratio"],
+                                                  mode="lines+markers",
+                                                  line=dict(color="#FB8C00")))
+                    _figpc.add_hline(y=100, line_dash="dot", line_color="gray")
+                    _figpc.update_layout(**PLOTLY_LAYOUT, height=240,
+                                         title="選擇權 P/C 未平倉比（%）：<90 偏空避險重、>110 偏多")
+                    st.plotly_chart(_figpc, use_container_width=True)
+            st.caption(f"資料日期 {next(iter(_summ.values()))['as_of']} · 來源 TAIFEX（每日盤後）· "
+                       "與公司分析頁的現貨三大法人對照：現貨買+期貨空=避險，同買才是真看多。非投資建議。")
+        else:
+            st.info("台指期資料暫無法取得（假日、盤後未更新或網路受限）。")
 
     # ── 🩺 資料源健康檢查（驗收/除錯用）─────────────────────────────
     with st.expander("🩺 資料源健康檢查（一鍵 ping 全部資料源，約 30 秒）", expanded=False):

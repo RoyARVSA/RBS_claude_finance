@@ -64,6 +64,7 @@
 | 風控 | `/risk [帳戶 風險%]`、`/protections`、`/calibrate` |
 | 模擬交易 | `/autotrade on\|off`、`/positions`、`/pnl`、`/journal [N]`、`/rebalance [hrp\|max_sharpe\|min_vol\|erc\|equal]`（持倉再平衡顧問）、`/closeall` |
 | 估值 | `/dcf AAPL [成長%]` — DCF 內在價值（FCF→WACC→期中折現→終值→隱含股價；可覆蓋成長率假設） |
+| 情緒/籌碼 | `/fg`（雙恐懼貪婪：美股 CNN+加密，晨報自動附一行）、`/taifex`（台指期三大法人淨未平倉 + 選擇權 P/C 比） |
 
 > `/options`、`/insider` 僅美股；選擇權走 yfinance、內部人走 SEC EDGAR，皆免 key。
 

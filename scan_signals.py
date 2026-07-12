@@ -33,6 +33,8 @@ Telegram 指令（傳給 Bot）：
   /journal [N]            – 交易日誌（每筆自動交易的評分與原因）
   /rebalance [配置法]     – 再平衡顧問：Alpaca 持倉 vs HRP/Sharpe/風險平價 → 加減碼清單
   /dcf TICKER [成長%]     – DCF 內在價值估值（FCF/WACC/終值/隱含股價；投行標準流程）
+  /fg                     – 雙恐懼貪婪指數（美股 CNN + 加密；晨報亦自動附一行）
+  /taifex                 – 台指期籌碼：三大法人淨未平倉 + 選擇權 P/C 比（TAIFEX）
   /briefing               – 立即生成每日 AI 晨報（每交易日 ET 08:30 自動推送）
   /today [帳戶 風險%]     – 當日交易計畫：VWAP/ORB/RVOL 訂單票（別名 /plan）
   /plantest [apply|clear] – 當日計畫 60 日歷史回測；apply 套用校準（每週亦自動跑）
@@ -302,6 +304,7 @@ def _cmd_help() -> str:
         "`/journal [N]` — 交易日誌（含評分/原因）\n"
         "`/rebalance [hrp|max_sharpe|min_vol|erc|equal]` — 再平衡顧問（持倉 vs 目標權重 → 加減碼清單）\n"
         "`/dcf AAPL [成長%]` — DCF 內在價值估值（FCF→WACC→終值→隱含股價）\n"
+        "`/fg` — 雙恐懼貪婪指數（美股+加密）；`/taifex` — 台指期三大法人籌碼\n"
         "`/closeall` — 一鍵平倉\n"
         "`/scan` — 立即掃描（忽略靜音/冷卻）\n"
         "`/calibrate` — 回測校準訊號權重（自我優化）\n\n"
@@ -1181,6 +1184,23 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                     except Exception as e:
                         reply = f"❌ 回測失敗：{e}"
 
+        elif cmd == "/fg":
+            try:
+                import sentiment_fg as sfg
+                _fga = sfg.fetch_all()
+                reply = sfg.fg_text(_fga.get("cnn"), _fga.get("crypto"))
+            except Exception as _e:
+                reply = f"❌ 恐懼貪婪指數抓取失敗：{_e}"
+
+        elif cmd == "/taifex":
+            _tg_send(token, src_chat or chat_id, "🇹🇼 抓取台指期籌碼（約 10-20 秒）…")
+            try:
+                import taifex as tfx
+                _summ, _pcs = tfx.fetch_summary()
+                reply = tfx.taifex_text(_summ, _pcs)
+            except Exception as _e:
+                reply = f"❌ 台指期資料抓取失敗：{_e}"
+
         elif cmd == "/dcf":
             if not args:
                 reply = "用法：`/dcf AAPL [成長%]`——DCF 內在價值估值（可選覆蓋營收成長率）"
@@ -2054,6 +2074,16 @@ def daily_briefing(state: dict, force: bool = False) -> str | None:
         if s_ref:
             lines.append("")
             lines.append(f"🪞 {s_ref}")
+    except Exception:
+        pass
+
+    # 恐懼貪婪指數一行（雙極端時多一行警示）
+    try:
+        import sentiment_fg as _sfg
+        _fga = _sfg.fetch_all()
+        if _fga.get("cnn") or _fga.get("crypto"):
+            lines.append("")
+            lines.append(_sfg.fg_text(_fga.get("cnn"), _fga.get("crypto"), compact=True))
     except Exception:
         pass
 
