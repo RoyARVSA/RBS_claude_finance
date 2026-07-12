@@ -32,6 +32,7 @@ Telegram 指令（傳給 Bot）：
   /positions /pnl /closeall – 模擬持倉 / 帳戶報酬 / 一鍵平倉
   /journal [N]            – 交易日誌（每筆自動交易的評分與原因）
   /rebalance [配置法]     – 再平衡顧問：Alpaca 持倉 vs HRP/Sharpe/風險平價 → 加減碼清單
+  /dcf TICKER [成長%]     – DCF 內在價值估值（FCF/WACC/終值/隱含股價；投行標準流程）
   /briefing               – 立即生成每日 AI 晨報（每交易日 ET 08:30 自動推送）
   /today [帳戶 風險%]     – 當日交易計畫：VWAP/ORB/RVOL 訂單票（別名 /plan）
   /plantest [apply|clear] – 當日計畫 60 日歷史回測；apply 套用校準（每週亦自動跑）
@@ -300,6 +301,7 @@ def _cmd_help() -> str:
         "`/pnl` — 帳戶淨值 + 報酬\n"
         "`/journal [N]` — 交易日誌（含評分/原因）\n"
         "`/rebalance [hrp|max_sharpe|min_vol|erc|equal]` — 再平衡顧問（持倉 vs 目標權重 → 加減碼清單）\n"
+        "`/dcf AAPL [成長%]` — DCF 內在價值估值（FCF→WACC→終值→隱含股價）\n"
         "`/closeall` — 一鍵平倉\n"
         "`/scan` — 立即掃描（忽略靜音/冷卻）\n"
         "`/calibrate` — 回測校準訊號權重（自我優化）\n\n"
@@ -1178,6 +1180,31 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                             reply += "\n\n（僅報告；`/plantest apply` 套用、`/plantest clear` 還原）"
                     except Exception as e:
                         reply = f"❌ 回測失敗：{e}"
+
+        elif cmd == "/dcf":
+            if not args:
+                reply = "用法：`/dcf AAPL [成長%]`——DCF 內在價值估值（可選覆蓋營收成長率）"
+            else:
+                _vt = args[0].upper()
+                _ovr = None
+                if len(args) >= 2:
+                    try:
+                        _ovr = {"rev_growth": float(args[1].replace("%", "")) / 100.0}
+                    except ValueError:
+                        pass
+                _tg_send(token, src_chat or chat_id, f"💰 為 {_vt} 建 DCF 模型（約 20-40 秒）…")
+                try:
+                    import valuation as vl
+                    _res = vl.run_dcf(_vt, overrides=_ovr)
+                    if not _res:
+                        reply = f"❌ 抓不到 {_vt} 的財務數據（ETF/金融股/新上市常見）"
+                    else:
+                        _a, _wd, _val, _ = _res
+                        reply = vl.dcf_text(_vt, _a, _wd, _val, _a.get("price"))
+                except ValueError as _ve:
+                    reply = f"❌ {_ve}"
+                except Exception as _e:
+                    reply = f"❌ DCF 失敗：{_e}"
 
         elif cmd == "/rebalance":
             key, secret = _alpaca_keys()

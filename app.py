@@ -4859,6 +4859,134 @@ def page_company_analysis():
                        f"解析 {ins.get('n_filings', 0)} 份 Form 4　·　資料來源 SEC EDGAR。"
                        "內部人交易屬輔助訊號，需搭配基本面與趨勢，非投資建議。")
 
+    # ⑦½ 內在價值估值：DCF + 可比公司（方法論：Anthropic financial-services skills）─
+    section("內在價值估值（DCF + Comps）")
+    st.caption("照投行標準流程：FCF 五步驟 → CAPM/WACC → 期中折現 → 永續成長終值 → "
+               "股權橋 → WACC×成長敏感度表；可比公司用同業中位數倍數回推。"
+               "**DCF 對假設極度敏感——把它當思考框架，不是答案。非投資建議。**")
+    with st.expander("💰 DCF 估值", expanded=False):
+        import valuation as vlm
+        if st.button("📥 抓取財務數據並建模", key="val_go"):
+            with st.spinner(f"抓取 {data['ticker']} 三表數據…"):
+                _va = vlm.fetch_dcf_inputs(data["ticker"])
+                if _va:
+                    st.session_state["val_a"] = _va
+                    st.session_state["val_tkr"] = data["ticker"]
+                else:
+                    st.error("抓不到足夠的財務數據（ETF/金融股/新上市公司常見）")
+        _va = st.session_state.get("val_a")
+        if _va and st.session_state.get("val_tkr") == data["ticker"]:
+            vc1, vc2, vc3, vc4 = st.columns(4)
+            with vc1:
+                _g = st.number_input("營收成長 %/年", -10.0, 40.0,
+                                     float(_va["rev_growth"] * 100), 0.5, key="val_g")
+            with vc2:
+                _m = st.number_input("EBIT 利潤率 %", 1.0, 60.0,
+                                     float(_va["ebit_margin"] * 100), 0.5, key="val_m")
+            with vc3:
+                _tg2 = st.number_input("終端成長 %", 0.0, 5.0,
+                                       float(_va["terminal_growth"] * 100), 0.25, key="val_tg")
+            with vc4:
+                _yrs = st.selectbox("預測年數", [5, 7, 10], index=0, key="val_yrs")
+            try:
+                _rows = vlm.project_fcf(_va["base_revenue"], _g / 100, _m / 100,
+                                        _va["tax_rate"], _va["da_pct"], _va["capex_pct"],
+                                        _va["nwc_pct"], int(_yrs))
+                _wd = vlm.calc_wacc(_va["rf"], _va["beta"], _va["mkt_cap"],
+                                    _va["total_debt"], _va["cash"], _va["erp"],
+                                    tax_rate=_va["tax_rate"])
+                _val = vlm.dcf_value([r["fcf"] for r in _rows], _wd["wacc"],
+                                     _tg2 / 100, _wd["net_debt"], _va["shares"])
+                m1, m2, m3, m4 = st.columns(4)
+                with m1: metric_card("WACC", f"{_wd['wacc']:.1%}")
+                with m2: metric_card("企業價值", f"${_val['ev'] / 1e9:,.1f}B")
+                with m3: metric_card("隱含股價",
+                                     f"${_val['per_share']:,.2f}" if _val["per_share"] else "—")
+                _px = _va.get("price") or 0
+                _up = (_val["per_share"] / _px - 1) if (_val["per_share"] and _px > 0) else None
+                with m4: metric_card("隱含空間", f"{_up:+.0%}" if _up is not None else "—",
+                                     positive=bool(_up and _up > 0))
+                for _wmsg in _val["warnings"]:
+                    st.warning(_wmsg)
+                _beta_eff = _va["beta"] if _va["beta"] and _va["beta"] > 0 else 1.0
+                _tvs = (f"{_val['tv_pct']:.0%}" if _val["tv_pct"] is not None else "—（EV≤0）")
+                st.caption(f"β {_beta_eff:.2f} · 無風險利率 {_va['rf']:.2%}（^TNX）· "
+                           f"ERP {_va['erp']:.1%} · 稅率 {_va['tax_rate']:.0%} · "
+                           f"CapEx {_va['capex_pct']:.1%}、D&A {_va['da_pct']:.1%}（占營收）· "
+                           f"終值占 EV {_tvs}（健康區間 50-70%）")
+                st.dataframe(pd.DataFrame([{
+                    "年": r["year"], "營收": f"{r['revenue'] / 1e9:,.1f}B",
+                    "EBIT": f"{r['ebit'] / 1e9:,.2f}B", "NOPAT": f"{r['nopat'] / 1e9:,.2f}B",
+                    "FCF": f"{r['fcf'] / 1e9:,.2f}B"} for r in _rows]),
+                    use_container_width=True, hide_index=True)
+                # 敏感度表：WACC ±2% × 終端成長 ±1%
+                _ws = [round(_wd["wacc"] + d, 4) for d in (-0.02, -0.01, 0, 0.01, 0.02)]
+                _gs = [round(_tg2 / 100 + d, 4) for d in (-0.01, -0.005, 0, 0.005, 0.01)]
+                _gs = [g_ for g_ in _gs if g_ >= 0]
+                _grid = vlm.sensitivity_grid([r["fcf"] for r in _rows], _wd["net_debt"],
+                                             _va["shares"], _ws, _gs)
+                _hm = go.Figure(go.Heatmap(
+                    z=[[(v if v is not None else float("nan")) for v in row] for row in _grid],
+                    x=[f"g {g_:.1%}" for g_ in _gs], y=[f"WACC {w_:.1%}" for w_ in _ws],
+                    colorscale="RdYlGn", texttemplate="%{z:.0f}",
+                    colorbar=dict(title="每股")))
+                _hm.update_layout(**PLOTLY_LAYOUT, height=300,
+                                  title="敏感度：每股價值 vs WACC × 終端成長")
+                st.plotly_chart(_hm, use_container_width=True)
+                st.download_button("⬇️ 下載 DCF 摘要",
+                                   vlm.dcf_text(data["ticker"],
+                                                {**_va, "rev_growth": _g / 100,
+                                                 "ebit_margin": _m / 100,
+                                                 "terminal_growth": _tg2 / 100,
+                                                 "years": int(_yrs)},
+                                                _wd, _val, _px or None),
+                                   file_name=f"dcf_{data['ticker']}.txt", key="val_dl")
+            except ValueError as _ve:
+                st.error(str(_ve))
+
+    with st.expander("📊 可比公司分析（Comps）", expanded=False):
+        import valuation as vlm2
+        _peers_in = st.text_input("同業代碼（逗號分隔，至少 2 檔）",
+                                  placeholder="例：MSFT, GOOGL, META", key="val_peers")
+        if st.button("比較同業倍數", key="val_comps_go", disabled=not _peers_in.strip()):
+            _pl = [p.strip().upper() for p in _peers_in.split(",") if p.strip()]
+            with st.spinner(f"抓取 {len(_pl)} 檔同業數據…"):
+                _ct = vlm2.fetch_comps(data["ticker"], _pl)
+                if _ct:
+                    st.session_state["val_comps"] = _ct
+                    st.session_state["val_comps_tkr"] = data["ticker"]
+                else:
+                    st.error("同業數據不足（需 ≥2 檔有市值數據）")
+        _ct = st.session_state.get("val_comps")
+        if _ct and st.session_state.get("val_comps_tkr") == data["ticker"]:
+            _crows = []
+            for r in [_ct["target"]] + _ct["rows"]:
+                _crows.append({"代碼": r["ticker"],
+                               "EV/營收": f"{r['ev_rev']:.1f}x" if r["ev_rev"] else "—",
+                               "EV/EBITDA": f"{r['ev_ebitda']:.1f}x" if r["ev_ebitda"] else "—",
+                               "P/E": f"{r['pe']:.1f}x" if r["pe"] else "—"})
+            st.dataframe(pd.DataFrame(_crows), use_container_width=True, hide_index=True)
+            for k, lbl in (("ev_rev", "EV/營收"), ("ev_ebitda", "EV/EBITDA"), ("pe", "P/E")):
+                s_ = _ct["stats"].get(k)
+                if s_:
+                    st.caption(f"{lbl}：min {s_['min']:.1f}x｜P25 {s_['p25']:.1f}x｜"
+                               f"**中位 {s_['median']:.1f}x**｜P75 {s_['p75']:.1f}x｜"
+                               f"max {s_['max']:.1f}x（n={s_['n']}）")
+            if _ct["implied"]:
+                _tr = _ct.get("target_raw") or {}
+                _sh = _tr.get("shares") or 0
+                _px2 = _tr.get("price") or 0
+                _lines = []
+                for k, lbl in (("ev_rev", "EV/營收"), ("ev_ebitda", "EV/EBITDA"), ("pe", "P/E")):
+                    if k in _ct["implied"]["by_multiple"] and _sh:
+                        _ps = _ct["implied"]["by_multiple"][k] / _sh
+                        _d = f"（vs 現價 {(_ps / _px2 - 1):+.0%}）" if _px2 else ""
+                        _lines.append(f"- 以同業中位 {lbl} 回推：**${_ps:,.2f}**{_d}")
+                if _lines:
+                    st.markdown("**隱含每股價值（同業中位數倍數）**\n" + "\n".join(_lines))
+            st.caption("同業選擇決定結論——選相似規模/商業模式的公司；虧損公司自動排除於 P/E。"
+                       "非投資建議。")
+
     # ⑧ 一鍵完整研究報告（組裝本頁已載入的全部區塊 + 回測/量化，純組裝零 LLM 成本）─
     section("完整研究報告")
     st.caption("把本頁的基本面/分析師/籌碼/內部人 + 技術回測 + 委員會裁決（若剛開過會）"
