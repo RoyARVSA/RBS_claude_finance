@@ -33,6 +33,8 @@ Telegram 指令（傳給 Bot）：
   /journal [N]            – 交易日誌（每筆自動交易的評分與原因）
   /rebalance [配置法]     – 再平衡顧問：Alpaca 持倉 vs HRP/Sharpe/風險平價 → 加減碼清單
   /dcf TICKER [成長%]     – DCF 內在價值估值（FCF/WACC/終值/隱含股價；投行標準流程）
+  /thesis [TICKER ...]    – 投資論點追蹤：論點/支柱/風險/失效價（自動監測失效與達標）
+  /preview TICKER         – 財報前瞻（共識/beat率/隱含波動/三情境）或覆盤（自動判定）
   /fg                     – 雙恐懼貪婪指數（美股 CNN + 加密；晨報亦自動附一行）
   /taifex                 – 台指期籌碼：三大法人淨未平倉 + 選擇權 P/C 比（TAIFEX）
   /briefing               – 立即生成每日 AI 晨報（每交易日 ET 08:30 自動推送）
@@ -305,6 +307,8 @@ def _cmd_help() -> str:
         "`/rebalance [hrp|max_sharpe|min_vol|erc|equal]` — 再平衡顧問（持倉 vs 目標權重 → 加減碼清單）\n"
         "`/dcf AAPL [成長%]` — DCF 內在價值估值（FCF→WACC→終值→隱含股價）\n"
         "`/fg` — 雙恐懼貪婪指數（美股+加密）；`/taifex` — 台指期三大法人籌碼\n"
+        "`/thesis` — 投資論點追蹤（失效價自動監測；`/thesis help` 看用法）\n"
+        "`/preview NVDA` — 財報前瞻/覆盤（共識、beat 率、隱含波動、三情境）\n"
         "`/closeall` — 一鍵平倉\n"
         "`/scan` — 立即掃描（忽略靜音/冷卻）\n"
         "`/calibrate` — 回測校準訊號權重（自我優化）\n\n"
@@ -1184,6 +1188,55 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                     except Exception as e:
                         reply = f"❌ 回測失敗：{e}"
 
+        elif cmd == "/thesis":
+            import thesis as ths_m
+            if not args:
+                reply = ths_m.theses_list_text(state)
+            elif args[0].lower() == "help":
+                reply = ths_m.HELP_TEXT
+            else:
+                _ttk = args[0].upper()
+                if len(args) == 1:
+                    _th = state.get("theses", {}).get(_ttk)
+                    reply = (ths_m.thesis_text(_ttk, _th) if _th
+                             else f"{_ttk} 尚無論點。\n\n" + ths_m.HELP_TEXT)
+                else:
+                    _sub, _rest = args[1], " ".join(args[2:])
+                    _ok = False
+                    if _sub in ("多", "空"):
+                        _ok, reply = ths_m.set_thesis(state, _ttk, _sub, _rest)
+                    elif _sub.lower() in ("pillar", "risk", "cat"):
+                        _ok, reply = ths_m.add_item(state, _ttk, _sub.lower(), _rest)
+                    elif _sub.lower() in ("target", "stop"):
+                        try:
+                            _ok, reply = ths_m.set_level(state, _ttk, _sub.lower(),
+                                                         float(args[2].replace(",", "")))
+                        except (IndexError, ValueError):
+                            reply = f"用法：`/thesis {_ttk} {_sub.lower()} 價位`"
+                    elif _sub.lower() == "conv":
+                        _ok, reply = ths_m.set_conviction(state, _ttk, _rest.strip())
+                    elif _sub.lower() == "note":
+                        _ok, reply = ths_m.log_note(state, _ttk, _rest)
+                    elif _sub.lower() == "close":
+                        _ok, reply = ths_m.close_thesis(state, _ttk, _rest)
+                    else:
+                        reply = ths_m.HELP_TEXT
+                    changed = changed or _ok
+
+        elif cmd == "/preview":
+            if not args:
+                reply = "用法：`/preview NVDA`——財報前瞻（3 週內）或覆盤（公布後 2 週內）自動判定"
+            else:
+                _ptk = args[0].upper()
+                _tg_send(token, src_chat or chat_id, f"🔭 整理 {_ptk} 財報前瞻/覆盤（約 20-40 秒）…")
+                try:
+                    import earnings_review as er
+                    _res = er.run(_ptk)
+                    reply = (er.full_text(*_res) if _res
+                             else f"❌ 查無 {_ptk} 財報資料（ETF/新上市常見）")
+                except Exception as _e:
+                    reply = f"❌ 前瞻失敗：{_e}"
+
         elif cmd == "/fg":
             try:
                 import sentiment_fg as sfg
@@ -2002,13 +2055,68 @@ def daily_briefing(state: dict, force: bool = False) -> str | None:
     bottom = [r for r in ranked if r.get("score", 0) < -0.1][-3:]
     flagged = [r for r in results if r.get("signals")]
 
-    # 結構化數據（給 AI 與純數據版共用）
-    lines = [f"☀️ *RBS 每日晨報* — {date_str}"]
+    # ── 先取齊各數據塊（Top Call 判定與各節共用；全部防呆）──────────────
+    _sfg = None
+    fg_all: dict = {}
+    try:
+        import sentiment_fg as _sfg
+        fg_all = _sfg.fetch_all()
+    except Exception:
+        fg_all = {}
+    earn = []
+    try:
+        earn = _upcoming_earnings(state)
+    except Exception:
+        pass
+    dual_note = None
+    if _sfg and fg_all.get("cnn") and fg_all.get("crypto"):
+        try:
+            dual_note = _sfg.dual_signal(fg_all["cnn"]["score"],
+                                         fg_all["crypto"]["score"]).get("note")
+        except Exception:
+            pass
+
+    # ── Top Call（morning-note：別把頭條埋起來——今天最重要的一件事）──────
+    today_earn = [tk for tk, _ed, d in earn if d == 0]
+    tomorrow_earn = [tk for tk, _ed, d in earn if d == 1]
+    top_call = None
+    if today_earn:
+        top_call = (f"今天財報：{'、'.join(today_earn[:3])}"
+                    f"——先看 `/preview {today_earn[0]}` 的共識與隱含波動")
+    elif dual_note:
+        top_call = dual_note
+    elif regime and regime.get("regime") == "risk_off":
+        top_call = "大盤跌破 MA50 轉偏空——濾網收緊，新倉縮手、檢查停損"
+    elif flagged:
+        _fstar = max(flagged, key=lambda r: abs(r.get("score", 0)))
+        top_call = (f"{len(flagged)} 檔觸發訊號，最強 {_fstar['ticker']}"
+                    f"（{_fstar.get('score', 0):+.2f}）——詳見後續掃描")
+    elif tomorrow_earn:
+        top_call = f"明天財報：{'、'.join(tomorrow_earn[:3])}——今天先做功課 `/preview`"
+
+    lines = [f"☀️ *RBS 每日晨報* — {date_str}",
+             f"_產出於 ET {now_et.strftime('%H:%M')}，盤前變數以開盤為準_"]
+    lines.append("")
+    if top_call:
+        lines.append(f"🎯 *今日重點*：{top_call}")
+    else:
+        # morning-note：「無重大事件」也是合法晨報——說清楚而不是硬擠內容
+        lines.append("🎯 *今日重點*：隔夜無重大事件——維持既有部署即可")
+
+    # ── 🌙 隔夜與盤前 ─────────────────────────────────────────────────
+    lines.append("")
+    lines.append("🌙 *隔夜與盤前*")
     if regime:
         lines.append(f"{regime['emoji']} 大盤風險：{regime['label']}")
     if indices:
         idx_str = "　".join(f"{n} {c:+.2%}" for n, (p, c) in indices.items())
         lines.append(f"📈 {idx_str}")
+    if _sfg and (fg_all.get("cnn") or fg_all.get("crypto")):
+        try:
+            lines.append(_sfg.fg_text(fg_all.get("cnn"), fg_all.get("crypto"),
+                                      compact=True))
+        except Exception:
+            pass
     lines.append("")
 
     # AI 解讀（可選；force=手動 /briefing 即使關閉也產生）
@@ -2037,20 +2145,42 @@ def daily_briefing(state: dict, force: bool = False) -> str | None:
             lines.append(ai.strip())
             lines.append("")
 
-    # 排名（純數據，永遠附上）
+    # ── 📌 今日焦點（可行動事件：財報 / 總經 / 觸發訊號）───────────────
+    focus: list[str] = []
+    if earn:
+        for tk, ed, days in earn:
+            when = "⭐ 今天" if days == 0 else ("明天" if days == 1 else f"{days} 天後")
+            focus.append(f"   • {tk} 財報 — {ed.isoformat()}（{when}）")
+    try:
+        _fred_k = os.environ.get("FRED_API_KEY", "")
+        if _fred_k:
+            import macro as _mc
+            _rel = _mc.fetch_release_calendar(_fred_k, days_ahead=7)
+            if _rel:
+                focus.append("   • 本週總經：" + "、".join(f"{n}({d[5:]})" for d, n in _rel[:5]))
+    except Exception:
+        pass
+    if flagged:
+        focus.append(f"   • 🚨 {len(flagged)} 檔觸發技術訊號（詳見後續掃描）")
+    if focus:
+        lines.append("📌 *今日焦點*")
+        lines.extend(focus)
+        lines.append("")
+
+    # ── 🏆 觀察清單強弱（純數據，永遠附上）─────────────────────────────
     if top:
         lines.append("🏆 *觀察清單最強 Top 5*")
         for r in top:
             lines.append(f"   {r.get('emoji','')} {r['ticker']}  {r['score']:+.2f} ({r.get('rating','')})")
-        lines.append("")
     if bottom:
         lines.append("⚠️ *最弱*")
         for r in reversed(bottom):
             lines.append(f"   {r.get('emoji','')} {r['ticker']}  {r['score']:+.2f} ({r.get('rating','')})")
+    if top or bottom:
         lines.append("")
-    if flagged:
-        lines.append(f"🚨 今日 {len(flagged)} 檔觸發訊號（詳見後續掃描）")
 
+    # ── 🧭 持倉與紀律（內部人籌碼 / 論點複查 / 自我反思）────────────────
+    discipline: list[str] = []
     # 內部人交易亮點：只查「最強且偏多的美股」1 檔（每日 1 次呼叫、全程防呆）
     try:
         cand = next((r for r in top
@@ -2061,55 +2191,31 @@ def daily_briefing(state: dict, force: bool = False) -> str | None:
             if ins and ins.get("n_buys") and (ins.get("cluster_buy")
                                               or (ins.get("net_value") or 0) > 0):
                 net = ins.get("net_value")
-                lines.append("")
-                lines.append(f"🕵️ *內部人*：{cand['ticker']} {ins.get('label','')}"
-                             + (f"（淨 {_si._money(net)}）" if net else ""))
+                discipline.append(f"🕵️ 內部人：{cand['ticker']} {ins.get('label','')}"
+                                  + (f"（淨 {_si._money(net)}）" if net else ""))
     except Exception:
         pass
-
-    # AI 判斷回顧（反思記憶）
+    # 論點季度複查提醒（thesis-tracker：至少每季複查，即使風平浪靜）
+    try:
+        import thesis as ths_m
+        _stale = ths_m.stale_theses(state)
+        if _stale:
+            discipline.append(f"📖 論點逾 90 天未複查：{'、'.join(_stale[:5])}"
+                              f"——`/thesis {_stale[0]}` 檢視支柱是否仍成立")
+    except Exception:
+        pass
+    # AI 判斷回顧（反思記憶——morning-note：「錯了就在下一篇晨報認錯」）
     try:
         import reflection as rfl
         s_ref = rfl.summary_text(state)
         if s_ref:
-            lines.append("")
-            lines.append(f"🪞 {s_ref}")
+            discipline.append(f"🪞 {s_ref}")
     except Exception:
         pass
-
-    # 恐懼貪婪指數一行（雙極端時多一行警示）
-    try:
-        import sentiment_fg as _sfg
-        _fga = _sfg.fetch_all()
-        if _fga.get("cnn") or _fga.get("crypto"):
-            lines.append("")
-            lines.append(_sfg.fg_text(_fga.get("cnn"), _fga.get("crypto"), compact=True))
-    except Exception:
-        pass
-
-    # 本週重要總經數據發布日（FRED 行事曆；CPI/非農/GDP/PCE…）
-    try:
-        _fred_k = os.environ.get("FRED_API_KEY", "")
-        if _fred_k:
-            import macro as _mc
-            _rel = _mc.fetch_release_calendar(_fred_k, days_ahead=7)
-            if _rel:
-                lines.append("")
-                lines.append("🗓 *本週總經*：" + "、".join(f"{n}({d[5:]})" for d, n in _rel[:5]))
-    except Exception:
-        pass
-
-    # 近期財報提醒
-    try:
-        earn = _upcoming_earnings(state)
-        if earn:
-            lines.append("")
-            lines.append("📅 *近期財報*")
-            for tk, ed, days in earn:
-                when = "今天" if days == 0 else ("明天" if days == 1 else f"{days} 天後")
-                lines.append(f"   • {tk} — {ed.isoformat()}（{when}）")
-    except Exception:
-        pass
+    if discipline:
+        lines.append("🧭 *持倉與紀律*")
+        lines.extend(discipline)
+        lines.append("")
 
     if not state["watchlist"]:
         lines.append("_觀察清單為空，用 /add 新增標的_")
@@ -2508,6 +2614,20 @@ def scan_and_report(state: dict, timestamp: str) -> tuple[str | None, list[dict]
             rfl.evaluate_pending(state, _alert_prices(sorted(pend)), today_s)
     except Exception as e:
         print(f"reflection error: {e}")
+
+    # 論點失效/達標監測（thesis-tracker：失效價由機器盯，不靠記憶）
+    try:
+        import thesis as ths_m
+        _tt = [t for t, v in state.get("theses", {}).items()
+               if v.get("status") in ("active", "damaged")
+               and (v.get("stop") or v.get("target"))]
+        if _tt:
+            _tmsgs = ths_m.check_triggers(state, _alert_prices(_tt))
+            if _tmsgs:
+                _blk = "\n\n".join(_tmsgs)
+                message = (message + "\n\n" + _blk) if message else _blk
+    except Exception as e:
+        print(f"thesis trigger error: {e}")
 
     if plan_cal_note:
         message = (message + "\n\n" + plan_cal_note) if message else plan_cal_note

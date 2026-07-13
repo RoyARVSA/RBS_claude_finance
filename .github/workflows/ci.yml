@@ -43,7 +43,8 @@ jobs:
                    assistant assistant_tools options_sentiment sec_insider perf_report \
                    portfolio_opt analyst_data short_data whales_13f ledger reflection \
                    tw_flows committee alpaca_trader stock_db trade_plan rebalance \
-                   plan_backtest valuation sentiment_fg taifex; do
+                   plan_backtest valuation sentiment_fg taifex thesis \
+                   earnings_review; do
             echo "── $m ──"
             python3 "$m.py"
           done

@@ -5025,6 +5025,28 @@ def page_company_analysis():
             except ValueError as _ve:
                 st.error(str(_ve))
 
+    with st.expander("🔭 財報前瞻 / 覆盤", expanded=False):
+        st.caption("財報前 3 週：共識、beat 率、選擇權隱含波動、三情境框架；"
+                   "公布後 2 週：beat/miss、隔日反應、評等動向。模式自動判定。")
+        if st.button("🔭 產生前瞻/覆盤", key="er_go"):
+            with st.spinner(f"整理 {data['ticker']} 財報數據（20-40 秒）…"):
+                try:
+                    import earnings_review as _er
+                    _err = _er.run(data["ticker"])
+                    if _err:
+                        st.session_state["er_res"] = _err
+                        st.session_state["er_tkr"] = data["ticker"]
+                    else:
+                        st.error("查無財報資料（ETF/新上市常見）")
+                except Exception as _ee:
+                    st.error(f"失敗：{_ee}")
+        if st.session_state.get("er_res") and st.session_state.get("er_tkr") == data["ticker"]:
+            import earnings_review as _er2
+            _md, _dd = st.session_state["er_res"]
+            st.markdown(_er2.full_text(_md, _dd).replace("*", "**"))
+            st.download_button("⬇️ 下載", _er2.full_text(_md, _dd),
+                               file_name=f"earnings_{data['ticker']}.txt", key="er_dl")
+
     with st.expander("📊 可比公司分析（Comps）", expanded=False):
         import valuation as vlm2
         _peers_in = st.text_input("同業代碼（逗號分隔，至少 2 檔）",
@@ -5207,6 +5229,35 @@ def page_alerts():
             cfg["watchlist"] = [t.strip().upper() for t in wl_text.split("\n") if t.strip()]
             _save_alerts_config(cfg)
             st.success(f"已儲存 {len(cfg['watchlist'])} 檔標的到 {ALERTS_FILE.name}")
+
+        # 投資論點檢視（Bot /thesis 管理；此處唯讀——state 由 bot workflow commit）
+        with st.expander("📖 投資論點追蹤（Telegram `/thesis` 管理）", expanded=False):
+            try:
+                import json as _json_th
+                _ths = (_json_th.load(open("watchlist_state.json"))
+                        .get("theses") or {})
+            except Exception:
+                _ths = {}
+            if not _ths:
+                st.info("尚無論點。Telegram 傳 `/thesis NVDA 多 論點一句話` 建立——"
+                        "論點要可被推翻（設失效價）才算論點。")
+            else:
+                _rows_th = []
+                for _tk2, _th2 in sorted(_ths.items()):
+                    _rows_th.append({
+                        "代碼": _tk2, "方向": _th2.get("direction", "?"),
+                        "狀態": {"active": "🟢 有效", "damaged": "🟠 受損",
+                                 "closed": "🏁 結案"}.get(_th2.get("status"), "?"),
+                        "論點": _th2.get("statement", "")[:60],
+                        "失效價": _th2.get("stop") or "—",
+                        "目標價": _th2.get("target") or "—",
+                        "信念": _th2.get("conviction", "中"),
+                        "更新": _th2.get("updated", "?"),
+                    })
+                st.dataframe(pd.DataFrame(_rows_th), use_container_width=True,
+                             hide_index=True)
+                st.caption("失效價由 Bot 掃描自動監測（觸發即推播）；逾 90 天未更新會在晨報提醒複查。"
+                           "方法論：Anthropic thesis-tracker——「不可否證的不是論點」。")
 
         if cfg.get("watchlist"):
             section("最新報價快照")

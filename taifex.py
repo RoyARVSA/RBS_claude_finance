@@ -217,7 +217,6 @@ def fetch_futures(days: int = 10) -> list[dict]:
     rows = parse_fut_csv(text) if text else []
     if not rows and text is not None:                # 有回應但解析不到 → 不帶商品過濾再試
         rows = parse_fut_csv(text, product="")
-        rows = [r for r in rows if "臺股" in str(r.get("identity", "")) or True][:0] or rows
     return rows
 
 

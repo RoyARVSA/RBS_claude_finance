@@ -65,6 +65,7 @@
 | 模擬交易 | `/autotrade on\|off`、`/positions`、`/pnl`、`/journal [N]`、`/rebalance [hrp\|max_sharpe\|min_vol\|erc\|equal]`（持倉再平衡顧問）、`/closeall` |
 | 估值 | `/dcf AAPL [成長%]` — DCF 內在價值（FCF→WACC→期中折現→終值→隱含股價；可覆蓋成長率假設） |
 | 情緒/籌碼 | `/fg`（雙恐懼貪婪：美股 CNN+加密，晨報自動附一行）、`/taifex`（台指期三大法人淨未平倉 + 選擇權 P/C 比） |
+| 論點/財報 | `/thesis [TICKER 多\|空 論點 / pillar / risk / cat / target / stop / conv / note / close]`（論點追蹤，失效價自動監測）、`/preview TICKER`（財報前瞻/覆盤自動判定） |
 
 > `/options`、`/insider` 僅美股；選擇權走 yfinance、內部人走 SEC EDGAR，皆免 key。
 
