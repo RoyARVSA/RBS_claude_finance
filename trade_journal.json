@@ -68,5 +68,15 @@
     "reason": "評分 +0.53 ≥ 買進門檻 0.5",
     "submitted": true,
     "error": null
+  },
+  {
+    "time": "2026-07-13T19:47:40Z",
+    "symbol": "ARKK",
+    "side": "sell",
+    "qty": 182,
+    "score": -0.38,
+    "reason": "評分 -0.38 ≤ 出場門檻 -0.2",
+    "submitted": true,
+    "error": null
   }
 ]
