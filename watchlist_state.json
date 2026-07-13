@@ -46,7 +46,7 @@
     "at_max_position_pct": 0.15
   },
   "last_update_id": 280895071,
-  "last_scan_time": "2026-07-13 16:13 UTC",
+  "last_scan_time": "2026-07-13 18:08 UTC",
   "signal_history": {
     "AAPL": {
       "macd": "2026-07-13T13:40:37.985821+00:00",
@@ -55,7 +55,7 @@
     },
     "NVDA": {
       "macd": "2026-07-08T19:27:11.832452+00:00",
-      "price": "2026-07-10T15:51:12.334067+00:00",
+      "price": "2026-07-13T18:08:45.120682+00:00",
       "atr": "2026-07-13T13:40:37.985821+00:00"
     },
     "GOOGL": {
@@ -73,9 +73,7 @@
       "price": "2026-07-07T13:53:08.594460+00:00"
     },
     "ARKK": {
-      "macd": "2026-07-13T13:40:37.985821+00:00",
-      "bollinger": "2026-07-06T17:15:01.101561+00:00",
-      "price": "2026-07-06T17:15:01.101561+00:00"
+      "macd": "2026-07-13T13:40:37.985821+00:00"
     },
     "VRT": {
       "macd": "2026-07-13T16:13:11.569903+00:00",
@@ -122,105 +120,105 @@
   "calibration": {
     "AAPL": {
       "rsi": 1.0,
-      "bollinger": 1.031,
-      "macd": 0.973,
-      "trend": 1.0
+      "bollinger": 1.025,
+      "macd": 0.978,
+      "trend": 1.008
     },
     "MSFT": {
-      "rsi": 1.035,
-      "bollinger": 0.985,
-      "macd": 0.982,
+      "rsi": 1.115,
+      "macd": 0.984,
+      "bollinger": 0.978,
       "trend": 0.97
     },
     "NVDA": {
-      "bollinger": 1.111,
-      "macd": 0.977,
-      "trend": 0.982,
+      "bollinger": 1.052,
+      "macd": 0.994,
+      "trend": 0.985,
       "rsi": 0.978
     },
     "GOOGL": {
-      "macd": 1.103,
-      "rsi": 1.012,
-      "bollinger": 1.025,
+      "rsi": 1.045,
+      "macd": 1.068,
+      "bollinger": 1.022,
       "trend": 1.0
     },
     "AMZN": {
-      "trend": 1.094,
-      "rsi": 1.167,
+      "trend": 1.111,
+      "rsi": 1.07,
       "macd": 1.022,
       "bollinger": 0.985
     },
     "TSLA": {
-      "macd": 1.074,
+      "macd": 1.154,
       "bollinger": 0.971,
-      "rsi": 0.98,
-      "trend": 0.979
+      "rsi": 0.963,
+      "trend": 0.992
     },
     "META": {
-      "macd": 1.138,
-      "bollinger": 1.004,
+      "macd": 1.089,
+      "bollinger": 1.001,
       "rsi": 1.023,
       "trend": 1.0
     },
     "AMD": {
       "bollinger": 1.018,
-      "macd": 0.981,
+      "macd": 0.99,
       "rsi": 0.985,
-      "trend": 0.977
+      "trend": 0.988
     },
     "JPM": {
       "bollinger": 1.229,
-      "macd": 1.184,
-      "trend": 1.05,
-      "rsi": 1.062
+      "trend": 1.054,
+      "macd": 1.109,
+      "rsi": 1.046
     },
     "SPY": {
-      "rsi": 1.167,
-      "bollinger": 1.118,
-      "macd": 0.982,
-      "trend": 1.0
+      "rsi": 1.15,
+      "bollinger": 1.232,
+      "macd": 0.991,
+      "trend": 0.999
     },
     "QQQ": {
-      "rsi": 1.083,
-      "bollinger": 1.058,
-      "macd": 0.984,
+      "rsi": 1.139,
+      "bollinger": 1.013,
+      "macd": 0.992,
       "trend": 0.998
     },
     "PLTR": {
-      "bollinger": 1.137,
-      "macd": 1.042,
+      "bollinger": 1.131,
+      "macd": 1.026,
       "rsi": 1.0,
       "trend": 1.0
     },
     "COIN": {
-      "macd": 1.1,
-      "rsi": 1.025,
-      "bollinger": 0.964,
+      "rsi": 1.008,
+      "macd": 0.991,
+      "bollinger": 0.967,
       "trend": 0.987
     },
     "TSM": {
-      "trend": 1.1,
-      "macd": 0.989,
-      "bollinger": 0.961,
-      "rsi": 1.0
+      "macd": 1.0,
+      "bollinger": 0.968,
+      "rsi": 1.0,
+      "trend": 1.0
     },
     "ARKK": {
       "rsi": 1.107,
-      "macd": 0.973,
+      "macd": 0.967,
       "bollinger": 0.979,
-      "trend": 0.986
+      "trend": 0.99
     },
     "VRT": {
-      "trend": 1.088,
       "bollinger": 1.324,
-      "macd": 0.962,
-      "rsi": 0.976
+      "macd": 0.954,
+      "trend": 0.985,
+      "rsi": 0.965
     },
     "GLD": {
-      "macd": 1.31,
-      "bollinger": 1.166,
+      "macd": 1.179,
+      "bollinger": 1.161,
       "trend": 1.007,
-      "rsi": 0.983
+      "rsi": 0.985
     },
     "DRAM": {
       "rsi": 1.0,
@@ -228,7 +226,7 @@
       "trend": 1.0,
       "bollinger": 1.0
     },
-    "_updated": "2026-07-06T17:15:00.294490+00:00"
+    "_updated": "2026-07-13T18:08:44.353193+00:00"
   },
   "fund_cache": {
     "AAPL": {
