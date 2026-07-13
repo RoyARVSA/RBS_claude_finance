@@ -89,7 +89,7 @@ def parse_crypto(j: dict) -> dict | None:
         if not data:
             return None
         score = float(data[0]["value"])
-        week = float(data[6]["value"]) if len(data) > 6 else None
+        week = float(data[7]["value"]) if len(data) > 7 else None   # 每日一筆 → 7 天前
         return {"score": round(score, 1),
                 "label": data[0].get("value_classification", ""),
                 "week_ago": week}
@@ -214,7 +214,7 @@ if __name__ == "__main__":
     cr = parse_crypto({"data": [{"value": "18", "value_classification": "Extreme Fear",
                                  "timestamp": "1751846400"}] +
                                [{"value": str(20 + i)} for i in range(10)]})
-    assert cr and cr["score"] == 18.0 and cr["week_ago"] == 25.0
+    assert cr and cr["score"] == 18.0 and cr["week_ago"] == 26.0   # data[7]=7 天前
     assert parse_crypto({"data": []}) is None
 
     # 雙訊號

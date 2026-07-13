@@ -33,6 +33,8 @@ Telegram 指令（傳給 Bot）：
   /journal [N]            – 交易日誌（每筆自動交易的評分與原因）
   /rebalance [配置法]     – 再平衡顧問：Alpaca 持倉 vs HRP/Sharpe/風險平價 → 加減碼清單
   /dcf TICKER [成長%]     – DCF 內在價值估值（FCF/WACC/終值/隱含股價；投行標準流程）
+  /thesis [TICKER ...]    – 投資論點追蹤：論點/支柱/風險/失效價（自動監測失效與達標）
+  /preview TICKER         – 財報前瞻（共識/beat率/隱含波動/三情境）或覆盤（自動判定）
   /fg                     – 雙恐懼貪婪指數（美股 CNN + 加密；晨報亦自動附一行）
   /taifex                 – 台指期籌碼：三大法人淨未平倉 + 選擇權 P/C 比（TAIFEX）
   /briefing               – 立即生成每日 AI 晨報（每交易日 ET 08:30 自動推送）
@@ -305,6 +307,8 @@ def _cmd_help() -> str:
         "`/rebalance [hrp|max_sharpe|min_vol|erc|equal]` — 再平衡顧問（持倉 vs 目標權重 → 加減碼清單）\n"
         "`/dcf AAPL [成長%]` — DCF 內在價值估值（FCF→WACC→終值→隱含股價）\n"
         "`/fg` — 雙恐懼貪婪指數（美股+加密）；`/taifex` — 台指期三大法人籌碼\n"
+        "`/thesis` — 投資論點追蹤（失效價自動監測；`/thesis help` 看用法）\n"
+        "`/preview NVDA` — 財報前瞻/覆盤（共識、beat 率、隱含波動、三情境）\n"
         "`/closeall` — 一鍵平倉\n"
         "`/scan` — 立即掃描（忽略靜音/冷卻）\n"
         "`/calibrate` — 回測校準訊號權重（自我優化）\n\n"
@@ -1183,6 +1187,55 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                             reply += "\n\n（僅報告；`/plantest apply` 套用、`/plantest clear` 還原）"
                     except Exception as e:
                         reply = f"❌ 回測失敗：{e}"
+
+        elif cmd == "/thesis":
+            import thesis as ths_m
+            if not args:
+                reply = ths_m.theses_list_text(state)
+            elif args[0].lower() == "help":
+                reply = ths_m.HELP_TEXT
+            else:
+                _ttk = args[0].upper()
+                if len(args) == 1:
+                    _th = state.get("theses", {}).get(_ttk)
+                    reply = (ths_m.thesis_text(_ttk, _th) if _th
+                             else f"{_ttk} 尚無論點。\n\n" + ths_m.HELP_TEXT)
+                else:
+                    _sub, _rest = args[1], " ".join(args[2:])
+                    _ok = False
+                    if _sub in ("多", "空"):
+                        _ok, reply = ths_m.set_thesis(state, _ttk, _sub, _rest)
+                    elif _sub.lower() in ("pillar", "risk", "cat"):
+                        _ok, reply = ths_m.add_item(state, _ttk, _sub.lower(), _rest)
+                    elif _sub.lower() in ("target", "stop"):
+                        try:
+                            _ok, reply = ths_m.set_level(state, _ttk, _sub.lower(),
+                                                         float(args[2].replace(",", "")))
+                        except (IndexError, ValueError):
+                            reply = f"用法：`/thesis {_ttk} {_sub.lower()} 價位`"
+                    elif _sub.lower() == "conv":
+                        _ok, reply = ths_m.set_conviction(state, _ttk, _rest.strip())
+                    elif _sub.lower() == "note":
+                        _ok, reply = ths_m.log_note(state, _ttk, _rest)
+                    elif _sub.lower() == "close":
+                        _ok, reply = ths_m.close_thesis(state, _ttk, _rest)
+                    else:
+                        reply = ths_m.HELP_TEXT
+                    changed = changed or _ok
+
+        elif cmd == "/preview":
+            if not args:
+                reply = "用法：`/preview NVDA`——財報前瞻（3 週內）或覆盤（公布後 2 週內）自動判定"
+            else:
+                _ptk = args[0].upper()
+                _tg_send(token, src_chat or chat_id, f"🔭 整理 {_ptk} 財報前瞻/覆盤（約 20-40 秒）…")
+                try:
+                    import earnings_review as er
+                    _res = er.run(_ptk)
+                    reply = (er.full_text(*_res) if _res
+                             else f"❌ 查無 {_ptk} 財報資料（ETF/新上市常見）")
+                except Exception as _e:
+                    reply = f"❌ 前瞻失敗：{_e}"
 
         elif cmd == "/fg":
             try:
@@ -2099,6 +2152,17 @@ def daily_briefing(state: dict, force: bool = False) -> str | None:
     except Exception:
         pass
 
+    # 論點季度複查提醒（thesis-tracker：至少每季複查，即使風平浪靜）
+    try:
+        import thesis as ths_m
+        _stale = ths_m.stale_theses(state)
+        if _stale:
+            lines.append("")
+            lines.append(f"📖 論點逾 90 天未複查：{'、'.join(_stale[:5])}"
+                         f"——`/thesis {_stale[0]}` 檢視支柱是否仍成立")
+    except Exception:
+        pass
+
     # 近期財報提醒
     try:
         earn = _upcoming_earnings(state)
@@ -2508,6 +2572,20 @@ def scan_and_report(state: dict, timestamp: str) -> tuple[str | None, list[dict]
             rfl.evaluate_pending(state, _alert_prices(sorted(pend)), today_s)
     except Exception as e:
         print(f"reflection error: {e}")
+
+    # 論點失效/達標監測（thesis-tracker：失效價由機器盯，不靠記憶）
+    try:
+        import thesis as ths_m
+        _tt = [t for t, v in state.get("theses", {}).items()
+               if v.get("status") in ("active", "damaged")
+               and (v.get("stop") or v.get("target"))]
+        if _tt:
+            _tmsgs = ths_m.check_triggers(state, _alert_prices(_tt))
+            if _tmsgs:
+                _blk = "\n\n".join(_tmsgs)
+                message = (message + "\n\n" + _blk) if message else _blk
+    except Exception as e:
+        print(f"thesis trigger error: {e}")
 
     if plan_cal_note:
         message = (message + "\n\n" + plan_cal_note) if message else plan_cal_note

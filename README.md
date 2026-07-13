@@ -45,6 +45,8 @@ Streamlit 網頁應用 + 獨立的訊號掃描 Bot（GitHub Actions 排程版 / 
 - **當日交易計畫**：`/today [帳戶 風險%]` 盤中訂單票（VWAP/ORB/RVOL 進場、停損/停利/股數、財報日迴避）；進場票自動記入決策計分板（隔日結算，與量化/委員會同板比較）
 - **當日計畫歷史回測**：`/plantest` 用過去 ~60 交易日 5 分 K 逐日重放訂單票（無前視、扣成本、停損優先），統計各型態實證勝率/R 期望值；`/plantest apply` 把 walk-forward 校準（負期望型態停用、不穩定降信心）套進 /today——**讓判定吃歷史實證自我修正**；**每週自動重跑校準**（動作有變時推播通知，`/set plan_autocal_enabled off` 關閉）
 - **參數尋優**：`/plantest opt` 掃 ORB 分鐘 × 停損 ATR 倍數 × 目標 R:R 共 27 組參數，訓練段排序、**驗證段沒明確勝過現行預設就不推薦**（防過擬合）；`opt apply` 一鍵套用推薦參數＋對應校準
+- **投資論點追蹤**：`/thesis` 記錄每檔的論點/支柱/風險/催化劑與**失效價**，掃描自動監測失效與達標即推播；逾 90 天未複查晨報提醒（「不可否證的不是論點」）
+- **財報前瞻/覆盤**：`/preview TICKER` 財報前 3 週出前瞻（共識、beat 率、選擇權隱含波動、三情境框架），公布後 2 週出覆盤（beat/miss、隔日反應、評等動向），模式自動判定
 - **Telegram 指令**：清單 `/add /remove /list`、分析 `/rank /fundamentals /options /insider /whales /earnings /briefing /weekly /today`、
   **AI `/committee`（手機開機構決策會議）**、警報 `/alert`、風控 `/risk /protections /calibrate`、
   模擬交易 `/autotrade /positions /pnl /journal /closeall`（`/help` 看全部）
@@ -132,6 +134,8 @@ rebalance.py            持倉再平衡顧問：現有持倉 vs 目標權重 →
 plan_backtest.py        當日計畫歷史回測：60 日 5 分 K 逐日重放 + walk-forward 校準（免費）
 valuation.py            DCF+Comps 估值：FCF/WACC/期中折現/敏感度 + 同業倍數（方法論：Anthropic financial-services）
 sentiment_fg.py         雙恐懼貪婪指數：美股 CNN（含鏡像備援）+ 加密 alternative.me（免費免金鑰）
+thesis.py               投資論點追蹤器：論點/支柱/失效價自動監測（方法論：Anthropic thesis-tracker）
+earnings_review.py      財報前瞻/覆盤：共識、beat 率、隱含波動、三情境（方法論：Anthropic earnings skills）
 taifex.py               台指期籌碼：三大法人淨未平倉 + 選擇權 P/C 比（TAIFEX 免費公開資料）
 tw_flows.py             台股三大法人買賣超（TWSE T86 上市 + TPEX 上櫃，免 key）：外資/投信/自營 + 連買天數
 committee.py            機構決策委員會：角色提示/立場解析/硬風控閘門/量化交叉比較，支援多檔與深度模式（TradingAgents 式）
