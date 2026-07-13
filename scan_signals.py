@@ -2055,13 +2055,68 @@ def daily_briefing(state: dict, force: bool = False) -> str | None:
     bottom = [r for r in ranked if r.get("score", 0) < -0.1][-3:]
     flagged = [r for r in results if r.get("signals")]
 
-    # 結構化數據（給 AI 與純數據版共用）
-    lines = [f"☀️ *RBS 每日晨報* — {date_str}"]
+    # ── 先取齊各數據塊（Top Call 判定與各節共用；全部防呆）──────────────
+    _sfg = None
+    fg_all: dict = {}
+    try:
+        import sentiment_fg as _sfg
+        fg_all = _sfg.fetch_all()
+    except Exception:
+        fg_all = {}
+    earn = []
+    try:
+        earn = _upcoming_earnings(state)
+    except Exception:
+        pass
+    dual_note = None
+    if _sfg and fg_all.get("cnn") and fg_all.get("crypto"):
+        try:
+            dual_note = _sfg.dual_signal(fg_all["cnn"]["score"],
+                                         fg_all["crypto"]["score"]).get("note")
+        except Exception:
+            pass
+
+    # ── Top Call（morning-note：別把頭條埋起來——今天最重要的一件事）──────
+    today_earn = [tk for tk, _ed, d in earn if d == 0]
+    tomorrow_earn = [tk for tk, _ed, d in earn if d == 1]
+    top_call = None
+    if today_earn:
+        top_call = (f"今天財報：{'、'.join(today_earn[:3])}"
+                    f"——先看 `/preview {today_earn[0]}` 的共識與隱含波動")
+    elif dual_note:
+        top_call = dual_note
+    elif regime and regime.get("regime") == "risk_off":
+        top_call = "大盤跌破 MA50 轉偏空——濾網收緊，新倉縮手、檢查停損"
+    elif flagged:
+        _fstar = max(flagged, key=lambda r: abs(r.get("score", 0)))
+        top_call = (f"{len(flagged)} 檔觸發訊號，最強 {_fstar['ticker']}"
+                    f"（{_fstar.get('score', 0):+.2f}）——詳見後續掃描")
+    elif tomorrow_earn:
+        top_call = f"明天財報：{'、'.join(tomorrow_earn[:3])}——今天先做功課 `/preview`"
+
+    lines = [f"☀️ *RBS 每日晨報* — {date_str}",
+             f"_產出於 ET {now_et.strftime('%H:%M')}，盤前變數以開盤為準_"]
+    lines.append("")
+    if top_call:
+        lines.append(f"🎯 *今日重點*：{top_call}")
+    else:
+        # morning-note：「無重大事件」也是合法晨報——說清楚而不是硬擠內容
+        lines.append("🎯 *今日重點*：隔夜無重大事件——維持既有部署即可")
+
+    # ── 🌙 隔夜與盤前 ─────────────────────────────────────────────────
+    lines.append("")
+    lines.append("🌙 *隔夜與盤前*")
     if regime:
         lines.append(f"{regime['emoji']} 大盤風險：{regime['label']}")
     if indices:
         idx_str = "　".join(f"{n} {c:+.2%}" for n, (p, c) in indices.items())
         lines.append(f"📈 {idx_str}")
+    if _sfg and (fg_all.get("cnn") or fg_all.get("crypto")):
+        try:
+            lines.append(_sfg.fg_text(fg_all.get("cnn"), fg_all.get("crypto"),
+                                      compact=True))
+        except Exception:
+            pass
     lines.append("")
 
     # AI 解讀（可選；force=手動 /briefing 即使關閉也產生）
@@ -2090,20 +2145,42 @@ def daily_briefing(state: dict, force: bool = False) -> str | None:
             lines.append(ai.strip())
             lines.append("")
 
-    # 排名（純數據，永遠附上）
+    # ── 📌 今日焦點（可行動事件：財報 / 總經 / 觸發訊號）───────────────
+    focus: list[str] = []
+    if earn:
+        for tk, ed, days in earn:
+            when = "⭐ 今天" if days == 0 else ("明天" if days == 1 else f"{days} 天後")
+            focus.append(f"   • {tk} 財報 — {ed.isoformat()}（{when}）")
+    try:
+        _fred_k = os.environ.get("FRED_API_KEY", "")
+        if _fred_k:
+            import macro as _mc
+            _rel = _mc.fetch_release_calendar(_fred_k, days_ahead=7)
+            if _rel:
+                focus.append("   • 本週總經：" + "、".join(f"{n}({d[5:]})" for d, n in _rel[:5]))
+    except Exception:
+        pass
+    if flagged:
+        focus.append(f"   • 🚨 {len(flagged)} 檔觸發技術訊號（詳見後續掃描）")
+    if focus:
+        lines.append("📌 *今日焦點*")
+        lines.extend(focus)
+        lines.append("")
+
+    # ── 🏆 觀察清單強弱（純數據，永遠附上）─────────────────────────────
     if top:
         lines.append("🏆 *觀察清單最強 Top 5*")
         for r in top:
             lines.append(f"   {r.get('emoji','')} {r['ticker']}  {r['score']:+.2f} ({r.get('rating','')})")
-        lines.append("")
     if bottom:
         lines.append("⚠️ *最弱*")
         for r in reversed(bottom):
             lines.append(f"   {r.get('emoji','')} {r['ticker']}  {r['score']:+.2f} ({r.get('rating','')})")
+    if top or bottom:
         lines.append("")
-    if flagged:
-        lines.append(f"🚨 今日 {len(flagged)} 檔觸發訊號（詳見後續掃描）")
 
+    # ── 🧭 持倉與紀律（內部人籌碼 / 論點複查 / 自我反思）────────────────
+    discipline: list[str] = []
     # 內部人交易亮點：只查「最強且偏多的美股」1 檔（每日 1 次呼叫、全程防呆）
     try:
         cand = next((r for r in top
@@ -2114,66 +2191,31 @@ def daily_briefing(state: dict, force: bool = False) -> str | None:
             if ins and ins.get("n_buys") and (ins.get("cluster_buy")
                                               or (ins.get("net_value") or 0) > 0):
                 net = ins.get("net_value")
-                lines.append("")
-                lines.append(f"🕵️ *內部人*：{cand['ticker']} {ins.get('label','')}"
-                             + (f"（淨 {_si._money(net)}）" if net else ""))
+                discipline.append(f"🕵️ 內部人：{cand['ticker']} {ins.get('label','')}"
+                                  + (f"（淨 {_si._money(net)}）" if net else ""))
     except Exception:
         pass
-
-    # AI 判斷回顧（反思記憶）
-    try:
-        import reflection as rfl
-        s_ref = rfl.summary_text(state)
-        if s_ref:
-            lines.append("")
-            lines.append(f"🪞 {s_ref}")
-    except Exception:
-        pass
-
-    # 恐懼貪婪指數一行（雙極端時多一行警示）
-    try:
-        import sentiment_fg as _sfg
-        _fga = _sfg.fetch_all()
-        if _fga.get("cnn") or _fga.get("crypto"):
-            lines.append("")
-            lines.append(_sfg.fg_text(_fga.get("cnn"), _fga.get("crypto"), compact=True))
-    except Exception:
-        pass
-
-    # 本週重要總經數據發布日（FRED 行事曆；CPI/非農/GDP/PCE…）
-    try:
-        _fred_k = os.environ.get("FRED_API_KEY", "")
-        if _fred_k:
-            import macro as _mc
-            _rel = _mc.fetch_release_calendar(_fred_k, days_ahead=7)
-            if _rel:
-                lines.append("")
-                lines.append("🗓 *本週總經*：" + "、".join(f"{n}({d[5:]})" for d, n in _rel[:5]))
-    except Exception:
-        pass
-
     # 論點季度複查提醒（thesis-tracker：至少每季複查，即使風平浪靜）
     try:
         import thesis as ths_m
         _stale = ths_m.stale_theses(state)
         if _stale:
-            lines.append("")
-            lines.append(f"📖 論點逾 90 天未複查：{'、'.join(_stale[:5])}"
-                         f"——`/thesis {_stale[0]}` 檢視支柱是否仍成立")
+            discipline.append(f"📖 論點逾 90 天未複查：{'、'.join(_stale[:5])}"
+                              f"——`/thesis {_stale[0]}` 檢視支柱是否仍成立")
     except Exception:
         pass
-
-    # 近期財報提醒
+    # AI 判斷回顧（反思記憶——morning-note：「錯了就在下一篇晨報認錯」）
     try:
-        earn = _upcoming_earnings(state)
-        if earn:
-            lines.append("")
-            lines.append("📅 *近期財報*")
-            for tk, ed, days in earn:
-                when = "今天" if days == 0 else ("明天" if days == 1 else f"{days} 天後")
-                lines.append(f"   • {tk} — {ed.isoformat()}（{when}）")
+        import reflection as rfl
+        s_ref = rfl.summary_text(state)
+        if s_ref:
+            discipline.append(f"🪞 {s_ref}")
     except Exception:
         pass
+    if discipline:
+        lines.append("🧭 *持倉與紀律*")
+        lines.extend(discipline)
+        lines.append("")
 
     if not state["watchlist"]:
         lines.append("_觀察清單為空，用 /add 新增標的_")
