@@ -78,5 +78,15 @@
     "reason": "評分 -0.38 ≤ 出場門檻 -0.2",
     "submitted": true,
     "error": null
+  },
+  {
+    "time": "2026-07-14T14:28:00Z",
+    "symbol": "VRT",
+    "side": "sell",
+    "qty": 27,
+    "score": -0.381,
+    "reason": "評分 -0.38 ≤ 出場門檻 -0.2",
+    "submitted": true,
+    "error": null
   }
 ]
