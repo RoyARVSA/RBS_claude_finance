@@ -88,5 +88,25 @@
     "reason": "評分 -0.38 ≤ 出場門檻 -0.2",
     "submitted": true,
     "error": null
+  },
+  {
+    "time": "2026-07-15T14:26:45Z",
+    "symbol": "AMZN",
+    "side": "buy",
+    "qty": 59,
+    "score": 0.609,
+    "reason": "評分 +0.61 ≥ 買進門檻 0.5",
+    "submitted": true,
+    "error": null
+  },
+  {
+    "time": "2026-07-15T14:26:45Z",
+    "symbol": "PLTR",
+    "side": "buy",
+    "qty": 93,
+    "score": 0.502,
+    "reason": "評分 +0.50 ≥ 買進門檻 0.5",
+    "submitted": true,
+    "error": null
   }
 ]
