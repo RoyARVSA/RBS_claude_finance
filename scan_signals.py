@@ -33,6 +33,7 @@ Telegram 指令（傳給 Bot）：
   /journal [N]            – 交易日誌（每筆自動交易的評分與原因）
   /rebalance [配置法]     – 再平衡顧問：Alpaca 持倉 vs HRP/Sharpe/風險平價 → 加減碼清單
   /dcf TICKER [成長%]     – DCF 內在價值估值（FCF/WACC/終值/隱含股價；投行標準流程）
+  /falsify [規格|故事]    – 假設反駁器：8 類測試推翻投資故事（bootstrap/regime/動能/DSR）
   /thesis [TICKER ...]    – 投資論點追蹤：論點/支柱/風險/失效價（自動監測失效與達標）
   /preview TICKER         – 財報前瞻（共識/beat率/隱含波動/三情境）或覆盤（自動判定）
   /fg                     – 雙恐懼貪婪指數（美股 CNN + 加密；晨報亦自動附一行）
@@ -307,6 +308,7 @@ def _cmd_help() -> str:
         "`/rebalance [hrp|max_sharpe|min_vol|erc|equal]` — 再平衡顧問（持倉 vs 目標權重 → 加減碼清單）\n"
         "`/dcf AAPL [成長%]` — DCF 內在價值估值（FCF→WACC→終值→隱含股價）\n"
         "`/fg` — 雙恐懼貪婪指數（美股+加密）；`/taifex` — 台指期三大法人籌碼\n"
+        "`/falsify MU,WDC vs SMH 126 故事` — 假設反駁器（只證偽不證實；口語模式需 LLM key）\n"
         "`/thesis` — 投資論點追蹤（失效價自動監測；`/thesis help` 看用法）\n"
         "`/preview NVDA` — 財報前瞻/覆盤（共識、beat 率、隱含波動、三情境）\n"
         "`/closeall` — 一鍵平倉\n"
@@ -1187,6 +1189,66 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                             reply += "\n\n（僅報告；`/plantest apply` 套用、`/plantest clear` 還原）"
                     except Exception as e:
                         reply = f"❌ 回測失敗：{e}"
+
+        elif cmd == "/falsify":
+            import falsifier as fsf
+            _sub = args[0].lower() if args else ""
+            if not args:
+                reply = ("🔨 *假設反駁器*——只能告訴你故事何時是假的，不能證明它是真的\n"
+                         "`/falsify MU,WDC,STX vs SMH 126 AI 記憶體故事` — 手動規格\n"
+                         "`/falsify AI資本支出增加會讓記憶體股六個月跑贏大盤` — 口語（需 LLM key）\n"
+                         "`/falsify trials +3` — 自報場外試錯次數（餵 DSR 折減）\n"
+                         "`/falsify ledger` — 看假設帳本")
+            elif _sub == "trials":
+                try:
+                    _k = int(args[1].replace("+", "")) if len(args) >= 2 else None
+                except ValueError:
+                    _k = None
+                if _k is None or _k <= 0:
+                    reply = "用法：`/falsify trials +3`（正整數——記入你在場外試過幾個假設）"
+                else:
+                    led = state.setdefault("hypotheses", {"entries": [], "extra_trials": 0})
+                    led["extra_trials"] = int(led.get("extra_trials", 0)) + _k
+                    changed = True
+                    reply = (f"🧾 已記入 {_k} 次場外嘗試（累計 {led['extra_trials']}）——"
+                             "誠實的 N 才有誠實的 DSR")
+            elif _sub == "ledger":
+                led = state.get("hypotheses") or {"entries": [], "extra_trials": 0}
+                if not led["entries"]:
+                    reply = "🧾 帳本是空的——第一個假設從 `/falsify` 開始"
+                else:
+                    _ls = [f"🧾 *假設帳本*（{len(led['entries'])} 筆＋場外 "
+                           f"{led.get('extra_trials', 0)}）"]
+                    for e in led["entries"][-8:][::-1]:
+                        _ls.append(f"・{e['date']} {e['statement'][:40]}…"
+                                   f"（{e['n_refuted']} 項被推翻）")
+                    reply = "\n".join(_ls)
+            else:
+                _spec = fsf.parse_manual_spec(args)
+                if not _spec:
+                    _story = " ".join(args)
+                    _plan_txt = _llm_complete(fsf.build_spec_prompt(_story))
+                    _spec = fsf.parse_spec(_plan_txt) if _plan_txt else None
+                    if not _spec:
+                        reply = ("❌ 無法轉成測試規格。用手動格式："
+                                 "`/falsify MU,WDC vs SPY 126 故事文字`"
+                                 "（口語模式需設 LLM_API_KEY）")
+                if _spec:
+                    _tg_send(token, src_chat or chat_id,
+                             f"🔨 反駁測試中：{'、'.join(_spec['basket'])} vs "
+                             f"{_spec['benchmark']}（約 1-2 分鐘）…")
+                    save_state(state)          # 長操作前落盤（毒訊息防護）
+                    try:
+                        _res = fsf.fetch_and_run(_spec)
+                        if not _res:
+                            reply = "❌ 價格資料不足（需 ≥2 檔各一年以上日線）"
+                        else:
+                            _out, _txt, _srt = _res
+                            fsf.ledger_add(state, _spec, _out, _srt)
+                            changed = True
+                            reply = _txt + "\n\n" + fsf.ledger_dsr_line(state, _srt)
+                    except Exception as _e:
+                        reply = f"❌ 反駁測試失敗：{_e}"
 
         elif cmd == "/thesis":
             import thesis as ths_m

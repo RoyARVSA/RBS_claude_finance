@@ -19,7 +19,7 @@ Streamlit 網頁應用 + 獨立的訊號掃描 Bot（GitHub Actions 排程版 / 
 | 🏠 市場總覽 | 即時指數/板塊/宏觀指標、**總經數據(FRED)**、市場快訊、**AI 自主市場分析**、**🎭 雙恐懼貪婪指數（美股 CNN + 加密，雙極端警示）**、**🇹🇼 台指期籌碼（三大法人淨未平倉 + 選擇權 P/C 比，TAIFEX）**、**🩺 資料源健康檢查（9 大數據源一鍵驗收）** |
 | 📈 持倉分析 | 多資產組合：權益曲線、回撤、Sharpe、IR、Beta、**績效報告（CAGR/Sortino/Calmar/月報酬熱力圖/回撤期間）**、**交易帳本（成本基礎/TWR/XIRR/股息收入）**、**⚖️ 再平衡顧問（HRP/最大 Sharpe/風險平價 目標權重 → 具體加減碼股數清單）** |
 | ⚠️ 風險管理 | VaR/CVaR、蒙地卡羅、Kupiec 回測、壓力測試、**風險平價 + 效率前緣（MPT）+ HRP 階層風險平價** |
-| 🔍 股票研究 | K 線+RSI、AI 深度報告、市場篩選器、**訊號回測 + 參數最佳化（含參數熱力圖與 walk-forward 逐段檢視）**、TradingView、**選擇權情緒(Put/Call、IV 偏斜)** |
+| 🔍 股票研究 | K 線+RSI、AI 深度報告、市場篩選器、**訊號回測 + 參數最佳化（含參數熱力圖與 walk-forward 逐段檢視）**、TradingView、**選擇權情緒(Put/Call、IV 偏斜)**、**🔨 假設反駁器（8 類測試推翻投資故事，只證偽不證實）** |
 | 🏢 公司分析 | **基本面體質：財務健康評分、估值旗標、三表趨勢、AI 解讀、分析師共識+EPS Beat 率、做空籌碼(FINRA/FTD)、台股三大法人買賣超(上市 TWSE + 上櫃 TPEX)、SEC 內部人交易(Form 4)、💰 DCF+Comps 內在價值估值（投行標準流程：FCF/WACC/期中折現/敏感度表＋同業倍數回推，方法論採 Anthropic 官方 financial-services skills）、📄 一鍵完整研究報告（彙整全部區塊下載）** |
 | 🗂️ 產業總覽 | **一次掃描整個市場：產業強弱 vs 風險散佈、鑽取個股（可加基本面）、RRG 板塊輪動象限圖** |
 | 🚨 即時警報 | 監控清單、盤中走勢、訊號掃描、Telegram/Email 推播、**🎯 當日交易計畫（VWAP/ORB/RVOL 盤中訂單票：進場區間/停損/停利/股數，財報日自動迴避，可選 Alpaca IEX 即時價，一鍵送模擬 bracket 單）** |
@@ -45,6 +45,7 @@ Streamlit 網頁應用 + 獨立的訊號掃描 Bot（GitHub Actions 排程版 / 
 - **當日交易計畫**：`/today [帳戶 風險%]` 盤中訂單票（VWAP/ORB/RVOL 進場、停損/停利/股數、財報日迴避）；進場票自動記入決策計分板（隔日結算，與量化/委員會同板比較）
 - **當日計畫歷史回測**：`/plantest` 用過去 ~60 交易日 5 分 K 逐日重放訂單票（無前視、扣成本、停損優先），統計各型態實證勝率/R 期望值；`/plantest apply` 把 walk-forward 校準（負期望型態停用、不穩定降信心）套進 /today——**讓判定吃歷史實證自我修正**；**每週自動重跑校準**（動作有變時推播通知，`/set plan_autocal_enabled off` 關閉）
 - **參數尋優**：`/plantest opt` 掃 ORB 分鐘 × 停損 ATR 倍數 × 目標 R:R 共 27 組參數，訓練段排序、**驗證段沒明確勝過現行預設就不推薦**（防過擬合）；`opt apply` 一鍵套用推薦參數＋對應校準
+- **假設反駁器**：`/falsify` 對投資故事跑 8 類反駁測試——block bootstrap 漂移顯著性（誠實處理重疊視窗）、日期穩健性、晚進場、成本存活、事件日 CAR、regime/利率週期切分、動能混淆兩因子回歸、跨市場泛化——外加 **DSR 多重假設帳本**（試了幾個才挑到這個→折減）。**只能證偽、不能證實**，報告頁首永遠印這句話
 - **投資論點追蹤**：`/thesis` 記錄每檔的論點/支柱/風險/催化劑與**失效價**，掃描自動監測失效與達標即推播；逾 90 天未複查晨報提醒（「不可否證的不是論點」）
 - **財報前瞻/覆盤**：`/preview TICKER` 財報前 3 週出前瞻（共識、beat 率、選擇權隱含波動、三情境框架），公布後 2 週出覆盤（beat/miss、隔日反應、評等動向），模式自動判定
 - **Telegram 指令**：清單 `/add /remove /list`、分析 `/rank /fundamentals /options /insider /whales /earnings /briefing /weekly /today`、
@@ -136,6 +137,7 @@ valuation.py            DCF+Comps 估值：FCF/WACC/期中折現/敏感度 + 同
 sentiment_fg.py         雙恐懼貪婪指數：美股 CNN（含鏡像備援）+ 加密 alternative.me（免費免金鑰）
 thesis.py               投資論點追蹤器：論點/支柱/失效價自動監測（方法論：Anthropic thesis-tracker）
 earnings_review.py      財報前瞻/覆盤：共識、beat 率、隱含波動、三情境（方法論：Anthropic earnings skills）
+falsifier.py            假設反駁器：block bootstrap/regime/動能混淆/跨市場/DSR 帳本（只證偽不證實）
 taifex.py               台指期籌碼：三大法人淨未平倉 + 選擇權 P/C 比（TAIFEX 免費公開資料）
 tw_flows.py             台股三大法人買賣超（TWSE T86 上市 + TPEX 上櫃，免 key）：外資/投信/自營 + 連買天數
 committee.py            機構決策委員會：角色提示/立場解析/硬風控閘門/量化交叉比較，支援多檔與深度模式（TradingAgents 式）
