@@ -234,11 +234,142 @@ def event_entry_excess(basket: pd.Series, bench: pd.Series,
                        f"（t≈{t_stat:.1f}）——t<2 就別太興奮")}
 
 
+# ── Batch 2：regime 切分 / 動能混淆 / 跨市場泛化 ─────────────────────────────
+
+# 跨市場類比籃子（放這裡而非 stock_db，避免污染各市場分組的其他使用者）
+ANALOG_BASKETS = {
+    "HBM/記憶儲存": {"韓國記憶體": ["000660.KS", "005930.KS"],
+                     "台灣記憶體": ["2408.TW", "2344.TW"]},
+}
+
+
+def regime_series(bench_close: pd.Series) -> pd.Series:
+    """
+    逐日市場狀態標籤（無前視：全用截至當日的 rolling 值）。
+    規則與 scan_signals.market_regime 一致：
+    價>MA50 且 22 日動量>0 → risk_on；價<MA50 且動量<-3% → risk_off；其餘 neutral。
+    """
+    c = bench_close.dropna()
+    ma50 = c.rolling(50).mean()
+    mom = c / c.shift(22) - 1
+    lab = pd.Series("neutral", index=c.index)
+    lab[(c > ma50) & (mom > 0)] = "risk_on"
+    lab[(c < ma50) & (mom < -0.03)] = "risk_off"
+    lab[ma50.isna() | mom.isna()] = None
+    return lab.dropna()
+
+
+def rate_cycle_series(fedfunds: pd.Series, window: int = 6,
+                      thresh: float = 0.25) -> pd.Series:
+    """FEDFUNDS 月序列 → 升息/降息/持平標籤（6 個月變化 ±0.25% 門檻）。"""
+    f = fedfunds.dropna()
+    chg = f - f.shift(window)
+    lab = pd.Series("持平", index=f.index)
+    lab[chg > thresh] = "升息"
+    lab[chg < -thresh] = "降息"
+    lab[chg.isna()] = None
+    return lab.dropna()
+
+
+def regime_split_test(basket: pd.Series, bench: pd.Series, labels: pd.Series,
+                      horizon: int = DEFAULT_HORIZON,
+                      direction: str = "outperform",
+                      name: str = "T6 市場狀態切分") -> dict:
+    """
+    依「進場日」的狀態標籤分組看前瞻超額。story 若只在單一 regime 成立，
+    等於押注 regime 延續——那是另一個故事。組樣本 <60 不判定該組。
+    """
+    excess = rolling_excess(basket, bench, horizon)
+    if len(excess) < 120:
+        return {"test": name, "survived": None, "detail": "視窗不足"}
+    sign = -1.0 if direction == "underperform" else 1.0
+    lab = labels.reindex(excess.index, method="ffill")
+    df = pd.DataFrame({"e": excess * sign, "g": lab}).dropna()
+    groups = {g: sub["e"] for g, sub in df.groupby("g") if len(sub) >= 60}
+    if len(groups) < 2:
+        return {"test": name, "survived": None,
+                "detail": "有效狀態組 <2（樣本期間狀態太單一）"}
+    means = {g: float(v.mean()) for g, v in groups.items()}
+    seg = "；".join(f"{g}:{m:+.1%}（{len(groups[g])} 窗）" for g, m in means.items())
+    neg = [g for g, m in means.items() if m < 0]
+    if neg and any(m > 0 for m in means.values()):
+        return {"test": name, "survived": False,
+                "detail": f"{seg}——只在部分狀態成立（{'、'.join(neg)} 為負）：{name.split()[0]}"
+                          f" 依賴 regime 延續，那是另一個賭注"}
+    return {"test": name, "survived": bool(all(m > 0 for m in means.values())),
+            "detail": seg}
+
+
+def momentum_confound_test(basket: pd.Series, bench: pd.Series,
+                           mom_close: pd.Series,
+                           direction: str = "outperform") -> dict:
+    """
+    「是否其實只是動能因子？」——兩因子時間序列回歸：
+    r_basket = α + β1·r_mkt + β2·r_mom + ε，比較加入動能代理（MTUM 或自建）
+    前後的年化 α。α 縮水殆盡 ⇒ 故事只是動能的別名。（普通 OLS t 值，
+    未做 Newey-West——已在輸出揭露；動能代理為近似，非官方 UMD 因子。）
+    """
+    df = pd.concat({"b": basket, "m": bench, "f": mom_close}, axis=1).dropna()
+    if len(df) < MIN_OBS:
+        return {"test": "T7 動能混淆", "survived": None, "detail": "資料不足"}
+    r = np.log(df).diff().dropna()
+    y = r["b"].to_numpy()
+    n = len(y)
+    X1 = np.column_stack([np.ones(n), r["m"].to_numpy()])
+    X2 = np.column_stack([np.ones(n), r["m"].to_numpy(), r["f"].to_numpy()])
+
+    def _ols_alpha(X):
+        beta, res, *_ = np.linalg.lstsq(X, y, rcond=None)
+        resid = y - X @ beta
+        dof = max(n - X.shape[1], 1)
+        s2 = float(resid @ resid) / dof
+        cov = s2 * np.linalg.inv(X.T @ X)
+        return float(beta[0]), float(beta[0] / math.sqrt(max(cov[0, 0], 1e-18)))
+
+    a1, t1 = _ols_alpha(X1)
+    a2, t2 = _ols_alpha(X2)
+    sign = -1.0 if direction == "underperform" else 1.0
+    a1_ann, a2_ann = a1 * 252 * sign, a2 * 252 * sign
+    shrink = (1 - a2_ann / a1_ann) if a1_ann > 0 else None
+    survived = bool(a2_ann > 0 and t2 * sign > 1.0)
+    detail = (f"單因子 α {a1_ann:+.1%}/年（t={t1 * sign:.1f}）→ "
+              f"加動能因子後 α {a2_ann:+.1%}/年（t={t2 * sign:.1f}）")
+    if shrink is not None and shrink > 0.6:
+        detail += f"——α 縮水 {shrink:.0%}：大部分只是動能的別名"
+    detail += "（OLS 未修自相關、動能代理非官方 UMD——保守解讀 t 值）"
+    return {"test": "T7 動能混淆（兩因子回歸）", "survived": survived, "detail": detail}
+
+
+def generalization_tests(alts: list[tuple[str, dict, pd.Series]],
+                         horizon: int = DEFAULT_HORIZON,
+                         direction: str = "outperform") -> list[dict]:
+    """
+    跨市場/類比籃子泛化：對每個 (標籤, closes, bench) 跑 T1。
+    同一機制若只在原市場成立，故事更可能是「選出來的」而非「機制性的」。
+    """
+    out = []
+    for label, closes, bench in alts:
+        bk = basket_series(closes)
+        if bk is None or bench is None or bench.dropna().empty:
+            out.append({"test": f"T8 泛化：{label}", "survived": None,
+                        "detail": "價格資料不足"})
+            continue
+        r = block_bootstrap_test(bk, bench, horizon, direction)
+        out.append({"test": f"T8 泛化：{label}", "survived": r["survived"],
+                    "p_value": r.get("p_value"), "detail": r["detail"]})
+    return out
+
+
 # ── 組裝與報告 ────────────────────────────────────────────────────────────────
 
 def run_tests(closes: dict[str, pd.Series], bench_close: pd.Series,
-              spec: dict) -> dict:
-    """對已抓好的價格跑 Batch 1 全部測試。回 {basket_n, results:[...]}。"""
+              spec: dict, extras: dict | None = None) -> dict:
+    """
+    對已抓好的價格跑全部測試。extras（皆可選）：
+      {"mom_close": Series, "rate_labels": Series,
+       "alts": [(label, closes_dict, bench_series), ...]}
+    回 {basket_n, n_windows, results:[...]}。
+    """
     horizon = int(spec.get("horizon_days", DEFAULT_HORIZON))
     direction = spec.get("direction", "outperform")
     bk = basket_series(closes)
@@ -253,6 +384,18 @@ def run_tests(closes: dict[str, pd.Series], bench_close: pd.Series,
         event_entry_excess(bk, bench_close, spec.get("events"), horizon,
                            direction=direction),
     ]
+    ex = extras or {}
+    results.append(regime_split_test(bk, bench_close,
+                                     regime_series(bench_close), horizon, direction))
+    if ex.get("rate_labels") is not None and len(ex["rate_labels"]):
+        results.append(regime_split_test(bk, bench_close, ex["rate_labels"],
+                                         horizon, direction,
+                                         name="T6b 利率週期切分"))
+    if ex.get("mom_close") is not None:
+        results.append(momentum_confound_test(bk, bench_close,
+                                              ex["mom_close"], direction))
+    if ex.get("alts"):
+        results.extend(generalization_tests(ex["alts"], horizon, direction))
     return {"basket_n": len([s for s in closes.values()
                              if s is not None and len(s.dropna()) > 1]),
             "n_windows": len(excess), "results": results}
@@ -297,14 +440,46 @@ def falsify_text(spec: dict, out: dict) -> str:
 # ── 抓取層（需網路）───────────────────────────────────────────────────────────
 
 def fetch_and_run(spec: dict, period: str = "5y") -> tuple[dict, str] | None:
-    """抓價 → 跑測試 → (out, report_text)。"""
+    """抓價（籃子+基準+MTUM+類比籃子）→ 跑全部測試 → (out, report_text)。"""
     try:
+        import os as _os
+
         from sector_scan import _batch_closes
         tks = list(dict.fromkeys(spec.get("basket", [])))
         bench = spec.get("benchmark", "SPY")
-        closes = _batch_closes(tks + [bench], period, min_len=MIN_OBS)
+
+        # 類比籃子：spec 自帶優先，否則查 ANALOG_BASKETS（以 theme 鍵）
+        alt_map: dict = dict(spec.get("alt_baskets") or {})
+        theme = spec.get("theme")
+        if not alt_map and theme and theme in ANALOG_BASKETS:
+            alt_map = ANALOG_BASKETS[theme]
+        alt_tks = [t for v in alt_map.values() for t in v]
+
+        closes = _batch_closes(tks + [bench, "MTUM"] + alt_tks, period,
+                               min_len=MIN_OBS)
         bench_s = closes.pop(bench, None)
-        out = run_tests(closes, bench_s, spec)
+        mom_s = closes.pop("MTUM", None)
+        extras: dict = {"mom_close": mom_s}
+        alts = []
+        for label, atks in alt_map.items():
+            ac = {t: closes.pop(t) for t in atks if t in closes}
+            if len(ac) >= 2 and bench_s is not None:
+                # 類比市場仍以原基準衡量「跑贏大盤」主張的機制泛化
+                alts.append((label, ac, bench_s))
+        if alts:
+            extras["alts"] = alts
+        try:            # 利率週期（有 FRED key 才做）
+            _fk = _os.environ.get("FRED_API_KEY", "")
+            if _fk:
+                from macro import _fred_get
+                obs = _fred_get("FEDFUNDS", _fk, limit=600)
+                if obs:
+                    ff = pd.Series({pd.Timestamp(d): float(v) for d, v in obs
+                                    if v is not None}).sort_index()
+                    extras["rate_labels"] = rate_cycle_series(ff)
+        except Exception:
+            pass
+        out = run_tests(closes, bench_s, spec, extras)
         return out, falsify_text(spec, out)
     except Exception:
         return None
@@ -388,6 +563,57 @@ if __name__ == "__main__":
     assert t5few["survived"] is None and "不足以判定" in t5few["detail"]
     t5none = event_entry_excess(bkA, bench, None)
     assert t5none["survived"] is None
+
+    # ── Batch 2 測試 ──────────────────────────────────────────────────
+    # regime_series：牛市段多 risk_on、崩盤段出現 risk_off；無前視（截斷不變）
+    crash = m2.copy()
+    crash[800:1100] -= 0.004                     # 300 天熊市段（讓視窗留在同 regime）
+    bench_cr = pd.Series(100 * np.cumprod(1 + crash), index=idx)
+    labs = regime_series(bench_cr)
+    assert set(labs.unique()) <= {"risk_on", "risk_off", "neutral"}
+    assert (labs == "risk_off").sum() > 0
+    labs_trunc = regime_series(bench_cr.iloc[:1000])
+    common = labs_trunc.index.intersection(labs.index)
+    assert (labs.loc[common] == labs_trunc.loc[common]).all()   # 標籤不吃未來資料
+
+    # rate_cycle_series：升→平→降 玩具路徑
+    ffidx = pd.date_range("2022-01-31", periods=30, freq="ME")
+    ff = pd.Series(np.r_[np.linspace(0.25, 5.25, 12), np.full(8, 5.25),
+                         np.linspace(5.25, 3.0, 10)], index=ffidx)
+    rl = rate_cycle_series(ff)
+    assert (rl == "升息").sum() > 0 and (rl == "降息").sum() > 0 and (rl == "持平").sum() > 0
+
+    # regime_split_test：優勢只開在 risk_on 日 → 應被抓「只在部分狀態成立」
+    lab_cr = regime_series(bench_cr).reindex(idx).ffill()
+    r_cond = crash + np.where((lab_cr == "risk_on").to_numpy(), 0.0020, -0.0020)
+    bC = pd.Series(100 * np.cumprod(1 + r_cond + rng.normal(0, 0.003, n)), index=idx)
+    t6 = regime_split_test(bC, bench_cr, regime_series(bench_cr), 126)
+    assert t6["survived"] is False and "只在部分狀態成立" in t6["detail"], t6
+
+    # momentum_confound_test：
+    # (a) 籃子＝動能因子的線性映射 → α 應縮水殆盡、不存活
+    momf = pd.Series(100 * np.cumprod(1 + m_ret + 0.0007
+                                      + rng.normal(0, 0.002, n)), index=idx)
+    r_mom_driven = m_ret + 0.9 * (np.log(momf).diff().fillna(0).to_numpy()
+                                  - m_ret) + rng.normal(0, 0.001, n)
+    bM = pd.Series(100 * np.cumprod(1 + r_mom_driven), index=idx)
+    t7a = momentum_confound_test(bM, bench, momf)
+    assert t7a["survived"] is False and "縮水" in t7a["detail"], t7a
+    # (b) 與動能因子無關的獨立優勢 → α 應保留、存活
+    t7b = momentum_confound_test(bkA, bench, momf)
+    assert t7b["survived"] is True, t7b
+
+    # generalization_tests：一個真機制市場 + 一個純噪音市場
+    alts = [("類比A-真", closesA, bench), ("類比B-噪音", {"N1": bB, "N2": bB * 1.01}, bench)]
+    g = generalization_tests(alts, 126)
+    assert len(g) == 2 and g[0]["survived"] is True and g[1]["survived"] is not True, g
+
+    # run_tests with extras：結果數應含 T6 + T7 + 兩個 T8
+    outX = run_tests(closesA, bench, {"basket": ["X1", "X2"], "horizon_days": 126},
+                     extras={"mom_close": momf, "alts": alts})
+    names = [r["test"] for r in outX["results"]]
+    assert any("T6" in s for s in names) and any("T7" in s for s in names)
+    assert sum("T8" in s for s in names) == 2, names
 
     # 端到端組裝 + 報告
     outA = run_tests(closesA, bench, {"statement": "測試故事", "basket": ["X1", "X2"],
