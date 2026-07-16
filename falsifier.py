@@ -118,11 +118,13 @@ def block_bootstrap_test(basket: pd.Series, bench: pd.Series,
     eff_n = n / block
     ann = obs * 252
     survived = bool(p < 0.05)
+    detail = (f"日均相對報酬 {obs * 1e4:+.1f}bp（年化 {ann:+.1%}），"
+              f"單尾 p={p:.3f}，有效樣本 ≈{eff_n:.0f} 區塊"
+              f"（{n} 日 ÷ {block} 日區塊——別被重疊視窗的假樣本數騙了）")
+    if not survived:
+        detail = "無顯著漂移＝故事沒有價格證據——" + detail
     return {"test": "T1 漂移顯著性（block bootstrap）", "survived": survived,
-            "p_value": round(p, 4),
-            "detail": (f"日均相對報酬 {obs * 1e4:+.1f}bp（年化 {ann:+.1%}），"
-                       f"單尾 p={p:.3f}，有效樣本 ≈{eff_n:.0f} 區塊"
-                       f"（{n} 日 ÷ {block} 日區塊——別被重疊視窗的假樣本數騙了）")}
+            "p_value": round(p, 4), "detail": detail}
 
 
 # ── T2 日期穩健性 ─────────────────────────────────────────────────────────────
@@ -211,6 +213,8 @@ def event_entry_excess(basket: pd.Series, bench: pd.Series,
         try:
             ts = pd.Timestamp(ev)
         except ValueError:
+            continue
+        if len(df) and ts < df.index[0]:       # 早於樣本起點 → 略過（勿灌假 CAR）
             continue
         pos = df.index.searchsorted(ts)        # 事件日或其後第一個交易日
         e = pos + lag
@@ -360,6 +364,193 @@ def generalization_tests(alts: list[tuple[str, dict, pd.Series]],
     return out
 
 
+# ── Batch 3：DSR 多重假設檢定帳本（Bailey & López de Prado 2014）─────────────
+
+LEDGER_CAP = 50
+EULER_GAMMA = 0.5772156649
+
+
+def sharpe_daily(basket: pd.Series, bench: pd.Series) -> tuple[float, int, float, float]:
+    """相對日報酬的 (SR_daily, T, skew, kurt)——DSR 的輸入。"""
+    d = daily_rel_log(basket, bench)
+    T = len(d)
+    if T < 60 or float(d.std(ddof=1)) == 0:
+        return 0.0, T, 0.0, 3.0
+    sr = float(d.mean() / d.std(ddof=1))
+    return sr, T, float(d.skew()), float(d.kurt() + 3.0)   # pandas kurt 是超額峰態
+
+
+def deflated_sharpe(sr: float, T: int, n_trials: int,
+                    trial_srs: list[float] | None = None,
+                    skew: float = 0.0, kurt: float = 3.0) -> dict:
+    """
+    DSR = PSR(SR*)：在 N 次「零技巧」嘗試下，期望最大 SR 是多少——你的 SR
+    要贏過那個幸運兒才算數。N 恆被低估（腦中試過的不進帳本）⇒ DSR 恆偏樂觀，
+    輸出永遠掛此警語。trial_srs 給了就用其變異數，否則用 SR 估計誤差近似。
+    """
+    from scipy.stats import norm
+    if T < 30:
+        return {"dsr": None, "sr_star": None, "note": "樣本太短"}
+    if n_trials <= 1:
+        sr_star = 0.0
+    else:
+        if trial_srs and len(trial_srs) >= 2:
+            v = float(np.var(trial_srs, ddof=1))
+        else:
+            v = (1 + 0.5 * sr * sr) / max(T, 2)          # SR 估計變異近似
+        v = max(v, 1e-12)
+        e_inv = 1.0 / (n_trials * math.e)
+        sr_star = math.sqrt(v) * ((1 - EULER_GAMMA) * norm.ppf(1 - 1 / n_trials)
+                                  + EULER_GAMMA * norm.ppf(1 - e_inv))
+    denom = 1 - skew * sr + (kurt - 1) / 4 * sr * sr
+    if denom <= 0:
+        return {"dsr": None, "sr_star": round(sr_star, 4), "note": "高階動差異常"}
+    z = (sr - sr_star) * math.sqrt(T - 1) / math.sqrt(denom)
+    return {"dsr": round(float(norm.cdf(z)), 4), "sr_star": round(sr_star, 4),
+            "note": None}
+
+
+def ledger_add(state: dict, spec: dict, out: dict,
+               sr_t: tuple | None = None) -> dict:
+    """把這次嘗試記進假設帳本（state['hypotheses']）。回本次紀錄。"""
+    led = state.setdefault("hypotheses", {"entries": [], "extra_trials": 0})
+    n_ref = sum(1 for r in out.get("results", []) if r.get("survived") is False)
+    rec = {"date": pd.Timestamp.now(tz="UTC").strftime("%Y-%m-%d"),
+           "statement": str(spec.get("statement", ""))[:150],
+           "basket": list(spec.get("basket", []))[:15],
+           "n_refuted": n_ref,
+           "sr_daily": round(sr_t[0], 4) if sr_t else None,
+           "T": sr_t[1] if sr_t else None}
+    led["entries"] = (led["entries"] + [rec])[-LEDGER_CAP:]
+    return rec
+
+
+def ledger_dsr_line(state: dict, sr_t: tuple | None) -> str:
+    """帳本狀態 + 這個假設的 DSR 一行（含誠實警語）。"""
+    led = state.get("hypotheses") or {"entries": [], "extra_trials": 0}
+    n = len(led["entries"]) + int(led.get("extra_trials", 0))
+    if not sr_t or n == 0:
+        return f"🧾 帳本：這是進本系統的第 {max(n, 1)} 個假設"
+    trial_srs = [e["sr_daily"] for e in led["entries"] if e.get("sr_daily") is not None]
+    d = deflated_sharpe(sr_t[0], sr_t[1], max(n, 1), trial_srs, sr_t[2], sr_t[3])
+    line = f"🧾 帳本：第 {n} 個假設（含自報 {led.get('extra_trials', 0)} 次場外嘗試）"
+    if d["dsr"] is not None:
+        verdict = "通過" if d["dsr"] > 0.95 else "未達 0.95 門檻"
+        line += (f"｜DSR={d['dsr']:.2f}（{verdict}；已扣「{n} 次嘗試的幸運上限 "
+                 f"SR*={d['sr_star']:.3f}」）")
+    line += ("\n　帳本只數得到進系統的嘗試——看圖放棄的、腦中否決的都沒算，"
+             "N 恆低估、DSR 恆偏樂觀。`/falsify trials +K` 自報場外次數。")
+    return line
+
+
+# ── Batch 3：LLM 故事 → 規格 規劃器（assistant_tools 白名單模式）──────────────
+
+def build_spec_prompt(story: str) -> str:
+    return (
+        "你是量化研究設計師。把使用者的投資故事轉成可反駁的測試規格。"
+        "只回傳 JSON（不要圍欄、不要解釋），格式：\n"
+        '{"statement": "一句可否證的主張", "basket": ["TICKER", ...], '
+        '"benchmark": "SPY", "horizon_days": 126, "direction": "outperform"}\n'
+        "規則：basket 選 3-8 檔最直接受故事影響的股票（yfinance 代碼，"
+        "台股加 .TW）；benchmark 選故事對照的大盤（美股 SPY、台股 0050.TW、"
+        "半導體故事可用 SMH）；horizon_days 取故事聲稱的時間（月×21，"
+        "未聲稱用 126）；direction：跑贏=outperform、跑輸=underperform。"
+        f"\n\n投資故事：{story}")
+
+
+def parse_spec(text: str) -> dict | None:
+    """解析並驗證 LLM 產出的規格（白名單式：格式不對就拒絕，不猜）。"""
+    import json as _json
+    import re
+    if not text:
+        return None
+    m = re.search(r"\{.*\}", text, re.S)
+    if not m:
+        return None
+    try:
+        j = _json.loads(m.group(0))
+    except _json.JSONDecodeError:
+        return None
+    basket = [str(t).upper().strip() for t in (j.get("basket") or [])
+              if re.fullmatch(r"[A-Z0-9\.\-]{1,12}", str(t).upper().strip())]
+    basket = list(dict.fromkeys(basket))
+    if not (2 <= len(basket) <= 15):
+        return None
+    events = [str(e) for e in (j.get("events") or [])
+              if re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(e))][:24]
+    bench = str(j.get("benchmark", "SPY")).upper().strip()
+    if not re.fullmatch(r"[A-Z0-9\.\-\^]{1,12}", bench):
+        bench = "SPY"
+    try:
+        horizon = int(j.get("horizon_days", DEFAULT_HORIZON))
+    except (TypeError, ValueError):
+        horizon = DEFAULT_HORIZON
+    horizon = max(21, min(horizon, 504))
+    direction = j.get("direction", "outperform")
+    if direction not in ("outperform", "underperform"):
+        direction = "outperform"
+    stmt = str(j.get("statement", ""))[:300]
+    if not stmt:
+        return None
+    out = {"statement": stmt, "basket": basket, "benchmark": bench,
+           "horizon_days": horizon, "direction": direction}
+    if events:
+        out["events"] = events
+    return out
+
+
+def parse_manual_spec(args: list[str]) -> dict | None:
+    """
+    手動速記：`MU,WDC,STX [vs SMH] [126] [空] [ev:2024-01-25,2024-04-25] 故事…`。
+    第一段必須是逗號分隔 ≥2 檔代碼。防誤路由（「AI,ML 都在漲」這種口語開頭）：
+    若帶了故事文字但**沒有任何明確標記**（vs/天數/方向/ev:），視為口語 → 回 None
+    交給 LLM 規劃器。
+    """
+    import re
+    if not args:
+        return None
+    tks = [t.strip().upper() for t in args[0].split(",") if t.strip()]
+    if len(tks) < 2 or not all(re.fullmatch(r"[A-Z0-9\.\-]{1,12}", t) for t in tks):
+        return None
+    bench, horizon, direction = "SPY", DEFAULT_HORIZON, "outperform"
+    events: list[str] = []
+    story_parts: list[str] = []
+    explicit = False
+    i = 1
+    while i < len(args):
+        a = args[i]
+        if a.lower() == "vs" and i + 1 < len(args):
+            bench = args[i + 1].upper()
+            explicit = True
+            i += 2
+            continue
+        if a.isdigit() and 21 <= int(a) <= 504:
+            horizon = int(a)
+            explicit = True
+        elif a in ("空", "跑輸"):
+            direction = "underperform"
+            explicit = True
+        elif a in ("多", "跑贏"):
+            direction = "outperform"
+            explicit = True
+        elif a.lower().startswith("ev:"):
+            events = [e for e in a[3:].split(",")
+                      if re.fullmatch(r"\d{4}-\d{2}-\d{2}", e)][:24]
+            explicit = True
+        else:
+            story_parts.append(a)
+        i += 1
+    if story_parts and not explicit:
+        return None                     # 「AI,ML 都在漲」→ 口語，交給 LLM
+    stmt = " ".join(story_parts) or f"{'、'.join(tks)} 未來 {horizon} 交易日"
+    stmt += f"{'跑輸' if direction == 'underperform' else '跑贏'} {bench}"
+    out = {"statement": stmt, "basket": tks, "benchmark": bench,
+           "horizon_days": horizon, "direction": direction}
+    if events:
+        out["events"] = events
+    return out
+
+
 # ── 組裝與報告 ────────────────────────────────────────────────────────────────
 
 def run_tests(closes: dict[str, pd.Series], bench_close: pd.Series,
@@ -430,7 +621,7 @@ def falsify_text(spec: dict, out: dict) -> str:
     if n_ref:
         lines.append(f"⚖️ {n_ref} 項被推翻——故事至少在這些角度站不住；先解釋得了它們再談加碼。")
     elif n_surv:
-        lines.append(f"⚖️ {n_surv} 項存活、0 項推翻——注意：這些測試餵的是**同一段歷史**，"
+        lines.append(f"⚖️ {n_surv} 項存活、0 項推翻——注意：這些測試餵的是*同一段歷史*，"
                      "是一份證據拍了幾個角度，不是幾份獨立證據。")
     lines.append("_已知限制：籃子成分是今天的名單（回填偏誤）；下市公司缺席（存活偏誤）；"
                  "免費日線數據。教育用途，非投資建議。_")
@@ -445,8 +636,9 @@ def fetch_and_run(spec: dict, period: str = "5y") -> tuple[dict, str] | None:
         import os as _os
 
         from sector_scan import _batch_closes
-        tks = list(dict.fromkeys(spec.get("basket", [])))
         bench = spec.get("benchmark", "SPY")
+        # 基準不可同時當籃子成員（會被 pop 走）；MTUM 在籃內就不當動能代理
+        tks = [t for t in dict.fromkeys(spec.get("basket", [])) if t != bench]
 
         # 類比籃子：spec 自帶優先，否則查 ANALOG_BASKETS（以 theme 鍵）
         alt_map: dict = dict(spec.get("alt_baskets") or {})
@@ -458,8 +650,8 @@ def fetch_and_run(spec: dict, period: str = "5y") -> tuple[dict, str] | None:
         closes = _batch_closes(tks + [bench, "MTUM"] + alt_tks, period,
                                min_len=MIN_OBS)
         bench_s = closes.pop(bench, None)
-        mom_s = closes.pop("MTUM", None)
-        extras: dict = {"mom_close": mom_s}
+        mom_s = closes.get("MTUM") if "MTUM" in tks else closes.pop("MTUM", None)
+        extras: dict = {"mom_close": None if "MTUM" in tks else mom_s}
         alts = []
         for label, atks in alt_map.items():
             ac = {t: closes.pop(t) for t in atks if t in closes}
@@ -480,7 +672,11 @@ def fetch_and_run(spec: dict, period: str = "5y") -> tuple[dict, str] | None:
         except Exception:
             pass
         out = run_tests(closes, bench_s, spec, extras)
-        return out, falsify_text(spec, out)
+        sr_t = None
+        bk = basket_series(closes)
+        if bk is not None and bench_s is not None:
+            sr_t = sharpe_daily(bk, bench_s)
+        return out, falsify_text(spec, out), sr_t
     except Exception:
         return None
 
@@ -626,5 +822,57 @@ if __name__ == "__main__":
     out_bad = run_tests({"X1": bA}, bench, {"basket": ["X1"]})
     assert out_bad.get("error")
 
+    # ── Batch 3 測試 ──────────────────────────────────────────────────
+    # DSR：N 越大扣越多（單調遞減）；N=1 不扣（=PSR）
+    srA, TA, skA, kuA = sharpe_daily(bkA, bench)
+    assert srA > 0 and TA > 1000
+    d1 = deflated_sharpe(srA, TA, 1)
+    d5 = deflated_sharpe(srA, TA, 5, trial_srs=[0.01, -0.02, 0.03, srA])
+    d20 = deflated_sharpe(srA, TA, 20, trial_srs=[0.01, -0.02, 0.03, srA])
+    assert d1["sr_star"] == 0.0 and d1["dsr"] >= d5["dsr"] >= d20["dsr"], (d1, d5, d20)
+    assert deflated_sharpe(0.0, 10, 5)["dsr"] is None          # 樣本太短
+
+    # 帳本：新增 + DSR 行 + cap
+    stF: dict = {}
+    for k in range(3):
+        ledger_add(stF, {"statement": f"假設{k}", "basket": ["A", "B"]},
+                   {"results": [{"survived": False}]}, sr_t=(0.02, 1400, 0.0, 3.0))
+    assert len(stF["hypotheses"]["entries"]) == 3
+    stF["hypotheses"]["extra_trials"] = 4
+    line = ledger_dsr_line(stF, (srA, TA, skA, kuA))
+    assert "第 7 個假設" in line and "N 恆低估" in line, line
+
+    # LLM 規格解析：合法/非法
+    good = parse_spec('前置廢話 {"statement":"記憶體六個月跑贏","basket":["MU","wdc","000660.KS"],'
+                      '"benchmark":"smh","horizon_days":126,"direction":"outperform"} 後置')
+    assert good and good["basket"] == ["MU", "WDC", "000660.KS"] and good["benchmark"] == "SMH"
+    assert parse_spec('{"statement":"x","basket":["MU"]}') is None      # <2 檔
+    assert parse_spec("不是 JSON") is None
+    bad_h = parse_spec('{"statement":"x","basket":["MU","WDC"],"horizon_days":9999}')
+    assert bad_h["horizon_days"] == 504                                  # 夾範圍
+
+    # 手動速記
+    ms = parse_manual_spec(["MU,WDC,STX", "vs", "SMH", "126", "AI", "記憶體", "故事"])
+    assert ms and ms["benchmark"] == "SMH" and ms["horizon_days"] == 126
+    assert "跑贏 SMH" in ms["statement"]
+    ms2 = parse_manual_spec(["TSLA,RIVN", "空"])
+    assert ms2["direction"] == "underperform" and "跑輸" in ms2["statement"]
+    assert parse_manual_spec(["只有一檔"]) is None
+    # 防誤路由（M2 迴歸）：口語開頭帶逗號、無任何明確標記 → None（交給 LLM）
+    assert parse_manual_spec(["AI,ML", "都在漲", "所以買"]) is None
+    assert parse_manual_spec(["MU,WDC"]) is not None            # 無故事無標記 → 合法
+    # 事件日 token（M1 迴歸）：手動與 LLM 兩路都能帶 events
+    ms3 = parse_manual_spec(["MU,WDC", "ev:2024-01-25,2024-04-25,bad", "126"])
+    assert ms3 and ms3["events"] == ["2024-01-25", "2024-04-25"], ms3
+    gs2 = parse_spec('{"statement":"x","basket":["MU","WDC"],'
+                     '"events":["2024-01-25","junk","2024-04-25"]}')
+    assert gs2["events"] == ["2024-01-25", "2024-04-25"]
+    # T1 不顯著時的措辭（防「沒證據」被誤讀成「有反證」以外的東西）
+    assert "無顯著漂移" in t1b["detail"]
+    # 基準/MTUM 不得被 pop 出籃子（fetch 層防呆——純邏輯側驗證 spec 清洗）
+    # （fetch_and_run 需網路，此處驗證 tks 過濾規則等價邏輯）
+    _tks_clean = [t for t in dict.fromkeys(["MU", "SPY", "MU"]) if t != "SPY"]
+    assert _tks_clean == ["MU"]
+
     print(f"✅ falsifier 離線自我測試通過（T1 優勢 p={t1['p_value']}、"
-          f"噪音 p={t1b['p_value']}、時段依賴/晚進場均被抓出）")
+          f"噪音 p={t1b['p_value']}、DSR N=1:{d1['dsr']:.2f}→N=20:{d20['dsr']:.2f}）")

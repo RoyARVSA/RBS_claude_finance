@@ -4166,6 +4166,50 @@ def page_stock_research():
                 except Exception as _wf_e:
                     st.caption(f"（walk-forward 檢視無法計算：{_wf_e}）")
 
+    # ── 🔨 假設反駁器（Hypothesis Falsifier）────────────────────────────
+    section("假設反駁器")
+    st.warning("⚠️ 本工具只能告訴你故事何時是假的，永遠不能告訴你它是真的。"
+               "全綠 = 同一段歷史從八個角度拍照，不是八份獨立證據。")
+    with st.expander("🔨 對一個投資故事跑反駁測試（1-2 分鐘）", expanded=False):
+        fz1, fz2, fz3, fz4 = st.columns([2.2, 1, 0.8, 0.9])
+        with fz1:
+            _fz_basket = st.text_input("故事籃子（逗號分隔 ≥2 檔）",
+                                       placeholder="MU, WDC, STX, SNDK", key="fz_basket")
+        with fz2:
+            _fz_bench = st.text_input("基準", "SPY", key="fz_bench")
+        with fz3:
+            _fz_h = st.selectbox("持有(日)", [63, 126, 252], index=1, key="fz_h")
+        with fz4:
+            _fz_dir = st.selectbox("主張", ["跑贏", "跑輸"], key="fz_dir")
+        _fz_story = st.text_input("故事一句話（會印在報告上）",
+                                  placeholder="AI 資本支出增加 → 記憶體供應商跑贏大盤",
+                                  key="fz_story")
+        if st.button("🔨 開始反駁", type="primary", key="fz_go",
+                     disabled=not _fz_basket.strip()):
+            import falsifier as _fsf
+            _tks = [t.strip().upper() for t in _fz_basket.split(",") if t.strip()]
+            _spec = {"statement": _fz_story.strip() or
+                     f"{'、'.join(_tks)} {_fz_h} 交易日"
+                     f"{'跑輸' if _fz_dir == '跑輸' else '跑贏'} {_fz_bench.upper()}",
+                     "basket": _tks, "benchmark": _fz_bench.upper().strip() or "SPY",
+                     "horizon_days": int(_fz_h),
+                     "direction": "underperform" if _fz_dir == "跑輸" else "outperform"}
+            with st.spinner("抓 5 年價格並跑全部反駁測試…"):
+                try:
+                    _fres = _fsf.fetch_and_run(_spec)
+                    st.session_state["fz_res"] = _fres
+                except Exception as _fe:
+                    st.error(f"失敗：{_fe}")
+                    st.session_state.pop("fz_res", None)
+        _fres = st.session_state.get("fz_res")
+        if _fres:
+            _fout, _ftxt, _fsrt = _fres
+            st.markdown(_ftxt.replace("*", "**"))
+            st.caption("假設帳本與 DSR 折減由 Telegram `/falsify` 記錄（bot 管理 state）；"
+                       "網頁跑的測試不入帳——場外嘗試記得 `/falsify trials +K` 自報。")
+        elif _fres is None and "fz_res" in st.session_state:
+            st.error("價格資料不足（每檔需 ≥1 年日線、籃子 ≥2 檔）")
+
 
 # ════════════════════════════════════════════════════════════════════
 # PAGE: Real-time Alerts & Monitoring
