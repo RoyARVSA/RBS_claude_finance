@@ -23,6 +23,19 @@
 - **原因**：執行中的 app 保留舊模組物件，redeploy 不一定清。
 - **修法**：叫使用者 **Reboot app**（Manage app → Reboot）。防禦性寫法：`if not hasattr(mod, "fn")` 給友善訊息。
 
+### A5. 遠端容器隨時會被回收——工作只存在於 push 之後
+- **症狀**：續跑 session 時剛寫的檔案消失、pandas 未安裝、scratchpad 清空（2026-07 一天內發生兩次）。
+- **原因**：remote 容器 ephemeral；斷點重建＝fresh clone + 空 pip 環境。
+- **修法**：每批功能完成**立即 commit+push**（驗證債可註記在 commit 訊息後補）；續跑第一步
+  `git log -3 && git status` 並確認關鍵新檔存在；重裝環境用子集
+  `pip install pandas numpy scipy yfinance requests pyflakes`（完整 requirements 裡
+  feedparser 的 sgmllib3k 在新容器編不過，離線自測不需要它）。
+
+### A6. 往長檔案插入大段程式的縮排殘行
+- **症狀**：插入後 IndentationError 報在**你沒動過的行**。
+- **原因**：插入點後面還有原屬前一區塊的尾行（如收尾 caption），被擠進錯誤縮排層。
+- **修法**：插入前先讀錨點後 5-10 行確認歸屬；插入後立刻 `ast.parse` 驗證（app.py 5400+ 行時踩過）。
+
 ### A4. Streamlit Secrets 不會自動進 os.environ
 - **症狀**：使用者在 Secrets 設了 key，模組用 `os.environ.get()` 拿不到。
 - **原因**：`st.secrets` 與環境變數是兩回事。
@@ -64,6 +77,13 @@
 - **實例**：WOLF（Wolfspeed）2025-09 破產重整、~1:120 換股，2025-10 前價格不連續；
   SNDK、GEV 為 2024-25 新分拆，歷史短。
 - **修法**：對新分拆/重整股，長期回測結果標註不可靠或直接略過。
+
+### B8. yfinance 財報列名是 camel2title 轉換出來的
+- **症狀**：`income_stmt.loc["Total Revenue"]` 在某版本 KeyError 或拿到空。
+- **原因**：列名由 const.py 的 camelCase key 經 `camel2title(acronyms=["EBIT",…])` 生成
+  （"Total Revenue"、"EBIT"、"Operating Income"、"Capital Expenditure"…），升版可能漂移。
+- **修法**：一律多候選名 fallback（見 valuation.py `_row()`）；查證法＝直接讀
+  site-packages/yfinance 原始碼跑 converter，不要猜（2026-07 對六個列名逐一驗證過）。
 
 ### B7. 死檔案裡的活金鑰
 - **症狀**：2026-07 全面審計在**早已沒人用的** `colab_setup.py` 裡發現寫死的 ngrok token——
@@ -133,6 +153,45 @@
 - **症狀**：TradingView iframe「太扁」看不到。
 - **原因**：`autosize: true` 在零高度容器裡就是 0。
 - **修法**：容器與 div 給明確 px 高度（現有高度滑桿實作可參考）。
+
+### D9. PR merge 競態會把最後一批 commit 留在分支上
+- **症狀**：以為功能進了 main，其實 PR merge 抓的是**較早的分支 tip**（day-plan 閉環整批曾這樣滯留）。
+- **原因**：使用者按 merge 的時點早於你最後一次 push。
+- **修法**：merge 後必查 `git log origin/main..origin/<branch>`；不為空 → 分支
+  `checkout -B` 到 origin/main 後 **cherry-pick** 孤兒 commit（force push 會被權限系統擋，別試）。
+
+### D10. 別 rm 已被追蹤的 watchlist_state.json
+- **症狀**：`git status` 出現 `D watchlist_state.json`，差點 commit 掉 bot 的活狀態。
+- **原因**：該檔早期是自測產物（untracked），後被 workflow commit 成 tracked；慣性 `rm -f` 誤刪。
+- **修法**：自測後用 `git checkout -- watchlist_state.json` 還原，永遠不要 rm 它。
+
+### D11. 子代理有 session 用量上限
+- **症狀**：驗證代理死於 `hit your session limit · resets HH:MM (UTC)`。
+- **修法**：額度將盡時先 commit 保工作（訊息註明驗證待補）→ `ScheduleWakeup` 排 reset 後補驗；
+  多批功能可合併一次對抗驗證省額度；已跑一半的代理，其 transcript 裡的部分證據仍可先採用。
+
+### D12. Telegram 舊版 Markdown 不認 `**`
+- **症狀**：粗體變空白實體、重點警語不顯示。
+- **原因**：`_tg_send` 用 `parse_mode="Markdown"`（legacy），只認單 `*`；`_` 也會炸。
+- **修法**：bot 文字一律**單星號**；網頁端要粗體再 `.replace("*","**")`（falsifier 的做法）。
+  含底線的字串（罕見 ticker、URL）進 bot 訊息前先想一下。
+
+---
+
+## E. 統計 / 回測
+
+### E1. 重疊視窗的假樣本數
+- **症狀**：「六個月持有、逐日進場」的回測有上千筆樣本，顯著性漂亮到不像話。
+- **原因**：視窗高度重疊，有效獨立樣本 ≈ n ÷ 視窗長（5 年資料 ≈ 10 個）。直接 t 檢定＝自欺。
+- **修法**：用 circular block bootstrap（`falsifier.block_bootstrap_test` 直接複用，
+  誤報率經 200 次零模擬驗證 3.5-5.5%），並在輸出報告 effective n。
+
+### E2. 事後策展的主題籃子＝答案寫在輸入裡
+- **症狀**：拿 stock_db 主題籃子回測該主題的故事，結果必然漂亮。
+- **原因**：名單是**行情走完後**、由知道劇情的人加進資料庫的（回填偏誤）；
+  且免費資料源的下市股缺席（存活偏誤——墳墓對照組不存在）。
+- **修法**：這類回測必須強制揭露兩個偏誤（falsifier 報告已內建）；
+  主題籃子可以拿來「反駁」故事，**不可以**拿來「驗證」故事。
 
 ---
 

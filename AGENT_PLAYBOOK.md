@@ -14,7 +14,10 @@
    新的可離線測試邏輯寫成獨立模組，不要再往 app.py 塞純邏輯。
 3. **驗證品質靠自覺**：自己寫的碼自己看不出盲點。實績：本專案的子代理對抗驗證在
    risk-parity 不收斂、`setdefault`-None、無標的 outlook 空 context、workflow 原子 add、
-   單位換算等處抓到**至少 8 個真 bug**，幾乎每個功能一個。→ **對策**：§3 模板不可省略。
+   單位換算等處抓到**至少 8 個真 bug**；2026-07 的八批功能再抓 **15+ 個**（含 27 組參數尋優
+   9.4 分鐘會撞 GH Actions timeout 形成毒訊息迴圈、DCF 全負 FCF 崩潰、空頭部位讓再平衡
+   金額全面 2 倍、覆盤誤拿上一季反應冒充本次、口語誤路由成錯誤股票）——**驗證命中率
+   接近 100%：沒有一批是乾淨的**。→ **對策**：§3 模板不可省略。
 
 ## §2 派工守則
 
@@ -63,6 +66,14 @@ If no real bugs, say so explicitly. Do NOT modify files.
 ```
 **要點**：疑點必須具體（「檢查殖利率是百分比還是小數」），不要寫「檢查品質」。
 
+### T1b 統計/回測類功能的額外驗證要求（附加在 T1 的攻擊向量裡）
+- **零假設校準**：對純噪音合成資料跑 ≥200 次獨立模擬，量測 p<0.05 的誤報率，
+  容忍 2-10%（falsifier T1 實測 3.5-5.5%）。校準錯的檢定＝自動化自欺機。
+- **閉式解對照**：任何折現/機率公式對數學閉式解驗到 1e-9 級（DCF 期中折現、DSR 皆如此驗過）。
+- **單調性**：參數往「更嚴」推，結果必須單調變嚴（DSR 對 N、敏感度表對 WACC）。
+- **合成場景要能雙向**：同一測試要有「應存活」與「應被推翻」兩組工程化資料
+  （T3 晚進場：持續趨勢存活、短於偵測窗的尖峰被抓——後者第一版就設計錯過，見 commit 歷史）。
+
 ### T2 外部事實查證（斷網環境的必需品）
 ```
 Verify the following facts via web search; the dev environment cannot reach financial APIs.
@@ -71,6 +82,18 @@ For each item give verdict OK / FIX→<correct value> / DROP, with a one-line so
 2. ...
 Prioritize accuracy over speed. Do NOT modify files.
 ```
+
+### T2b 官網被 proxy 擋時的格式查證技巧
+官方站 403 時，**找「消費該端點的開源專案原始碼」當一手證據**：GitHub raw 通常可達。
+實例：TAIFEX CSV 欄序從 node-twstock 的 scraper 原始碼逐欄證實；CNN F&G JSON 鍵名從
+兩個獨立 wrapper 專案交叉證實；鏡像 CSV 直接抓 raw 檔看表頭。比 web 搜尋文章可靠一個量級。
+
+### T4 官方 skill / 方法論移植流程（Anthropic financial-services 已用此流程移植六件）
+1. `git clone --depth 1` 進 scratchpad（注意：容器回收會清掉，要用時重 clone）
+2. 讀目標 SKILL.md 的**流程步驟與數字約束**（如 g<WACC、終值佔比 50-70%）——那是規格
+3. 實作成獨立純邏輯模組（不依賴 skill 執行環境），selftest 用**手算數字**對照
+4. 授權檢查：MIT/Apache 可抄公式；AGPL（如 OpenBB）只可參考端點行為、不可逐字抄碼
+5. 照常對抗驗證——官方方法論不保證你的實作沒 bug（DCF 批次照樣抓出 2 個 Med）
 
 ### T3 廣域搜尋/理解
 ```
@@ -110,7 +133,10 @@ In /home/user/RBS_claude_finance, find <目標>。
 
 ## §6 給未來 session 的信
 
-**三件最重要、但使用者不會主動說的事：**
+**四件最重要、但使用者不會主動說的事：**
+0. **工作只存在於 push 之後**：遠端容器一天內死過兩次，未 commit 的一切（含 pip 環境、
+   scratchpad）瞬間蒸發。每批完成立即 push；醒來先 `git log -3 && git status`。
+   另外 PR merge 後必查 `git log origin/main..origin/<branch>` 抓孤兒 commit（PITFALLS D9）。
 1. **儀式是硬需求**：建任務→自我批判→實作＋md 同步→子代理驗證→commit+push。使用者會檢查
    你有沒有跳過驗證（曾明確要求「記得規畫自我監督執行」）。驗證的投報率有實據（§1.3）。
 2. **斷網不是壞掉**：本地連不上金融 API 是環境設計。純邏輯離線測、事實網查、
