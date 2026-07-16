@@ -108,5 +108,15 @@
     "reason": "評分 +0.50 ≥ 買進門檻 0.5",
     "submitted": true,
     "error": null
+  },
+  {
+    "time": "2026-07-16T17:52:03Z",
+    "symbol": "GOOGL",
+    "side": "buy",
+    "qty": 40,
+    "score": 0.599,
+    "reason": "評分 +0.60 ≥ 買進門檻 0.5",
+    "submitted": true,
+    "error": null
   }
 ]
