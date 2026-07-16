@@ -39,7 +39,10 @@ Streamlit 金融儀表板（`app.py`，13 頁）+ Telegram 訊號 Bot（`scan_si
 | 總經 / 產業掃描 / 選股庫 | `macro.py` / `sector_scan.py` / `stock_db.py`（含 AI 供應鏈瓶頸主題）|
 | AI 助理 | `assistant.py`（意圖/context 純邏輯）+ `assistant_tools.py`（工具規劃/解析）+ app.py 的 `page_ai_assistant` 與 `_assistant_*` |
 | 選擇權情緒 / SEC 內部人 | `options_sentiment.py` / `sec_insider.py` |
-| Alpaca 模擬交易 | `alpaca_trader.py`（決策純邏輯 `decide_orders` + REST client）|
+| Alpaca 模擬交易 | `alpaca_trader.py`（決策純邏輯 `decide_orders` + bracket 單 + REST client）|
+| 當日交易計畫與其回測 | `trade_plan.py`（/today 訂單票）/ `plan_backtest.py`（60 日重放 + walk-forward 校準，存 `state["plan_calib"]`）|
+| 估值 / 財報 / 論點 / 反駁器 | `valuation.py`（DCF+Comps）/ `earnings_review.py`（/preview）/ `thesis.py`（/thesis 失效價監測）/ `falsifier.py`（/falsify 只證偽不證實＋DSR 帳本）——皆移植自 Anthropic financial-services 方法論 |
+| 情緒 / 台指籌碼 / 再平衡 | `sentiment_fg.py`（雙恐懼貪婪）/ `taifex.py`（三大法人期權）/ `rebalance.py`（HRP 等權重配置）|
 
 **模組慣例**：純邏輯（離線可測）與抓取層（需網路）分離；檔尾附 `if __name__ == "__main__"`
 自我測試；使用者可見文字繁體中文。新模組照這個模式寫。
