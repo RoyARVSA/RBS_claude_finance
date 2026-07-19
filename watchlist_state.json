@@ -259,75 +259,75 @@
   "last_briefing_date": "2026-07-17",
   "earnings_cache": {
     "AAPL": {
-      "checked": "2026-07-17",
+      "checked": "2026-07-19",
       "earnings": "2026-07-30"
     },
     "MSFT": {
-      "checked": "2026-07-17",
+      "checked": "2026-07-19",
       "earnings": "2026-07-29"
     },
     "NVDA": {
-      "checked": "2026-07-17",
+      "checked": "2026-07-19",
       "earnings": "2026-08-26"
     },
     "GOOGL": {
-      "checked": "2026-07-17",
+      "checked": "2026-07-19",
       "earnings": "2026-07-22"
     },
     "AMZN": {
-      "checked": "2026-07-17",
+      "checked": "2026-07-19",
       "earnings": "2026-07-30"
     },
     "TSLA": {
-      "checked": "2026-07-17",
+      "checked": "2026-07-19",
       "earnings": "2026-07-22"
     },
     "META": {
-      "checked": "2026-07-17",
+      "checked": "2026-07-19",
       "earnings": "2026-07-29"
     },
     "AMD": {
-      "checked": "2026-07-17",
+      "checked": "2026-07-19",
       "earnings": "2026-08-04"
     },
     "JPM": {
-      "checked": "2026-07-17",
+      "checked": "2026-07-19",
       "earnings": "2026-10-13"
     },
     "SPY": {
-      "checked": "2026-07-17",
+      "checked": "2026-07-19",
       "earnings": null
     },
     "QQQ": {
-      "checked": "2026-07-17",
+      "checked": "2026-07-19",
       "earnings": null
     },
     "PLTR": {
-      "checked": "2026-07-17",
+      "checked": "2026-07-19",
       "earnings": "2026-08-03"
     },
     "COIN": {
-      "checked": "2026-07-17",
+      "checked": "2026-07-19",
       "earnings": "2026-07-30"
     },
     "TSM": {
-      "checked": "2026-07-17",
+      "checked": "2026-07-19",
       "earnings": "2026-10-15"
     },
     "ARKK": {
-      "checked": "2026-07-17",
+      "checked": "2026-07-19",
       "earnings": null
     },
     "VRT": {
-      "checked": "2026-07-17",
+      "checked": "2026-07-19",
       "earnings": "2026-07-29"
     },
     "GLD": {
-      "checked": "2026-07-17",
+      "checked": "2026-07-19",
       "earnings": null
     },
     "DRAM": {
-      "checked": "2026-07-17",
+      "checked": "2026-07-19",
       "earnings": null
     }
   },
@@ -653,6 +653,6 @@
     "_auto_checked": "2026-07-16",
     "auto": true
   },
-  "last_weekly": "2026-W28",
+  "last_weekly": "2026-W29",
   "theses": {}
 }
