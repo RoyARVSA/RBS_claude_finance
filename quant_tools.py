@@ -142,6 +142,37 @@ def risk_parity_weights(cov, max_iter: int = 2000, tol: float = 1e-10) -> np.nda
 
 # ── CLI 自我測試 ──────────────────────────────────────────────────────────────
 
+def corr_guard(closes, held: list[str], cands: list[str],
+               hi: float = 0.85, mid: float = 0.75, min_obs: int = 30) -> dict:
+    """
+    Portfolio 層分散約束：進場候選 vs 現有持倉的日報酬平均相關性。
+
+    closes: 日收盤 DataFrame（欄=代碼）。回 {cand: {"avg_corr", "scale"}}：
+      平均相關 ≥ hi → scale 0（跳過進場）；≥ mid → 0.5（部位縮半）；否則 1.0。
+    資料不足（有效配對 < 1 或觀測 < min_obs）→ 不約束（scale 1.0, avg None）——
+    寧可放行也不因缺資料誤殺；「10 檔高相關 megacap ≈ 貼著大盤」正是本函數要擋的。
+    """
+    rets = closes.pct_change(fill_method=None)
+    out = {}
+    for c in cands:
+        cors = []
+        for h in held:
+            if h == c or c not in rets.columns or h not in rets.columns:
+                continue
+            pair = rets[[c, h]].dropna()
+            if len(pair) >= min_obs:
+                v = float(pair[c].corr(pair[h]))
+                if v == v:                      # NaN guard（常數序列）
+                    cors.append(v)
+        if not cors:
+            out[c] = {"avg_corr": None, "scale": 1.0}
+            continue
+        avg = sum(cors) / len(cors)
+        scale = 0.0 if avg >= hi else (0.5 if avg >= mid else 1.0)
+        out[c] = {"avg_corr": round(avg, 3), "scale": scale}
+    return out
+
+
 if __name__ == "__main__":
     print("=== ATR 部位 ===")
     print(atr_position_size(account=100000, risk_pct=0.01, entry=150, atr=4.0))
@@ -170,3 +201,25 @@ if __name__ == "__main__":
     print("  weights:", np.round(w_erc, 4), "  sum:", round(float(w_erc.sum()), 6))
     print("  risk contrib %:", np.round(rc / rc.sum(), 4), "(應全部 ~0.20)")
     print("  inverse-vol:", np.round(inverse_vol_weights(vols), 4))
+
+    # ── corr_guard 自測：高相關跳過/縮半、低相關放行、缺資料不約束 ──
+    import pandas as pd
+    rng = np.random.default_rng(7)
+    base = rng.normal(0, 0.01, 80)
+    df = pd.DataFrame({
+        "HELD1": 100 * np.cumprod(1 + base),
+        "HELD2": 100 * np.cumprod(1 + base + rng.normal(0, 0.002, 80)),
+        "TWIN":  100 * np.cumprod(1 + base + rng.normal(0, 0.001, 80)),   # 與持倉幾乎同步
+        "MIDC":  100 * np.cumprod(1 + 0.55 * base + rng.normal(0, 0.008, 80)),
+        "INDEP": 100 * np.cumprod(1 + rng.normal(0, 0.01, 80)),           # 獨立
+        "SHORTH": [np.nan] * 70 + list(100 + np.arange(10.0)),            # 資料不足
+    })
+    g = corr_guard(df, held=["HELD1", "HELD2"], cands=["TWIN", "MIDC", "INDEP", "SHORTH"])
+    assert g["TWIN"]["scale"] == 0.0 and g["TWIN"]["avg_corr"] > 0.9, g["TWIN"]
+    assert g["MIDC"]["scale"] in (0.5, 1.0), g["MIDC"]        # 中相關 → 縮半或放行（種子相依）
+    assert g["INDEP"]["scale"] == 1.0 and abs(g["INDEP"]["avg_corr"]) < 0.5, g["INDEP"]
+    assert g["SHORTH"]["scale"] == 1.0 and g["SHORTH"]["avg_corr"] is None, g["SHORTH"]
+    # 自持不比較：候選同時是持倉 → 不與自己算相關
+    g2 = corr_guard(df, held=["HELD1"], cands=["HELD1"])
+    assert g2["HELD1"]["avg_corr"] is None
+    print("  corr_guard:", {k: v["scale"] for k, v in g.items()}, "OK")

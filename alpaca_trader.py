@@ -139,7 +139,7 @@ def decide_orders(scored: list[dict], positions: dict, equity: float,
     for sym, pos in positions.items():
         s = score_map.get(sym)
         if s is not None:
-            sc = float(s.get("score", 0))
+            sc = float(s.get("score") or 0)
             if sc <= exit_th:
                 qty = abs(float(pos.get("qty", 0)))
                 if qty > 0:
@@ -153,7 +153,8 @@ def decide_orders(scored: list[dict], positions: dict, equity: float,
         cands = sorted(
             [s for s in scored
              if s["ticker"] not in held
-             and float(s.get("score", 0)) >= buy_th
+             and not s.get("no_entry")     # alpha/相關性 veto——引擎故障時安全層不能跟著失效
+             and float(s.get("score") or 0) >= buy_th
              and float(s.get("price", 0) or 0) > 0],
             key=lambda s: -float(s["score"]),
         )
@@ -164,10 +165,16 @@ def decide_orders(scored: list[dict], positions: dict, equity: float,
             price = float(s["price"])
             rps = s.get("risk_per_share")
             rps = float(rps) if rps and float(rps) > 0 else price * 0.05   # 缺 ATR → 退回 5% 停損
+            scale = s.get("entry_scale")                     # 相關性縮量（0.0 合法）
+            try:
+                scale = float(scale) if scale is not None else 1.0
+            except Exception:
+                scale = 1.0
+            scale = min(max(scale, 0.0), 1.0) if scale == scale else 1.0
             qty_risk = (equity * risk_pct) / rps            # ATR 風險部位
             qty_cap  = (equity * max_pct) / price           # 每檔上限
             qty_bp   = bp / price if price > 0 else 0        # 購買力上限
-            qty = int(min(qty_risk, qty_cap, qty_bp))
+            qty = int(min(qty_risk, qty_cap, qty_bp) * scale)
             if qty >= 1:
                 orders.append({"symbol": s["ticker"], "side": "buy", "qty": qty,
                                "reason": f"評分 {float(s['score']):+.2f} ≥ 買進門檻 {buy_th}"})

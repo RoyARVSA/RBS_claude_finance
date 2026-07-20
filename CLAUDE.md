@@ -37,6 +37,7 @@ Streamlit 金融儀表板（`app.py`，13 頁）+ Telegram 訊號 Bot（`scan_si
 | 部位與風險數學 | `quant_tools.py`（ATR/Kelly/風險平價）、`rbs_lib.py`（VaR/CVaR）|
 | 公司基本面 | `fundamentals.py`（主）+ `finnhub_data.py`（限流備援）|
 | 總經 / 產業掃描 / 選股庫 | `macro.py` / `sector_scan.py` / `stock_db.py`（含 AI 供應鏈瓶頸主題）|
+| 大盤濾網 / 市場氣象台 | `market_weather.py`（五因子體質分：廣度/信用/VIX 期限/曲線/銅金，成分可缺席、遲滯三態；`scan_signals.market_regime(state)` 優先用它、退回 MA50）|
 | AI 助理 | `assistant.py`（意圖/context 純邏輯）+ `assistant_tools.py`（工具規劃/解析）+ app.py 的 `page_ai_assistant` 與 `_assistant_*` |
 | 選擇權情緒 / SEC 內部人 | `options_sentiment.py` / `sec_insider.py` |
 | Alpaca 模擬交易 | `trade_engine.py`（Lean 式分層引擎 `decide`：訊號只管進場、出場走停損/追蹤/分批/死錢、保險絲三態；state["engine"] 簿記）+ `alpha_overlay.py`（Alpha 層資訊疊加：內部人/選擇權/空單/財報 veto/恐貪縮倉，state["alpha_cache"] 限額輪替）+ `alpaca_trader.py`（REST client + bracket 單；`decide_orders` 為 legacy 退回路徑）|
