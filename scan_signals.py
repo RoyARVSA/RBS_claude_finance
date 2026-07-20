@@ -40,6 +40,7 @@ Telegram 指令（傳給 Bot）：
   /thesis [TICKER ...]    – 投資論點追蹤：論點/支柱/風險/失效價（自動監測失效與達標）
   /preview TICKER         – 財報前瞻（共識/beat率/隱含波動/三情境）或覆盤（自動判定）
   /fg                     – 雙恐懼貪婪指數（美股 CNN + 加密；晨報亦自動附一行）
+  /weather                – 市場氣象台：五因子體質分（廣度/信用/VIX 期限/曲線/銅金）
   /taifex                 – 台指期籌碼：三大法人淨未平倉 + 選擇權 P/C 比（TAIFEX）
   /briefing               – 立即生成每日 AI 晨報（每交易日 ET 08:30 自動推送）
   /today [帳戶 風險%]     – 當日交易計畫：VWAP/ORB/RVOL 訂單票（別名 /plan）
@@ -313,6 +314,7 @@ def _cmd_help() -> str:
         "`/rebalance [hrp|max_sharpe|min_vol|erc|equal]` — 再平衡顧問（持倉 vs 目標權重 → 加減碼清單）\n"
         "`/dcf AAPL [成長%]` — DCF 內在價值估值（FCF→WACC→終值→隱含股價）\n"
         "`/fg` — 雙恐懼貪婪指數（美股+加密）；`/taifex` — 台指期三大法人籌碼\n"
+        "`/weather` — 市場氣象台：廣度/信用利差/VIX 期限/曲線/銅金比五因子體質分（大盤濾網 v2）\n"
         "`/fund QQQ [vs SMH]` — 基金評估（費用/TE/α/捕獲）；`/fund overlap QQQ,VGT` 重疊度\n"
         "`/falsify MU,WDC vs SMH 126 故事` — 假設反駁器（只證偽不證實；口語模式需 LLM key）\n"
         "`/thesis` — 投資論點追蹤（失效價自動監測；`/thesis help` 看用法）\n"
@@ -871,7 +873,8 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                           "vol_spike_ratio", "cooldown_hours",
                           "account_size", "risk_pct", "atr_mult", "briefing_hour_et",
                           "earnings_alert_days", "at_buy_threshold", "at_exit_threshold",
-                          "at_max_positions", "at_max_position_pct"}
+                          "at_max_positions", "at_max_position_pct",
+                          "corr_hi", "corr_mid"}
             eng_ok = False
             if key.startswith("eng_"):
                 try:
@@ -941,6 +944,18 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                 "設定範例：`/risk 100000 1`（帳戶 $10萬、單筆風險 1%）\n"
                 "或 `/set atr_mult 2`、`/set position_sizing_enabled off`"
             )
+
+        elif cmd == "/weather":
+            try:
+                import market_weather as mw
+                w = mw.get_weather(state)
+                changed = True          # 快取寫進 state
+                if w:
+                    reply = mw.weather_text(w, w.get("regime"))
+                else:
+                    reply = "⚠️ 氣象台成分不足（<3 項資料源可用），目前退回 MA50 濾網判斷"
+            except Exception as e:
+                reply = f"❌ 氣象台讀取失敗：{e}"
 
         elif cmd == "/alpha":
             try:
@@ -2051,11 +2066,20 @@ def apply_cooldown(results: list[dict], state: dict, now: datetime | None = None
     return results, suppressed
 
 
-def market_regime() -> dict | None:
+def market_regime(state: dict | None = None) -> dict | None:
     """
-    MaxDrawdown-style 大盤風險濾網：用 SPY 相對 MA50 與近月動量判斷 risk-on/off。
+    大盤風險濾網。v2：優先用市場氣象台（market_weather 五因子體質分，
+    廣度/信用利差/VIX 期限/殖利率曲線/銅金比，1 小時快取＋遲滯）；
+    成分不足或模組失效 → 退回原 SPY vs MA50 邏輯。
     回傳 {"regime","emoji","label"} 或 None（資料不足）。
     """
+    try:
+        import market_weather as mw
+        w = mw.get_weather(state)
+        if w and w.get("regime"):
+            return w["regime"]
+    except Exception as e:
+        print(f"market_weather 失敗，退回 MA50 濾網 {e}")
     try:
         raw = yf.download("SPY", period="3mo", auto_adjust=True, progress=False)
         if raw.empty:
@@ -2179,7 +2203,7 @@ def daily_briefing(state: dict, force: bool = False) -> str | None:
     now_et = datetime.now(ET)
     date_str = now_et.strftime("%Y-%m-%d (%a)")
 
-    regime = market_regime()
+    regime = market_regime(state)
     indices = _index_snapshot()
     results = scan(state["watchlist"], state["thresholds"],
                    calibration=_calibration_weights(state)) if state["watchlist"] else []
@@ -2704,7 +2728,7 @@ def scan_and_report(state: dict, timestamp: str) -> tuple[str | None, list[dict]
     state["last_scan_time"] = timestamp
 
     # 大盤風險濾網
-    regime = market_regime() if th.get("regime_filter_enabled", True) else None
+    regime = market_regime(state) if th.get("regime_filter_enabled", True) else None
     if regime:
         print(f"Market regime: {regime['label']}")
 
@@ -2835,6 +2859,40 @@ def run_autotrade(state: dict, results: list[dict]) -> str | None:
     except Exception as e:
         print(f"Autotrade: alpha_overlay 失敗，跳過資訊疊加 {e}")
 
+    # Portfolio 層：相關性/集中度控制——與現有持倉高度相關的新倉縮半或跳過
+    # （「10 檔高相關 megacap ≈ 貼著大盤」的直接解方；抓價失敗絕不擋交易）
+    try:
+        buy_th = float(th.get("eng_buy_threshold", config["buy_threshold"]))
+        held_syms = sorted(positions)
+        cands = sorted({s["ticker"] for s in scored
+                        if s["ticker"] not in positions and not s.get("no_entry")
+                        and float(s.get("score") or 0) >= buy_th
+                        and float(s.get("price") or 0) > 0})
+        if cands and held_syms:
+            import quant_tools as qt
+            raw = yf.download(sorted(set(cands) | set(held_syms)), period="3mo",
+                              auto_adjust=True, progress=False, group_by="column")
+            closes = raw["Close"] if (raw is not None and not raw.empty
+                                      and "Close" in raw) else None
+            if closes is not None:
+                guard = qt.corr_guard(closes, held_syms, cands,
+                                      hi=float(th.get("corr_hi", 0.85)),
+                                      mid=float(th.get("corr_mid", 0.75)))
+                for s in scored:
+                    g = guard.get(s["ticker"])
+                    if not g or g.get("avg_corr") is None or g["scale"] >= 1.0:
+                        continue
+                    if g["scale"] <= 0:
+                        s["no_entry"] = True
+                        ao_notes.append(f"🔗 {s['ticker']} 與持倉平均相關 "
+                                        f"{g['avg_corr']:.2f} → 跳過進場（分散不足）")
+                    else:
+                        s["entry_scale"] = g["scale"]
+                        ao_notes.append(f"🔗 {s['ticker']} 與持倉平均相關 "
+                                        f"{g['avg_corr']:.2f} → 部位縮半")
+    except Exception as e:
+        print(f"Autotrade: 相關性控制失敗，跳過 {e}")
+
     # 分層引擎（trade_engine）：出場走價格機制（停損/追蹤/分批/死錢），
     # 訊號衰減只在獲利時了結；regime 三態控曝險。壞掉時退回舊 decide_orders。
     try:
@@ -2847,7 +2905,7 @@ def run_autotrade(state: dict, results: list[dict]) -> str | None:
             config["risk_pct"] = float(config["risk_pct"]) * size_mult
         regime = None
         if th.get("regime_filter_enabled", True):
-            rg = market_regime()
+            rg = market_regime(state)
             regime = rg.get("regime") if rg else None
         today = datetime.now(ET).strftime("%Y-%m-%d")
         orders, eng_state, notes = te.decide(

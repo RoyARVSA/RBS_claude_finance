@@ -52,7 +52,10 @@
 > `/protections` 查保險絲狀態。用 `/positions`、`/pnl` 查績效，`/closeall` 一鍵平倉。
 > 進場評分另疊加 **Alpha 資訊層**（`/alpha` 查看）：SEC 內部人 cluster buy 加分、
 > 選擇權情緒傾斜、空單占流通 ≥15% 降評、財報前 3 天禁新倉、雙恐貪極貪→新倉減半；
-> 12 小時快取、每輪最多抓 4 檔輪替（`/set ao_<參數> 值` 可調）。純模擬不涉真錢。
+> 12 小時快取、每輪最多抓 4 檔輪替（`/set ao_<參數> 值` 可調）。
+> **Portfolio 層**再加相關性控制：新倉與持倉平均相關 ≥0.75 縮半、≥0.85 跳過
+> （`/set corr_hi 0.9`、`/set corr_mid 0.8` 可調）；大盤濾網升級為**市場氣象台**
+> 五因子體質分（`/weather` 查看）。純模擬不涉真錢。
 
 > ☀️ **每日 AI 晨報**：每交易日 ET 08:30 自動推送大盤+觀察清單評分+訊號+最強標的內部人亮點。
 > 設了 `LLM_API_KEY` 會多一段 AI 白話解讀；沒設則只推數據排名（仍可用）。
@@ -71,7 +74,7 @@
 | 風控 | `/risk [帳戶 風險%]`、`/protections`、`/calibrate` |
 | 模擬交易 | `/autotrade on\|off`、`/alpha`（資訊疊加層現況）、`/positions`、`/pnl`、`/journal [N]`、`/rebalance [hrp\|max_sharpe\|min_vol\|erc\|equal]`（持倉再平衡顧問）、`/closeall` |
 | 估值 | `/dcf AAPL [成長%]` — DCF 內在價值（FCF→WACC→期中折現→終值→隱含股價；可覆蓋成長率假設） |
-| 情緒/籌碼 | `/fg`（雙恐懼貪婪：美股 CNN+加密，晨報自動附一行）、`/taifex`（台指期三大法人淨未平倉 + 選擇權 P/C 比） |
+| 情緒/籌碼 | `/fg`（雙恐懼貪婪：美股 CNN+加密，晨報自動附一行）、`/taifex`（台指期三大法人淨未平倉 + 選擇權 P/C 比）、`/weather`（市場氣象台：廣度/信用利差/VIX 期限/曲線/銅金五因子體質分，大盤濾網 v2） |
 | 論點/財報 | `/thesis [TICKER 多\|空 論點 / pillar / risk / cat / target / stop / conv / note / close]`（論點追蹤，失效價自動監測）、`/preview TICKER`（財報前瞻/覆盤自動判定） |
 | 反駁器 | `/falsify TICK1,TICK2 [vs 基準] [持有日] [多\|空] 故事`（8 類反駁測試；口語模式需 LLM key）、`/falsify trials +K`（自報場外試錯餵 DSR）、`/falsify ledger`（假設帳本） |
 | 基金 | `/fund QQQ [vs SMH]`（費用率/追蹤誤差/α β/捕獲率）、`/fund overlap QQQ,VGT`（兩檔持股重疊度） |
