@@ -67,7 +67,11 @@ def _auto_scan(state: dict) -> None:
         print(f"[{now}] 無訊號觸發（或全在冷卻中）")
 
     # 自動交易（Alpaca 模擬；預設關閉）
-    at_msg = ss.run_autotrade(state, results)
+    try:
+        at_msg = ss.run_autotrade(state, results)
+    except Exception as e:
+        print(f"Autotrade error: {e}")   # 不讓例外擋掉後面的 save_state
+        at_msg = None
     if at_msg and TOKEN and CHAT_ID:
         ss._tg_send(TOKEN, CHAT_ID, at_msg)
     ss.save_state(state)

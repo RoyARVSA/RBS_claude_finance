@@ -133,6 +133,12 @@ def decide(scored: list[dict], positions: dict, equity: float, buying_power: flo
     engine 就地更新後回傳（呼叫端持久化）。notes 為給使用者的機制說明行。
     """
     cfg = {**ENGINE_DEFAULTS, **(config or {})}
+    # /set eng_* 不驗證值域 → 引擎端夾住，避免 trail_pct 5 或 guard_n 0 之類造成
+    # 「保本價全平」「恆真保險絲→永久 HALTED」的靜默災難
+    for k in ("trail_pct", "trail_tight_pct"):
+        cfg[k] = min(max(float(cfg[k]), 0.005), 0.5)
+    cfg["stoploss_guard_n"] = max(1, int(cfg["stoploss_guard_n"]))
+    cfg["max_positions"] = max(1, int(cfg["max_positions"]))
     engine = engine if isinstance(engine, dict) and engine.get("pos") is not None \
         else new_engine_state()
     equity = float(equity)
@@ -163,15 +169,32 @@ def decide(scored: list[dict], positions: dict, equity: float, buying_power: flo
     tighten = exp_state != "ACTIVE"
 
     orders: list[dict] = []
-    stop_hits = 0
     exited: set[str] = set()
+
+    def _record_stop(sym):
+        """硬停損（或跳空虧損出場）記事件＋個股冷卻。同股同日去重——賣單卡住
+        跨輪重試不該被保險絲當成多次獨立停損（事件格式 'YYYY-MM-DD|SYM'，
+        _d 只取前 10 字元故日期數學不受影響）。"""
+        ev = engine.setdefault("stop_events", [])
+        key_ = f"{today}|{sym}"
+        if key_ not in ev:
+            ev.append(key_)
+        engine.setdefault("cooldown", {})[sym] = \
+            _plus_days(today, cfg["symbol_cooldown_days"])
 
     # ── Risk 層：逐檔出場檢查（優先序固定：硬停損 → 追蹤 → 分批 → 訊號 → 死錢）
     for sym, pos in positions.items():
         rec = pos_book.get(sym)
         px = price_of(sym)
         qty = abs(float(pos.get("qty") or 0))
-        if not rec or not px or qty <= 0:
+        if not rec or qty <= 0:
+            continue
+        if not px:
+            notes.append(f"⚠️ {sym} 無價格資料，本輪跳過出場檢查")
+            continue
+        if qty < 1:
+            # 零股賣單經 int() 會變 qty=0 被 Alpaca 拒單 → 無限重試+誤觸保險絲
+            notes.append(f"⚠️ {sym} 為零股部位（{qty:g} 股），引擎不處理，請手動平倉")
             continue
         entry, rps = float(rec["entry"]), max(float(rec["rps"]), 0.01)
         rec["peak"] = max(float(rec.get("peak", entry)), px)
@@ -189,10 +212,7 @@ def decide(scored: list[dict], positions: dict, equity: float, buying_power: flo
         if r_peak < float(cfg["trail_activate_r"]) and px <= stop_line:
             _sell(qty, f"硬停損 {stop_line:.2f}（進場 {entry:.2f}−{cfg['stop_mult']}×風險）",
                   "stop_loss")
-            stop_hits += 1
-            engine.setdefault("stop_events", []).append(today)
-            engine.setdefault("cooldown", {})[sym] = \
-                _plus_days(today, cfg["symbol_cooldown_days"])
+            _record_stop(sym)
             exited.add(sym)
             continue
 
@@ -205,6 +225,9 @@ def decide(scored: list[dict], positions: dict, equity: float, buying_power: flo
             if px <= trail_line:
                 _sell(qty, f"追蹤停損 {trail_line:.2f}（峰值 {peak:.2f} 回落 {pct:.0%}，保本地板 {entry:.2f}）",
                       "trailing_stop")
+                if px < entry:
+                    # 跳空穿越保本地板 = 實際虧損出場 → 一樣計入保險絲＋個股冷卻
+                    _record_stop(sym)
                 exited.add(sym)
                 continue
 
@@ -238,14 +261,29 @@ def decide(scored: list[dict], positions: dict, equity: float, buying_power: flo
 
     # ── Protections：停損保險絲（freqtrade StoplossGuard）
     win = int(cfg["stoploss_guard_days"])
+
+    def _ev_ok(e):
+        try:
+            _d(e)
+            return True
+        except Exception:
+            return False   # 壞事件直接剔除，否則 _days_between 回 0 → 永遠算「今天」
+
     events = [e for e in engine.get("stop_events", [])
-              if 0 <= _days_between(e, today) <= win * 2]
+              if _ev_ok(e) and 0 <= _days_between(e, today) <= win * 2]
     engine["stop_events"] = events
     recent = [e for e in events if _days_between(e, today) <= win]
-    if len(recent) >= int(cfg["stoploss_guard_n"]) and exp_state != "HALTED":
+    # 同一檔股票在窗內只算一次（賣單卡住多日重試 ≠ 多次獨立停損）；
+    # 舊格式（純日期、無代碼）各算一次
+    n_recent = len({e.split("|", 1)[1] for e in recent if "|" in e}) \
+        + sum(1 for e in recent if "|" not in e)
+    if n_recent >= int(cfg["stoploss_guard_n"]) and exp_state != "HALTED":
         engine["halted_until"] = _plus_days(today, cfg["account_cooldown_days"])
         exp_state = "HALTED"
-        notes.append(f"🚨 停損保險絲：{win} 天內 {len(recent)} 次硬停損 → "
+        # 觸發即消耗掉這批事件——否則到期日同批舊事件立刻再武裝，
+        # 名目 3 天冷卻實際變 9 天、且重複推送誤導性警報
+        engine["stop_events"] = [e for e in events if e not in recent]
+        notes.append(f"🚨 停損保險絲：{win} 天內 {n_recent} 次硬停損 → "
                      f"全帳戶暫停新倉至 {engine['halted_until']}")
     # 冷卻期滿自動解除
     if engine.get("halted_until"):
@@ -335,11 +373,17 @@ def engine_status_text(engine: dict | None, today: str, cfg: dict | None = None)
     win = int(cfg["stoploss_guard_days"])
     recent = [ev for ev in e.get("stop_events", []) if _days_between(ev, today) <= win]
     halted = e.get("halted_until")
+    try:
+        halted_active = bool(halted) and _d(today) < _d(halted)
+    except Exception:
+        halted_active = False
+    n_recent = len({ev.split("|", 1)[1] for ev in recent if "|" in ev}) \
+        + sum(1 for ev in recent if "|" not in ev)
     lines = ["⚙️ *交易引擎保險絲*"]
-    if halted and _d(today) < _d(halted):
+    if halted_active:
         lines.append(f"🚨 全帳戶冷卻中（至 {halted}）——停損保險絲觸發")
     else:
-        lines.append(f"🟢 保險絲正常（{win} 天內硬停損 {len(recent)}/{int(cfg['stoploss_guard_n'])} 次）")
+        lines.append(f"🟢 保險絲正常（{win} 天內硬停損 {n_recent}/{int(cfg['stoploss_guard_n'])} 次）")
     cd = {s: u for s, u in (e.get("cooldown") or {}).items()
           if _days_between(today, u) > 0}
     if cd:
@@ -389,7 +433,7 @@ if __name__ == "__main__":
         [{"ticker": "TSLA", "score": 0.1, "price": 96.5}],
         {"TSLA": mk_pos(10, 100, 96.5)}, 100000, 50000, eng, "neutral", None, T)
     assert orders and orders[0]["mechanism"] == "stop_loss", orders
-    assert eng["stop_events"] == [T] and "TSLA" in eng["cooldown"]
+    assert eng["stop_events"] == [f"{T}|TSLA"] and "TSLA" in eng["cooldown"]
     assert "TSLA" not in eng["pos"]
     print("✅ 3 硬停損 → 事件記錄 + 冷卻 + 清簿")
 
@@ -444,7 +488,8 @@ if __name__ == "__main__":
     assert any(o["mechanism"] == "stop_loss" for o in orders)
     assert not any(o["side"] == "buy" for o in orders), orders
     assert eng["halted_until"] == "2026-07-23", eng["halted_until"]
-    print("✅ 8 停損保險絲 → 全帳戶暫停新倉")
+    assert eng["stop_events"] == [], eng["stop_events"]   # 觸發即消耗，冷卻天數才真實
+    print("✅ 8 停損保險絲 → 暫停新倉 + 事件消耗（不再武裝）")
 
     # 9) REDUCING（risk_off）：不進新倉、不加碼，但出場照常
     orders, _, notes = decide(
@@ -523,6 +568,58 @@ if __name__ == "__main__":
     assert eng["halted_until"] is None
     assert any(o["side"] == "buy" for o in orders), orders
     print("✅ 15 冷卻期滿自動解除")
+
+    # 16) 零股部位 → 不下 qty=0 賣單（會被 Alpaca 拒單→無限重試→誤觸保險絲）
+    eng = mk_eng("FRAC", 100, 3)
+    orders, eng, notes = decide(
+        [{"ticker": "FRAC", "score": 0.1, "price": 90.0}],
+        {"FRAC": mk_pos(0.5, 100, 90)}, 100000, 50000, eng, "neutral", None, T)
+    assert orders == [] and any("零股" in n for n in notes), (orders, notes)
+    assert eng["stop_events"] == []
+    print("✅ 16 零股部位不下單、不記停損事件")
+
+    # 17) 賣單卡住跨輪重試 → 同股同日事件去重（保險絲不被污染）
+    eng = mk_eng("STUCK", 100, 3)
+    orders, eng, _ = decide(
+        [{"ticker": "STUCK", "score": 0.1, "price": 94.0}],
+        {"STUCK": mk_pos(10, 100, 94)}, 100000, 50000, eng, "neutral", None, T)
+    assert orders and orders[0]["mechanism"] == "stop_loss"
+    # 部位還在（賣單沒成交）→ 下一輪 sync 收養後再次觸發停損
+    orders, eng, _ = decide(
+        [{"ticker": "STUCK", "score": 0.1, "price": 94.0}],
+        {"STUCK": mk_pos(10, 100, 94)}, 100000, 50000, eng, "neutral", None, T)
+    assert eng["stop_events"] == [f"{T}|STUCK"], eng["stop_events"]
+    print("✅ 17 卡單重試不重複計停損事件")
+
+    # 18) 追蹤啟動後跳空穿越保本地板（實際虧損出場）→ 也計保險絲 + 冷卻
+    eng = mk_eng("GAP", 100, 5, peak=110)
+    orders, eng, _ = decide(
+        [{"ticker": "GAP", "score": 0.3, "price": 80.0}],
+        {"GAP": mk_pos(10, 100, 80)}, 100000, 50000, eng, "risk_on", None, T)
+    assert orders and orders[0]["mechanism"] == "trailing_stop", orders
+    assert eng["stop_events"] == [f"{T}|GAP"] and "GAP" in eng["cooldown"]
+    print("✅ 18 跳空虧損出場計入保險絲")
+
+    # 19) 值域夾制：guard_n=0 不得恆真觸發；trail_pct=5 夾到 0.5 不亂平倉
+    orders, eng, notes = decide(
+        [{"ticker": "GOOD", "score": 0.9, "price": 50.0}],
+        {}, 100000, 50000, new_engine_state(), "risk_on",
+        {"stoploss_guard_n": 0}, T)
+    assert eng["halted_until"] is None and any(o["side"] == "buy" for o in orders)
+    eng = mk_eng("CLMP", 100, 5, peak=110)
+    orders, _, _ = decide(
+        [{"ticker": "CLMP", "score": 0.6, "price": 100.5}],
+        {"CLMP": mk_pos(10, 100, 100.5)}, 100000, 50000, eng, "risk_on",
+        {"trail_pct": 5, "trail_tight_pct": 5}, T)
+    assert not any(o["mechanism"] == "trailing_stop" for o in orders), orders
+    print("✅ 19 /set 亂值被引擎夾住")
+
+    # 20) 壞日期事件被剔除（不會永遠賴在保險絲視窗裡）
+    eng = new_engine_state()
+    eng["stop_events"] = ["not-a-date", "2026-07-19|OK"]
+    _, eng, _ = decide([], {}, 100000, 50000, eng, "neutral", None, T)
+    assert eng["stop_events"] == ["2026-07-19|OK"], eng["stop_events"]
+    print("✅ 20 壞日期事件剔除")
 
     print("\n─ engine_status_text ─")
     eng = mk_eng("AAPL", 100, 3)

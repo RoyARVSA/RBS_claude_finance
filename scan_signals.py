@@ -646,6 +646,8 @@ def _cmd_positions() -> str:
     except Exception:
         return "❌ 找不到 alpaca_trader.py"
     pos = at.get_positions(key, secret)
+    if pos is None:
+        return "❌ 持倉讀取失敗（Alpaca API 暫時異常，稍後再試）"
     if not pos:
         return "📭 目前無持倉"
     lines = ["📊 *模擬持倉*\n"]
@@ -1408,7 +1410,7 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                          f"⚖️ 計算再平衡中（目標：{rbl.SCHEMES[sch]}）…")
                 try:
                     import alpaca_trader as at
-                    pos = at.get_positions(key, secret)
+                    pos = at.get_positions(key, secret) or {}
                     qty = {s: p["qty"] for s, p in pos.items() if p["qty"] > 0}  # 空頭不進權重
                     if len(qty) < 2:
                         reply = "⚠️ Alpaca 模擬多頭持倉不足 2 檔，無法做配置優化（先 /autotrade on 建倉）"
@@ -2781,6 +2783,10 @@ def run_autotrade(state: dict, results: list[dict]) -> str | None:
         print("Autotrade: 帳戶讀取失敗")
         return None
     positions = at.get_positions(key, secret)
+    if positions is None:
+        # H1 防護：API 暫時失敗 ≠ 空倉。當成空倉會讓引擎簿記全滅＋重複買進超限。
+        print("Autotrade: 持倉讀取失敗，本輪跳過")
+        return None
     equity = at._f(account.get("equity")) or 0.0
     bp = at._f(account.get("buying_power")) or 0.0
 
@@ -2820,8 +2826,13 @@ def run_autotrade(state: dict, results: list[dict]) -> str | None:
             print(f"Engine: {n}")
     except Exception as e:
         print(f"Autotrade: trade_engine 失敗，退回舊決策邏輯 {e}")
-        orders = at.decide_orders(scored, positions, equity, bp, config)
         notes = []
+        try:
+            orders = at.decide_orders(scored, positions, equity, bp, config)
+        except Exception as e2:
+            # 兩層都掛就本輪放棄，別讓例外穿出去毀掉 save_state（冷卻紀錄會遺失）
+            print(f"Autotrade: 舊決策邏輯也失敗，本輪跳過 {e2}")
+            return None
 
     if not orders:
         print("Autotrade: 無符合下單條件")
@@ -2940,7 +2951,11 @@ def main() -> int:
             print("Telegram sent." if ok else "Telegram send failed.")
 
     # Step 4.5: Auto-trade (Alpaca paper; gated by autotrade_enabled + keys + open)
-    at_msg = run_autotrade(state, results)
+    try:
+        at_msg = run_autotrade(state, results)
+    except Exception as e:
+        print(f"Autotrade error: {e}")   # 不讓例外毀掉 Step 5 save_state
+        at_msg = None
     if at_msg and TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
         _tg_send(TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, at_msg)
 

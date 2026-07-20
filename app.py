@@ -5858,7 +5858,7 @@ def page_paper_trading():
 
     with st.spinner("讀取 Alpaca 帳戶…"):
         acc = at.get_account(key, secret)
-        positions = at.get_positions(key, secret)
+        positions = at.get_positions(key, secret) or {}
         orders = at.get_orders(key, secret, limit=20)
         hist = at.portfolio_history(key, secret, period="3M")
 

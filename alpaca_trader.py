@@ -217,13 +217,17 @@ def get_account(key: str, secret: str) -> dict | None:
         return None
 
 
-def get_positions(key: str, secret: str) -> dict:
-    """回 {symbol: {qty, avg_entry_price, market_value, unrealized_pl, unrealized_plpc}}。"""
+def get_positions(key: str, secret: str) -> dict | None:
+    """
+    回 {symbol: {qty, avg_entry_price, market_value, unrealized_pl, unrealized_plpc}}。
+    API 失敗回 None（與「真的空倉 {}」區分——trade_engine 的簿記同步以 broker 為真相，
+    把暫時性網路錯誤當成空倉會導致簿記全滅＋重複買進）。
+    """
     import requests
     try:
         r = requests.get(f"{_base()}/v2/positions", headers=_headers(key, secret), timeout=20)
         if not r.ok:
-            return {}
+            return None
         out = {}
         for p in r.json():
             out[p["symbol"]] = {
@@ -235,7 +239,7 @@ def get_positions(key: str, secret: str) -> dict:
             }
         return out
     except Exception:
-        return {}
+        return None
 
 
 def submit_order(key: str, secret: str, symbol: str, qty: float, side: str) -> tuple[bool, str]:
