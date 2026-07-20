@@ -28,7 +28,8 @@ Telegram 指令（傳給 Bot）：
   /whales [編號]           – 超級投資人 13F 季度持倉增減（巴菲特/Burry/Ackman…）
   /alert TICKER 價位      – 到價警報：突破/跌破時推播，觸發後自動移除（/alert 看清單）
   /earnings [天數]        – 觀察清單近期財報日（晨報也會自動提醒 N 天內財報）
-  /autotrade on|off       – Alpaca 模擬自動交易總開關（預設關）
+  /autotrade on|off       – Alpaca 模擬自動交易總開關（預設關；trade_engine 分層引擎：
+                            訊號只管進場，出場由停損/追蹤/分批/死錢釋放驅動）
   /positions /pnl /closeall – 模擬持倉 / 帳戶報酬 / 一鍵平倉
   /journal [N]            – 交易日誌（每筆自動交易的評分與原因）
   /rebalance [配置法]     – 再平衡顧問：Alpaca 持倉 vs HRP/Sharpe/風險平價 → 加減碼清單
@@ -301,8 +302,9 @@ def _cmd_help() -> str:
         "`/plantest opt [apply]` — 參數尋優：ORB×停損×R:R 掃 27 組，驗證段勝過預設才推薦\n"
         "`/weekly` — 立即生成每週深度週報（指數/強弱/計分板/RRG/下週行事曆）\n"
         "`/committee NVDA`（或 `/cmt`）— 開一場機構決策會議（需 LLM key，約 1-3 分）\n\n"
-        "🤖 *模擬交易（Alpaca paper）*\n"
-        "`/autotrade on|off` — 自動下模擬單（預設關）\n"
+        "🤖 *模擬交易（Alpaca paper・分層引擎）*\n"
+        "`/autotrade on|off` — 自動下模擬單（預設關）；出場走停損/追蹤/分批機制，"
+        "訊號轉弱只在獲利時了結（`/protections` 看保險絲）\n"
         "`/positions` — 目前持倉 + 損益\n"
         "`/pnl` — 帳戶淨值 + 報酬\n"
         "`/journal [N]` — 交易日誌（含評分/原因）\n"
@@ -866,11 +868,18 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                           "account_size", "risk_pct", "atr_mult", "briefing_hour_et",
                           "earnings_alert_days", "at_buy_threshold", "at_exit_threshold",
                           "at_max_positions", "at_max_position_pct"}
+            eng_ok = False
+            if key.startswith("eng_"):
+                try:
+                    import trade_engine as te
+                    eng_ok = key[4:] in te.ENGINE_DEFAULTS
+                except Exception:
+                    pass
             if key in bool_keys:
                 th[key] = val in ("on", "true", "1", "yes")
                 changed = True
                 reply = f"✅ `{key}` → {'開啟' if th[key] else '關閉'}"
-            elif key in float_keys:
+            elif key in float_keys or eng_ok:
                 try:
                     th[key] = float(val)
                     changed = True
@@ -878,7 +887,8 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                 except ValueError:
                     reply = f"❌ 無效數值：{val}"
             else:
-                reply = f"❌ 未知參數：{key}\n可用：{', '.join(bool_keys | float_keys)}"
+                reply = (f"❌ 未知參數：{key}\n可用：{', '.join(bool_keys | float_keys)}\n"
+                         "引擎參數用 `eng_` 前綴，如 `/set eng_trail_pct 0.1`")
 
         elif cmd == "/scan":
             reply = "🔍 掃描中，請稍候約 30 秒…"
@@ -944,6 +954,12 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                 "調整：`/set cooldown_hours 4`、`/set cooldown_enabled off`、"
                 "`/set regime_filter_enabled off`"
             )
+            try:
+                import trade_engine as te
+                reply += "\n\n" + te.engine_status_text(
+                    state.get("engine"), datetime.now(ET).strftime("%Y-%m-%d"))
+            except Exception:
+                pass
 
         elif cmd in ("/fundamentals", "/f"):
             if not args:
@@ -2783,14 +2799,37 @@ def run_autotrade(state: dict, results: list[dict]) -> str | None:
         "max_position_pct": th.get("at_max_position_pct", 0.15),
         "risk_pct":         th.get("risk_pct", 0.01),
     }
-    orders = at.decide_orders(scored, positions, equity, bp, config)
+
+    # 分層引擎（trade_engine）：出場走價格機制（停損/追蹤/分批/死錢），
+    # 訊號衰減只在獲利時了結；regime 三態控曝險。壞掉時退回舊 decide_orders。
+    try:
+        import trade_engine as te
+        for k in te.ENGINE_DEFAULTS:                     # /set eng_<參數> 覆蓋
+            if f"eng_{k}" in th:
+                config[k] = th[f"eng_{k}"]
+        regime = None
+        if th.get("regime_filter_enabled", True):
+            rg = market_regime()
+            regime = rg.get("regime") if rg else None
+        today = datetime.now(ET).strftime("%Y-%m-%d")
+        orders, eng_state, notes = te.decide(
+            scored, positions, equity, bp,
+            state.get("engine"), regime, config, today)
+        state["engine"] = eng_state
+        for n in notes:
+            print(f"Engine: {n}")
+    except Exception as e:
+        print(f"Autotrade: trade_engine 失敗，退回舊決策邏輯 {e}")
+        orders = at.decide_orders(scored, positions, equity, bp, config)
+        notes = []
+
     if not orders:
         print("Autotrade: 無符合下單條件")
         return None
 
     score_by_sym = {s["ticker"]: s.get("score") for s in scored}
     now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    lines = ["🤖 *自動交易執行*（Alpaca 模擬）"]
+    lines = ["🤖 *自動交易執行*（Alpaca 模擬・分層引擎）"]
     journal_entries = []
     for o in orders:
         ok, msg = at.submit_order(key, secret, o["symbol"], o["qty"], o["side"])
@@ -2800,9 +2839,13 @@ def run_autotrade(state: dict, results: list[dict]) -> str | None:
         journal_entries.append({
             "time": now_iso, "symbol": o["symbol"], "side": o["side"],
             "qty": int(o["qty"]), "score": score_by_sym.get(o["symbol"]),
-            "reason": o["reason"], "submitted": ok,
+            "reason": o["reason"], "mechanism": o.get("mechanism"),
+            "submitted": ok,
             "error": None if ok else msg,
         })
+    for n in notes:
+        if n.startswith(("⏸", "🚨")) or "曝險狀態" in n:
+            lines.append(f"_{n}_")
     if journal_entries:
         at.append_journal(JOURNAL_FILE, journal_entries)
     print(f"Autotrade: 送出 {len(orders)} 筆")

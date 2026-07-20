@@ -110,6 +110,9 @@ def decide_orders(scored: list[dict], positions: dict, equity: float,
     """
     給定評分、目前持倉、帳戶淨值與購買力，決定要下哪些單（純函數）。
 
+    ⚠️ Legacy：bot 端已改用 trade_engine.decide（分層引擎：出場與訊號脫鉤、
+    追蹤停損、保險絲），此函數僅作為引擎故障時的退回路徑保留。
+
     scored:    [{"ticker","score","price","risk_per_share"(選填)}, ...]
     positions: {symbol: {"qty": float, ...}}  目前 Alpaca 持倉
     回傳:      [{"symbol","side","qty","reason"}, ...]（side: buy/sell）

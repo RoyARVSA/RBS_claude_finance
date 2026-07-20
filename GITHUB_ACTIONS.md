@@ -44,8 +44,13 @@
 | `ALPACA_SECRET_KEY` | 選填 | Alpaca paper secret |
 
 > 🤖 **Alpaca 模擬交易**：預設**關閉**，須 Telegram 傳 `/autotrade on` 才會下單，
-> 且僅在美股開盤時、依掃描評分自動下*模擬*單。用 `/positions`、`/pnl` 查績效，
-> `/closeall` 一鍵平倉。純模擬不涉真錢。
+> 且僅在美股開盤時、由**分層交易引擎**（`trade_engine.py`，重製自 freqtrade / Lean /
+> nautilus 機制）自動下*模擬*單：評分只決定進場；出場走硬停損、+1R 保本追蹤停損、
+> +1.5R 分批鎖利、死錢釋放——評分轉弱只在獲利時了結（虧損中續抱、不在低點殺出）。
+> 帳戶層保險絲：7 天 3 次硬停損→冷卻 3 天；回撤 ≥10% 或大盤 risk_off →暫停新倉；
+> 贏家每 +1R 加碼最多 2 次。引擎參數可用 `/set eng_<參數> 值` 調（如 `/set eng_trail_pct 0.1`），
+> `/protections` 查保險絲狀態。用 `/positions`、`/pnl` 查績效，`/closeall` 一鍵平倉。
+> 純模擬不涉真錢。
 
 > ☀️ **每日 AI 晨報**：每交易日 ET 08:30 自動推送大盤+觀察清單評分+訊號+最強標的內部人亮點。
 > 設了 `LLM_API_KEY` 會多一段 AI 白話解讀；沒設則只推數據排名（仍可用）。
