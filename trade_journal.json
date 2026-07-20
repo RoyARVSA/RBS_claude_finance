@@ -128,5 +128,16 @@
     "reason": "評分 -0.35 ≤ 出場門檻 -0.2",
     "submitted": true,
     "error": null
+  },
+  {
+    "time": "2026-07-20T16:53:07Z",
+    "symbol": "MSFT",
+    "side": "buy",
+    "qty": 36,
+    "score": 0.563,
+    "reason": "評分 +0.56 ≥ 門檻 0.5（風險部位 36 股）",
+    "mechanism": "entry",
+    "submitted": true,
+    "error": null
   }
 ]
