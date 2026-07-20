@@ -110,6 +110,9 @@ def decide_orders(scored: list[dict], positions: dict, equity: float,
     """
     給定評分、目前持倉、帳戶淨值與購買力，決定要下哪些單（純函數）。
 
+    ⚠️ Legacy：bot 端已改用 trade_engine.decide（分層引擎：出場與訊號脫鉤、
+    追蹤停損、保險絲），此函數僅作為引擎故障時的退回路徑保留。
+
     scored:    [{"ticker","score","price","risk_per_share"(選填)}, ...]
     positions: {symbol: {"qty": float, ...}}  目前 Alpaca 持倉
     回傳:      [{"symbol","side","qty","reason"}, ...]（side: buy/sell）
@@ -214,13 +217,17 @@ def get_account(key: str, secret: str) -> dict | None:
         return None
 
 
-def get_positions(key: str, secret: str) -> dict:
-    """回 {symbol: {qty, avg_entry_price, market_value, unrealized_pl, unrealized_plpc}}。"""
+def get_positions(key: str, secret: str) -> dict | None:
+    """
+    回 {symbol: {qty, avg_entry_price, market_value, unrealized_pl, unrealized_plpc}}。
+    API 失敗回 None（與「真的空倉 {}」區分——trade_engine 的簿記同步以 broker 為真相，
+    把暫時性網路錯誤當成空倉會導致簿記全滅＋重複買進）。
+    """
     import requests
     try:
         r = requests.get(f"{_base()}/v2/positions", headers=_headers(key, secret), timeout=20)
         if not r.ok:
-            return {}
+            return None
         out = {}
         for p in r.json():
             out[p["symbol"]] = {
@@ -232,7 +239,7 @@ def get_positions(key: str, secret: str) -> dict:
             }
         return out
     except Exception:
-        return {}
+        return None
 
 
 def submit_order(key: str, secret: str, symbol: str, qty: float, side: str) -> tuple[bool, str]:

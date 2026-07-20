@@ -17,7 +17,7 @@ Streamlit 網頁應用 + 獨立的訊號掃描 Bot（GitHub Actions 排程版 / 
 |------|------|
 | 💬 AI 助理 | **資深分析師模式＋🏛 機構決策委員會（分析師×4→多空對辯→交易員→硬風控→投資經理，與量化評分交叉比較；支援多檔同場會議、深度模式(研究主管+風控對辯)、新聞逐篇多空標注、會議紀錄下載、Telegram 推播）＋📊 決策計分板（量化 vs 委員會誰更準）＋單輪多空對辯＋反思記憶** |
 | 🏠 市場總覽 | 即時指數/板塊/宏觀指標、**總經數據(FRED)**、市場快訊、**AI 自主市場分析**、**🎭 雙恐懼貪婪指數（美股 CNN + 加密，雙極端警示）**、**🇹🇼 台指期籌碼（三大法人淨未平倉 + 選擇權 P/C 比，TAIFEX）**、**🩺 資料源健康檢查（9 大數據源一鍵驗收）** |
-| 📈 持倉分析 | 多資產組合：權益曲線、回撤、Sharpe、IR、Beta、**績效報告（CAGR/Sortino/Calmar/月報酬熱力圖/回撤期間）**、**交易帳本（成本基礎/TWR/XIRR/股息收入）**、**⚖️ 再平衡顧問（HRP/最大 Sharpe/風險平價 目標權重 → 具體加減碼股數清單）** |
+| 📈 持倉分析 | 多資產組合：權益曲線、回撤、Sharpe、IR、Beta、**績效報告（CAGR/Sortino/Calmar/月報酬熱力圖/回撤期間）**、**交易帳本（成本基礎/TWR/XIRR/股息收入）**、**⚖️ 再平衡顧問（HRP/最大 Sharpe/風險平價 目標權重 → 具體加減碼股數清單）**、**🎯 基金/ETF 評估（費用率、追蹤誤差、α/β、上下行捕獲、兩檔持股重疊度）** |
 | ⚠️ 風險管理 | VaR/CVaR、蒙地卡羅、Kupiec 回測、壓力測試、**風險平價 + 效率前緣（MPT）+ HRP 階層風險平價** |
 | 🔍 股票研究 | K 線+RSI、AI 深度報告、市場篩選器、**訊號回測 + 參數最佳化（含參數熱力圖與 walk-forward 逐段檢視）**、TradingView、**選擇權情緒(Put/Call、IV 偏斜)**、**🔨 假設反駁器（8 類測試推翻投資故事，只證偽不證實）** |
 | 🏢 公司分析 | **基本面體質：財務健康評分、估值旗標、三表趨勢、AI 解讀、分析師共識+EPS Beat 率、做空籌碼(FINRA/FTD)、台股三大法人買賣超(上市 TWSE + 上櫃 TPEX)、SEC 內部人交易(Form 4)、💰 DCF+Comps 內在價值估值（投行標準流程：FCF/WACC/期中折現/敏感度表＋同業倍數回推，方法論採 Anthropic 官方 financial-services skills）、📄 一鍵完整研究報告（彙整全部區塊下載）** |
@@ -41,7 +41,14 @@ Streamlit 網頁應用 + 獨立的訊號掃描 Bot（GitHub Actions 排程版 / 
 - **部位建議**：每個訊號附 ATR 風險基準的建議股數
 - **財報行事曆提醒**：觀察清單標的財報前 N 天自動提醒（晨報 + `/earnings`）
 - **到價警報**：`/alert AAPL 200` 突破/跌破即推播，觸發後自動移除（上限 20 個）
-- **Alpaca 模擬交易**：訊號自動下模擬單驗證策略實效（預設關閉，`/autotrade on` 啟用）
+- **Alpaca 模擬交易**：分層自動交易引擎（重製自 freqtrade / QuantConnect Lean / nautilus 的成熟機制）——
+  訊號只決定進場；出場由硬停損、+1R 保本追蹤停損、+1.5R 分批鎖利、死錢釋放驅動，
+  訊號轉弱只在獲利時了結（虧損中續抱等待、不在低點殺出）；
+  停損保險絲（7 天 3 次硬停損→全帳戶冷卻）、回撤 10% / 大盤 risk_off →停新倉、
+  贏家每 +1R 加碼最多 2 次（預設關閉，`/autotrade on` 啟用）
+- **Alpha 資訊疊加層**（`/alpha`）：進場評分自動疊加 SEC 內部人（cluster buy 加分）、
+  選擇權情緒（PCR/IV 偏斜）、空單占流通降評、財報前 3 天禁新倉、
+  雙恐貪極度貪婪→新倉風險減半；12 小時快取＋每輪限額輪替抓取（不拖慢 cron）
 - **當日交易計畫**：`/today [帳戶 風險%]` 盤中訂單票（VWAP/ORB/RVOL 進場、停損/停利/股數、財報日迴避）；進場票自動記入決策計分板（隔日結算，與量化/委員會同板比較）
 - **當日計畫歷史回測**：`/plantest` 用過去 ~60 交易日 5 分 K 逐日重放訂單票（無前視、扣成本、停損優先），統計各型態實證勝率/R 期望值；`/plantest apply` 把 walk-forward 校準（負期望型態停用、不穩定降信心）套進 /today——**讓判定吃歷史實證自我修正**；**每週自動重跑校準**（動作有變時推播通知，`/set plan_autocal_enabled off` 關閉）
 - **參數尋優**：`/plantest opt` 掃 ORB 分鐘 × 停損 ATR 倍數 × 目標 R:R 共 27 組參數，訓練段排序、**驗證段沒明確勝過現行預設就不推薦**（防過擬合）；`opt apply` 一鍵套用推薦參數＋對應校準
@@ -138,10 +145,13 @@ sentiment_fg.py         雙恐懼貪婪指數：美股 CNN（含鏡像備援）+
 thesis.py               投資論點追蹤器：論點/支柱/失效價自動監測（方法論：Anthropic thesis-tracker）
 earnings_review.py      財報前瞻/覆盤：共識、beat 率、隱含波動、三情境（方法論：Anthropic earnings skills）
 falsifier.py            假設反駁器：block bootstrap/regime/動能混淆/跨市場/DSR 帳本（只證偽不證實）
+fund_eval.py            基金/ETF 評估：費用率/追蹤誤差/α β/捕獲率/持股重疊（yfinance funds_data）
 taifex.py               台指期籌碼：三大法人淨未平倉 + 選擇權 P/C 比（TAIFEX 免費公開資料）
 tw_flows.py             台股三大法人買賣超（TWSE T86 上市 + TPEX 上櫃，免 key）：外資/投信/自營 + 連買天數
 committee.py            機構決策委員會：角色提示/立場解析/硬風控閘門/量化交叉比較，支援多檔與深度模式（TradingAgents 式）
-alpaca_trader.py        Alpaca 紙上交易：下單決策(decide_orders) + REST client
+trade_engine.py         分層自動交易引擎：追蹤停損/分批/保險絲/三態曝險（純邏輯）
+alpha_overlay.py        Alpha 資訊疊加層：內部人/選擇權/空單/財報 veto/恐貪縮倉
+alpaca_trader.py        Alpaca 紙上交易 REST client + bracket 單（decide_orders=legacy）
 stock_db.py             選股資料庫（5 市場、30+ 產業、200+ 標的，含 AI 供應鏈瓶頸主題）
 rbs_lib.py              風險計算函式庫（VaR/CVaR/共變異數/情境）
 streamlit_app.py        雲端部署進入點

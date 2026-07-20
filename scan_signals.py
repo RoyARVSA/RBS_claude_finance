@@ -28,11 +28,14 @@ Telegram 指令（傳給 Bot）：
   /whales [編號]           – 超級投資人 13F 季度持倉增減（巴菲特/Burry/Ackman…）
   /alert TICKER 價位      – 到價警報：突破/跌破時推播，觸發後自動移除（/alert 看清單）
   /earnings [天數]        – 觀察清單近期財報日（晨報也會自動提醒 N 天內財報）
-  /autotrade on|off       – Alpaca 模擬自動交易總開關（預設關）
+  /autotrade on|off       – Alpaca 模擬自動交易總開關（預設關；trade_engine 分層引擎：
+                            訊號只管進場，出場由停損/追蹤/分批/死錢釋放驅動）
+  /alpha                  – Alpha 資訊疊加層：內部人/選擇權情緒/空單/財報迴避/恐貪縮倉
   /positions /pnl /closeall – 模擬持倉 / 帳戶報酬 / 一鍵平倉
   /journal [N]            – 交易日誌（每筆自動交易的評分與原因）
   /rebalance [配置法]     – 再平衡顧問：Alpaca 持倉 vs HRP/Sharpe/風險平價 → 加減碼清單
   /dcf TICKER [成長%]     – DCF 內在價值估值（FCF/WACC/終值/隱含股價；投行標準流程）
+  /fund SYM [vs BENCH]    – 基金/ETF 評估：費用率/追蹤誤差/α β/捕獲率；overlap 比重疊
   /falsify [規格|故事]    – 假設反駁器：8 類測試推翻投資故事（bootstrap/regime/動能/DSR）
   /thesis [TICKER ...]    – 投資論點追蹤：論點/支柱/風險/失效價（自動監測失效與達標）
   /preview TICKER         – 財報前瞻（共識/beat率/隱含波動/三情境）或覆盤（自動判定）
@@ -300,14 +303,17 @@ def _cmd_help() -> str:
         "`/plantest opt [apply]` — 參數尋優：ORB×停損×R:R 掃 27 組，驗證段勝過預設才推薦\n"
         "`/weekly` — 立即生成每週深度週報（指數/強弱/計分板/RRG/下週行事曆）\n"
         "`/committee NVDA`（或 `/cmt`）— 開一場機構決策會議（需 LLM key，約 1-3 分）\n\n"
-        "🤖 *模擬交易（Alpaca paper）*\n"
-        "`/autotrade on|off` — 自動下模擬單（預設關）\n"
+        "🤖 *模擬交易（Alpaca paper・分層引擎）*\n"
+        "`/autotrade on|off` — 自動下模擬單（預設關）；出場走停損/追蹤/分批機制，"
+        "訊號轉弱只在獲利時了結（`/protections` 看保險絲）\n"
+        "`/alpha` — Alpha 資訊疊加層現況（內部人/選擇權/空單/財報迴避/恐貪縮倉）\n"
         "`/positions` — 目前持倉 + 損益\n"
         "`/pnl` — 帳戶淨值 + 報酬\n"
         "`/journal [N]` — 交易日誌（含評分/原因）\n"
         "`/rebalance [hrp|max_sharpe|min_vol|erc|equal]` — 再平衡顧問（持倉 vs 目標權重 → 加減碼清單）\n"
         "`/dcf AAPL [成長%]` — DCF 內在價值估值（FCF→WACC→終值→隱含股價）\n"
         "`/fg` — 雙恐懼貪婪指數（美股+加密）；`/taifex` — 台指期三大法人籌碼\n"
+        "`/fund QQQ [vs SMH]` — 基金評估（費用/TE/α/捕獲）；`/fund overlap QQQ,VGT` 重疊度\n"
         "`/falsify MU,WDC vs SMH 126 故事` — 假設反駁器（只證偽不證實；口語模式需 LLM key）\n"
         "`/thesis` — 投資論點追蹤（失效價自動監測；`/thesis help` 看用法）\n"
         "`/preview NVDA` — 財報前瞻/覆盤（共識、beat 率、隱含波動、三情境）\n"
@@ -642,6 +648,8 @@ def _cmd_positions() -> str:
     except Exception:
         return "❌ 找不到 alpaca_trader.py"
     pos = at.get_positions(key, secret)
+    if pos is None:
+        return "❌ 持倉讀取失敗（Alpaca API 暫時異常，稍後再試）"
     if not pos:
         return "📭 目前無持倉"
     lines = ["📊 *模擬持倉*\n"]
@@ -864,11 +872,24 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                           "account_size", "risk_pct", "atr_mult", "briefing_hour_et",
                           "earnings_alert_days", "at_buy_threshold", "at_exit_threshold",
                           "at_max_positions", "at_max_position_pct"}
+            eng_ok = False
+            if key.startswith("eng_"):
+                try:
+                    import trade_engine as te
+                    eng_ok = key[4:] in te.ENGINE_DEFAULTS
+                except Exception:
+                    pass
+            elif key.startswith("ao_"):
+                try:
+                    import alpha_overlay as ao
+                    eng_ok = key[3:] in ao.OVERLAY_DEFAULTS
+                except Exception:
+                    pass
             if key in bool_keys:
                 th[key] = val in ("on", "true", "1", "yes")
                 changed = True
                 reply = f"✅ `{key}` → {'開啟' if th[key] else '關閉'}"
-            elif key in float_keys:
+            elif key in float_keys or eng_ok:
                 try:
                     th[key] = float(val)
                     changed = True
@@ -876,7 +897,9 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                 except ValueError:
                     reply = f"❌ 無效數值：{val}"
             else:
-                reply = f"❌ 未知參數：{key}\n可用：{', '.join(bool_keys | float_keys)}"
+                reply = (f"❌ 未知參數：{key}\n可用：{', '.join(bool_keys | float_keys)}\n"
+                         "引擎參數用 `eng_` 前綴（如 `/set eng_trail_pct 0.1`）、"
+                         "資訊疊加用 `ao_` 前綴（如 `/set ao_earnings_veto_days 5`）")
 
         elif cmd == "/scan":
             reply = "🔍 掃描中，請稍候約 30 秒…"
@@ -919,6 +942,13 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                 "或 `/set atr_mult 2`、`/set position_sizing_enabled off`"
             )
 
+        elif cmd == "/alpha":
+            try:
+                import alpha_overlay as ao
+                reply = ao.overlay_text(state, datetime.now(ET).strftime("%Y-%m-%d"))
+            except Exception as e:
+                reply = f"❌ Alpha 疊加層讀取失敗：{e}"
+
         elif cmd == "/protections":
             th = state["thresholds"]
             hist = state.get("signal_history", {})
@@ -942,6 +972,12 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                 "調整：`/set cooldown_hours 4`、`/set cooldown_enabled off`、"
                 "`/set regime_filter_enabled off`"
             )
+            try:
+                import trade_engine as te
+                reply += "\n\n" + te.engine_status_text(
+                    state.get("engine"), datetime.now(ET).strftime("%Y-%m-%d"))
+            except Exception:
+                pass
 
         elif cmd in ("/fundamentals", "/f"):
             if not args:
@@ -1190,6 +1226,41 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                     except Exception as e:
                         reply = f"❌ 回測失敗：{e}"
 
+        elif cmd == "/fund":
+            if not args:
+                reply = ("🎯 *基金評估*用法：\n"
+                         "`/fund QQQ` — 評估（費用/追蹤誤差/α β/捕獲率，基準預設 SPY）\n"
+                         "`/fund QQQ vs SMH` — 指定基準\n"
+                         "`/fund overlap QQQ,VGT` — 兩檔持股重疊度\n"
+                         "_限有代碼的 ETF/美股基金；台灣未上市投信基金無資料源_")
+            elif args[0].lower() == "overlap":
+                _pair = (args[1].split(",") if len(args) >= 2 else [])
+                _pair = [p.strip().upper() for p in _pair if p.strip()]
+                if len(_pair) != 2:
+                    reply = "用法：`/fund overlap QQQ,VGT`"
+                else:
+                    _tg_send(token, src_chat or chat_id, "🔍 比對持股中（約 15-30 秒）…")
+                    try:
+                        import fund_eval as fe
+                        reply = (fe.run_overlap(_pair[0], _pair[1])
+                                 or "❌ 持股資料取得失敗")
+                    except Exception as _e:
+                        reply = f"❌ 重疊比對失敗：{_e}"
+            else:
+                _fsym = args[0].upper()
+                _fbench = (args[2].upper() if len(args) >= 3
+                           and args[1].lower() == "vs" else "SPY")
+                _tg_send(token, src_chat or chat_id,
+                         f"🎯 評估 {_fsym} vs {_fbench}（約 20-40 秒）…")
+                try:
+                    import fund_eval as fe
+                    _fres = fe.run_fund_eval(_fsym, _fbench)
+                    reply = (_fres[1] if _fres
+                             else f"❌ {_fsym} 價格/資料不足（需 ≥半年日線；"
+                                  "台灣未上市基金不支援）")
+                except Exception as _e:
+                    reply = f"❌ 基金評估失敗：{_e}"
+
         elif cmd == "/falsify":
             import falsifier as fsf
             _sub = args[0].lower() if args else ""
@@ -1355,7 +1426,7 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                          f"⚖️ 計算再平衡中（目標：{rbl.SCHEMES[sch]}）…")
                 try:
                     import alpaca_trader as at
-                    pos = at.get_positions(key, secret)
+                    pos = at.get_positions(key, secret) or {}
                     qty = {s: p["qty"] for s, p in pos.items() if p["qty"] > 0}  # 空頭不進權重
                     if len(qty) < 2:
                         reply = "⚠️ Alpaca 模擬多頭持倉不足 2 檔，無法做配置優化（先 /autotrade on 建倉）"
@@ -2728,6 +2799,10 @@ def run_autotrade(state: dict, results: list[dict]) -> str | None:
         print("Autotrade: 帳戶讀取失敗")
         return None
     positions = at.get_positions(key, secret)
+    if positions is None:
+        # H1 防護：API 暫時失敗 ≠ 空倉。當成空倉會讓引擎簿記全滅＋重複買進超限。
+        print("Autotrade: 持倉讀取失敗，本輪跳過")
+        return None
     equity = at._f(account.get("equity")) or 0.0
     bp = at._f(account.get("buying_power")) or 0.0
 
@@ -2746,14 +2821,58 @@ def run_autotrade(state: dict, results: list[dict]) -> str | None:
         "max_position_pct": th.get("at_max_position_pct", 0.15),
         "risk_pct":         th.get("risk_pct", 0.01),
     }
-    orders = at.decide_orders(scored, positions, equity, bp, config)
+
+    # Alpha 層資訊疊加：內部人/選擇權情緒/空單/財報迴避/恐貪 → 評分微調 + veto + 縮倉
+    ao_notes = []
+    size_mult = 1.0
+    try:
+        import alpha_overlay as ao
+        veto_days = int(th.get("ao_earnings_veto_days", 3))
+        _upcoming_earnings(state, max_days=max(veto_days, 5))   # 補新財報日快取（每日快取，便宜）
+        scored, ao_notes, size_mult = ao.enrich(state, scored, th)
+        for n in ao_notes:
+            print(f"Alpha: {n}")
+    except Exception as e:
+        print(f"Autotrade: alpha_overlay 失敗，跳過資訊疊加 {e}")
+
+    # 分層引擎（trade_engine）：出場走價格機制（停損/追蹤/分批/死錢），
+    # 訊號衰減只在獲利時了結；regime 三態控曝險。壞掉時退回舊 decide_orders。
+    try:
+        import trade_engine as te
+        for k in te.ENGINE_DEFAULTS:                     # /set eng_<參數> 覆蓋
+            if f"eng_{k}" in th:
+                config[k] = th[f"eng_{k}"]
+        if size_mult != 1.0:
+            # 恐貪縮倉必須在 eng_ 覆蓋之後套用，否則 /set eng_risk_pct 會把乘數蓋掉
+            config["risk_pct"] = float(config["risk_pct"]) * size_mult
+        regime = None
+        if th.get("regime_filter_enabled", True):
+            rg = market_regime()
+            regime = rg.get("regime") if rg else None
+        today = datetime.now(ET).strftime("%Y-%m-%d")
+        orders, eng_state, notes = te.decide(
+            scored, positions, equity, bp,
+            state.get("engine"), regime, config, today)
+        state["engine"] = eng_state
+        for n in notes:
+            print(f"Engine: {n}")
+    except Exception as e:
+        print(f"Autotrade: trade_engine 失敗，退回舊決策邏輯 {e}")
+        notes = []
+        try:
+            orders = at.decide_orders(scored, positions, equity, bp, config)
+        except Exception as e2:
+            # 兩層都掛就本輪放棄，別讓例外穿出去毀掉 save_state（冷卻紀錄會遺失）
+            print(f"Autotrade: 舊決策邏輯也失敗，本輪跳過 {e2}")
+            return None
+
     if not orders:
         print("Autotrade: 無符合下單條件")
         return None
 
     score_by_sym = {s["ticker"]: s.get("score") for s in scored}
     now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    lines = ["🤖 *自動交易執行*（Alpaca 模擬）"]
+    lines = ["🤖 *自動交易執行*（Alpaca 模擬・分層引擎）"]
     journal_entries = []
     for o in orders:
         ok, msg = at.submit_order(key, secret, o["symbol"], o["qty"], o["side"])
@@ -2763,9 +2882,16 @@ def run_autotrade(state: dict, results: list[dict]) -> str | None:
         journal_entries.append({
             "time": now_iso, "symbol": o["symbol"], "side": o["side"],
             "qty": int(o["qty"]), "score": score_by_sym.get(o["symbol"]),
-            "reason": o["reason"], "submitted": ok,
+            "reason": o["reason"], "mechanism": o.get("mechanism"),
+            "submitted": ok,
             "error": None if ok else msg,
         })
+    for n in notes:
+        if n.startswith(("⏸", "🚨")) or "曝險狀態" in n:
+            lines.append(f"_{n}_")
+    for n in ao_notes:
+        if any(o["symbol"] in n for o in orders) or n.startswith("🎭"):
+            lines.append(n)     # 只附與本輪訂單相關的資訊疊加說明，避免刷屏
     if journal_entries:
         at.append_journal(JOURNAL_FILE, journal_entries)
     print(f"Autotrade: 送出 {len(orders)} 筆")
@@ -2860,7 +2986,11 @@ def main() -> int:
             print("Telegram sent." if ok else "Telegram send failed.")
 
     # Step 4.5: Auto-trade (Alpaca paper; gated by autotrade_enabled + keys + open)
-    at_msg = run_autotrade(state, results)
+    try:
+        at_msg = run_autotrade(state, results)
+    except Exception as e:
+        print(f"Autotrade error: {e}")   # 不讓例外毀掉 Step 5 save_state
+        at_msg = None
     if at_msg and TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
         _tg_send(TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, at_msg)
 

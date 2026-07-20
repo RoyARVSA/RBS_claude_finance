@@ -355,6 +355,59 @@ def page_portfolio_performance():
             st.caption("平均成本法 · TWR=時間加權（排除出入金影響）· XIRR=資金加權（你實際的年化）"
                        " · 股息以除息日持股計，未含稅 · 非投資建議。")
 
+    # ── 🎯 基金/ETF 評估（費用率 / 追蹤誤差 / α β / 持股重疊）────────────
+    with st.expander("🎯 基金/ETF 評估（費用率、追蹤誤差、α/β、持股重疊）", expanded=False):
+        st.caption("限有交易代碼的 ETF/美股基金（台灣未上市投信基金無免費資料源）。"
+                   "費用率是確定的損耗，α 不保證持續。非投資建議。")
+        fe1, fe2, fe3 = st.columns([1.2, 1, 1])
+        with fe1:
+            _fe_sym = st.text_input("基金代碼", placeholder="QQQ / 0050.TW / VTSAX",
+                                    key="fe_sym").upper().strip()
+        with fe2:
+            _fe_bench = st.text_input("基準", "SPY", key="fe_bench").upper().strip()
+        with fe3:
+            st.write("")
+            _fe_go = st.button("評估", type="primary", key="fe_go",
+                               disabled=not _fe_sym)
+        if _fe_go:
+            import fund_eval as _fe
+            with st.spinner(f"評估 {_fe_sym} vs {_fe_bench}…"):
+                try:
+                    _fer = _fe.run_fund_eval(_fe_sym, _fe_bench or "SPY")
+                    st.session_state["fe_res"] = (_fe_sym, _fer)
+                except Exception as _fee:
+                    st.error(f"失敗：{_fee}")
+        _fer_t = st.session_state.get("fe_res")
+        if _fer_t and _fer_t[0] == _fe_sym:
+            if _fer_t[1]:
+                st.markdown(_fer_t[1][1].replace("*", "**"))
+            else:
+                st.error("價格/資料不足（需 ≥半年日線）")
+        st.divider()
+        fo1, fo2 = st.columns([2, 1])
+        with fo1:
+            _fo_pair = st.text_input("持股重疊比較（兩檔，逗號分隔）",
+                                     placeholder="QQQ, VGT", key="fo_pair")
+        with fo2:
+            st.write("")
+            _fo_go = st.button("比對重疊", key="fo_go",
+                               disabled=len([p for p in _fo_pair.split(",")
+                                             if p.strip()]) != 2)
+        if _fo_go:
+            import fund_eval as _fe2
+            _pp = [p.strip().upper() for p in _fo_pair.split(",") if p.strip()]
+            with st.spinner("抓取兩檔持股…"):
+                try:
+                    _fot = _fe2.run_overlap(_pp[0], _pp[1])
+                    st.session_state["fo_res"] = (_fo_pair, _fot)
+                except Exception as _foe:
+                    st.error(f"失敗：{_foe}")
+        _fot_t = st.session_state.get("fo_res")
+        if _fot_t and _fot_t[0] == _fo_pair:
+            st.markdown((_fot_t[1] or "持股資料取得失敗").replace("*", "**"))
+
+
+
     DEFAULT_HOLDINGS = pd.DataFrame(
         {
             "Ticker": ["AGG", "BBH", "BND", "IVV", "KRE", "MBB", "SHY", "SMH", "SOXX", "VFH", "VOO", "XLF", "XLU", "XLV", "XSD"],
@@ -635,7 +688,6 @@ def page_portfolio_performance():
                                rb.rebalance_text(res, rb.SCHEMES[sch]),
                                file_name="rebalance_plan.txt", key="rb_dl")
             st.caption("賣單在前（先騰資金）· 未含手續費/稅/滑價 · 非投資建議。")
-
 
 # ════════════════════════════════════════════════════════════════════
 # PAGE: News & Sentiment
@@ -5806,7 +5858,7 @@ def page_paper_trading():
 
     with st.spinner("讀取 Alpaca 帳戶…"):
         acc = at.get_account(key, secret)
-        positions = at.get_positions(key, secret)
+        positions = at.get_positions(key, secret) or {}
         orders = at.get_orders(key, secret, limit=20)
         hist = at.portfolio_history(key, secret, period="3M")
 
