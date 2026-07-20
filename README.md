@@ -46,6 +46,9 @@ Streamlit 網頁應用 + 獨立的訊號掃描 Bot（GitHub Actions 排程版 / 
   訊號轉弱只在獲利時了結（虧損中續抱等待、不在低點殺出）；
   停損保險絲（7 天 3 次硬停損→全帳戶冷卻）、回撤 10% / 大盤 risk_off →停新倉、
   贏家每 +1R 加碼最多 2 次（預設關閉，`/autotrade on` 啟用）
+- **Alpha 資訊疊加層**（`/alpha`）：進場評分自動疊加 SEC 內部人（cluster buy 加分）、
+  選擇權情緒（PCR/IV 偏斜）、空單占流通降評、財報前 3 天禁新倉、
+  雙恐貪極度貪婪→新倉風險減半；12 小時快取＋每輪限額輪替抓取（不拖慢 cron）
 - **當日交易計畫**：`/today [帳戶 風險%]` 盤中訂單票（VWAP/ORB/RVOL 進場、停損/停利/股數、財報日迴避）；進場票自動記入決策計分板（隔日結算，與量化/委員會同板比較）
 - **當日計畫歷史回測**：`/plantest` 用過去 ~60 交易日 5 分 K 逐日重放訂單票（無前視、扣成本、停損優先），統計各型態實證勝率/R 期望值；`/plantest apply` 把 walk-forward 校準（負期望型態停用、不穩定降信心）套進 /today——**讓判定吃歷史實證自我修正**；**每週自動重跑校準**（動作有變時推播通知，`/set plan_autocal_enabled off` 關閉）
 - **參數尋優**：`/plantest opt` 掃 ORB 分鐘 × 停損 ATR 倍數 × 目標 R:R 共 27 組參數，訓練段排序、**驗證段沒明確勝過現行預設就不推薦**（防過擬合）；`opt apply` 一鍵套用推薦參數＋對應校準
@@ -147,6 +150,7 @@ taifex.py               台指期籌碼：三大法人淨未平倉 + 選擇權 P
 tw_flows.py             台股三大法人買賣超（TWSE T86 上市 + TPEX 上櫃，免 key）：外資/投信/自營 + 連買天數
 committee.py            機構決策委員會：角色提示/立場解析/硬風控閘門/量化交叉比較，支援多檔與深度模式（TradingAgents 式）
 trade_engine.py         分層自動交易引擎：追蹤停損/分批/保險絲/三態曝險（純邏輯）
+alpha_overlay.py        Alpha 資訊疊加層：內部人/選擇權/空單/財報 veto/恐貪縮倉
 alpaca_trader.py        Alpaca 紙上交易 REST client + bracket 單（decide_orders=legacy）
 stock_db.py             選股資料庫（5 市場、30+ 產業、200+ 標的，含 AI 供應鏈瓶頸主題）
 rbs_lib.py              風險計算函式庫（VaR/CVaR/共變異數/情境）

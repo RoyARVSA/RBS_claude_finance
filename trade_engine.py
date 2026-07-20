@@ -307,6 +307,7 @@ def decide(scored: list[dict], positions: dict, equity: float, buying_power: flo
             [s for s in scored
              if s["ticker"] not in held and s["ticker"] not in exited
              and s["ticker"] not in cd
+             and not s.get("no_entry")          # alpha overlay veto（如財報前）只擋新倉
              and float(s.get("score", 0)) >= float(cfg["buy_threshold"])
              and float(s.get("price", 0) or 0) > 0],
             key=lambda s: -float(s["score"]))
@@ -345,7 +346,10 @@ def decide(scored: list[dict], positions: dict, equity: float, buying_power: flo
             entry, rps = float(rec["entry"]), max(float(rec["rps"]), 0.01)
             r_now = (px - entry) / rps
             adds = int(rec.get("adds", 0))
-            sc = float((score_map.get(sym) or {}).get("score", 0))
+            s_rec = score_map.get(sym) or {}
+            if s_rec.get("no_entry"):           # veto 也擋加碼（出場機制不受影響）
+                continue
+            sc = float(s_rec.get("score", 0))
             if adds < int(cfg["pyramid_max_adds"]) \
                     and r_now >= (adds + 1) * float(cfg["pyramid_r"]) \
                     and sc >= float(cfg["pyramid_min_score"]):
@@ -620,6 +624,23 @@ if __name__ == "__main__":
     _, eng, _ = decide([], {}, 100000, 50000, eng, "neutral", None, T)
     assert eng["stop_events"] == ["2026-07-19|OK"], eng["stop_events"]
     print("✅ 20 壞日期事件剔除")
+
+    # 21) alpha overlay no_entry：高分也不進場/不加碼；出場照常
+    orders, _, _ = decide(
+        [{"ticker": "ERN", "score": 0.9, "price": 50.0, "no_entry": True}],
+        {}, 100000, 50000, new_engine_state(), "risk_on", None, T)
+    assert orders == [], orders
+    eng = mk_eng("ERN", 100, 5, peak=105)
+    orders, _, _ = decide(
+        [{"ticker": "ERN", "score": 0.9, "price": 105.0, "no_entry": True}],
+        {"ERN": mk_pos(10, 100, 105)}, 100000, 50000, eng, "risk_on", None, T)
+    assert not any(o["mechanism"] == "pyramid" for o in orders), orders
+    eng = mk_eng("ERN", 100, 3)
+    orders, _, _ = decide(
+        [{"ticker": "ERN", "score": 0.1, "price": 96.0, "no_entry": True}],
+        {"ERN": mk_pos(10, 100, 96)}, 100000, 50000, eng, "neutral", None, T)
+    assert orders and orders[0]["mechanism"] == "stop_loss", orders   # 出場不受 veto 影響
+    print("✅ 21 no_entry veto 擋進場/加碼、不擋出場")
 
     print("\n─ engine_status_text ─")
     eng = mk_eng("AAPL", 100, 3)

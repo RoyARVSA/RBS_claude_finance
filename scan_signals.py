@@ -30,6 +30,7 @@ Telegram 指令（傳給 Bot）：
   /earnings [天數]        – 觀察清單近期財報日（晨報也會自動提醒 N 天內財報）
   /autotrade on|off       – Alpaca 模擬自動交易總開關（預設關；trade_engine 分層引擎：
                             訊號只管進場，出場由停損/追蹤/分批/死錢釋放驅動）
+  /alpha                  – Alpha 資訊疊加層：內部人/選擇權情緒/空單/財報迴避/恐貪縮倉
   /positions /pnl /closeall – 模擬持倉 / 帳戶報酬 / 一鍵平倉
   /journal [N]            – 交易日誌（每筆自動交易的評分與原因）
   /rebalance [配置法]     – 再平衡顧問：Alpaca 持倉 vs HRP/Sharpe/風險平價 → 加減碼清單
@@ -305,6 +306,7 @@ def _cmd_help() -> str:
         "🤖 *模擬交易（Alpaca paper・分層引擎）*\n"
         "`/autotrade on|off` — 自動下模擬單（預設關）；出場走停損/追蹤/分批機制，"
         "訊號轉弱只在獲利時了結（`/protections` 看保險絲）\n"
+        "`/alpha` — Alpha 資訊疊加層現況（內部人/選擇權/空單/財報迴避/恐貪縮倉）\n"
         "`/positions` — 目前持倉 + 損益\n"
         "`/pnl` — 帳戶淨值 + 報酬\n"
         "`/journal [N]` — 交易日誌（含評分/原因）\n"
@@ -877,6 +879,12 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                     eng_ok = key[4:] in te.ENGINE_DEFAULTS
                 except Exception:
                     pass
+            elif key.startswith("ao_"):
+                try:
+                    import alpha_overlay as ao
+                    eng_ok = key[3:] in ao.OVERLAY_DEFAULTS
+                except Exception:
+                    pass
             if key in bool_keys:
                 th[key] = val in ("on", "true", "1", "yes")
                 changed = True
@@ -890,7 +898,8 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                     reply = f"❌ 無效數值：{val}"
             else:
                 reply = (f"❌ 未知參數：{key}\n可用：{', '.join(bool_keys | float_keys)}\n"
-                         "引擎參數用 `eng_` 前綴，如 `/set eng_trail_pct 0.1`")
+                         "引擎參數用 `eng_` 前綴（如 `/set eng_trail_pct 0.1`）、"
+                         "資訊疊加用 `ao_` 前綴（如 `/set ao_earnings_veto_days 5`）")
 
         elif cmd == "/scan":
             reply = "🔍 掃描中，請稍候約 30 秒…"
@@ -932,6 +941,13 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                 "設定範例：`/risk 100000 1`（帳戶 $10萬、單筆風險 1%）\n"
                 "或 `/set atr_mult 2`、`/set position_sizing_enabled off`"
             )
+
+        elif cmd == "/alpha":
+            try:
+                import alpha_overlay as ao
+                reply = ao.overlay_text(state, datetime.now(ET).strftime("%Y-%m-%d"))
+            except Exception as e:
+                reply = f"❌ Alpha 疊加層讀取失敗：{e}"
 
         elif cmd == "/protections":
             th = state["thresholds"]
@@ -2806,6 +2822,20 @@ def run_autotrade(state: dict, results: list[dict]) -> str | None:
         "risk_pct":         th.get("risk_pct", 0.01),
     }
 
+    # Alpha 層資訊疊加：內部人/選擇權情緒/空單/財報迴避/恐貪 → 評分微調 + veto + 縮倉
+    ao_notes = []
+    try:
+        import alpha_overlay as ao
+        veto_days = int(th.get("ao_earnings_veto_days", 3))
+        _upcoming_earnings(state, max_days=max(veto_days, 5))   # 補新財報日快取（每日快取，便宜）
+        scored, ao_notes, size_mult = ao.enrich(state, scored, th)
+        if size_mult != 1.0:
+            config["risk_pct"] = float(config["risk_pct"]) * size_mult
+        for n in ao_notes:
+            print(f"Alpha: {n}")
+    except Exception as e:
+        print(f"Autotrade: alpha_overlay 失敗，跳過資訊疊加 {e}")
+
     # 分層引擎（trade_engine）：出場走價格機制（停損/追蹤/分批/死錢），
     # 訊號衰減只在獲利時了結；regime 三態控曝險。壞掉時退回舊 decide_orders。
     try:
@@ -2857,6 +2887,9 @@ def run_autotrade(state: dict, results: list[dict]) -> str | None:
     for n in notes:
         if n.startswith(("⏸", "🚨")) or "曝險狀態" in n:
             lines.append(f"_{n}_")
+    for n in ao_notes:
+        if any(o["symbol"] in n for o in orders) or n.startswith("🎭"):
+            lines.append(n)     # 只附與本輪訂單相關的資訊疊加說明，避免刷屏
     if journal_entries:
         at.append_journal(JOURNAL_FILE, journal_entries)
     print(f"Autotrade: 送出 {len(orders)} 筆")
