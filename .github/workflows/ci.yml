@@ -44,7 +44,7 @@ jobs:
                    portfolio_opt analyst_data short_data whales_13f ledger reflection \
                    tw_flows committee alpaca_trader stock_db trade_plan rebalance \
                    plan_backtest valuation sentiment_fg taifex thesis \
-                   falsifier \
+                   falsifier fund_eval \
                    earnings_review; do
             echo "── $m ──"
             python3 "$m.py"

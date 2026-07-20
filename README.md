@@ -17,7 +17,7 @@ Streamlit 網頁應用 + 獨立的訊號掃描 Bot（GitHub Actions 排程版 / 
 |------|------|
 | 💬 AI 助理 | **資深分析師模式＋🏛 機構決策委員會（分析師×4→多空對辯→交易員→硬風控→投資經理，與量化評分交叉比較；支援多檔同場會議、深度模式(研究主管+風控對辯)、新聞逐篇多空標注、會議紀錄下載、Telegram 推播）＋📊 決策計分板（量化 vs 委員會誰更準）＋單輪多空對辯＋反思記憶** |
 | 🏠 市場總覽 | 即時指數/板塊/宏觀指標、**總經數據(FRED)**、市場快訊、**AI 自主市場分析**、**🎭 雙恐懼貪婪指數（美股 CNN + 加密，雙極端警示）**、**🇹🇼 台指期籌碼（三大法人淨未平倉 + 選擇權 P/C 比，TAIFEX）**、**🩺 資料源健康檢查（9 大數據源一鍵驗收）** |
-| 📈 持倉分析 | 多資產組合：權益曲線、回撤、Sharpe、IR、Beta、**績效報告（CAGR/Sortino/Calmar/月報酬熱力圖/回撤期間）**、**交易帳本（成本基礎/TWR/XIRR/股息收入）**、**⚖️ 再平衡顧問（HRP/最大 Sharpe/風險平價 目標權重 → 具體加減碼股數清單）** |
+| 📈 持倉分析 | 多資產組合：權益曲線、回撤、Sharpe、IR、Beta、**績效報告（CAGR/Sortino/Calmar/月報酬熱力圖/回撤期間）**、**交易帳本（成本基礎/TWR/XIRR/股息收入）**、**⚖️ 再平衡顧問（HRP/最大 Sharpe/風險平價 目標權重 → 具體加減碼股數清單）**、**🎯 基金/ETF 評估（費用率、追蹤誤差、α/β、上下行捕獲、兩檔持股重疊度）** |
 | ⚠️ 風險管理 | VaR/CVaR、蒙地卡羅、Kupiec 回測、壓力測試、**風險平價 + 效率前緣（MPT）+ HRP 階層風險平價** |
 | 🔍 股票研究 | K 線+RSI、AI 深度報告、市場篩選器、**訊號回測 + 參數最佳化（含參數熱力圖與 walk-forward 逐段檢視）**、TradingView、**選擇權情緒(Put/Call、IV 偏斜)**、**🔨 假設反駁器（8 類測試推翻投資故事，只證偽不證實）** |
 | 🏢 公司分析 | **基本面體質：財務健康評分、估值旗標、三表趨勢、AI 解讀、分析師共識+EPS Beat 率、做空籌碼(FINRA/FTD)、台股三大法人買賣超(上市 TWSE + 上櫃 TPEX)、SEC 內部人交易(Form 4)、💰 DCF+Comps 內在價值估值（投行標準流程：FCF/WACC/期中折現/敏感度表＋同業倍數回推，方法論採 Anthropic 官方 financial-services skills）、📄 一鍵完整研究報告（彙整全部區塊下載）** |
@@ -138,6 +138,7 @@ sentiment_fg.py         雙恐懼貪婪指數：美股 CNN（含鏡像備援）+
 thesis.py               投資論點追蹤器：論點/支柱/失效價自動監測（方法論：Anthropic thesis-tracker）
 earnings_review.py      財報前瞻/覆盤：共識、beat 率、隱含波動、三情境（方法論：Anthropic earnings skills）
 falsifier.py            假設反駁器：block bootstrap/regime/動能混淆/跨市場/DSR 帳本（只證偽不證實）
+fund_eval.py            基金/ETF 評估：費用率/追蹤誤差/α β/捕獲率/持股重疊（yfinance funds_data）
 taifex.py               台指期籌碼：三大法人淨未平倉 + 選擇權 P/C 比（TAIFEX 免費公開資料）
 tw_flows.py             台股三大法人買賣超（TWSE T86 上市 + TPEX 上櫃，免 key）：外資/投信/自營 + 連買天數
 committee.py            機構決策委員會：角色提示/立場解析/硬風控閘門/量化交叉比較，支援多檔與深度模式（TradingAgents 式）

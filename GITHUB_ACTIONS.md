@@ -67,6 +67,7 @@
 | 情緒/籌碼 | `/fg`（雙恐懼貪婪：美股 CNN+加密，晨報自動附一行）、`/taifex`（台指期三大法人淨未平倉 + 選擇權 P/C 比） |
 | 論點/財報 | `/thesis [TICKER 多\|空 論點 / pillar / risk / cat / target / stop / conv / note / close]`（論點追蹤，失效價自動監測）、`/preview TICKER`（財報前瞻/覆盤自動判定） |
 | 反駁器 | `/falsify TICK1,TICK2 [vs 基準] [持有日] [多\|空] 故事`（8 類反駁測試；口語模式需 LLM key）、`/falsify trials +K`（自報場外試錯餵 DSR）、`/falsify ledger`（假設帳本） |
+| 基金 | `/fund QQQ [vs SMH]`（費用率/追蹤誤差/α β/捕獲率）、`/fund overlap QQQ,VGT`（兩檔持股重疊度） |
 
 > `/options`、`/insider` 僅美股；選擇權走 yfinance、內部人走 SEC EDGAR，皆免 key。
 

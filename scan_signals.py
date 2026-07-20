@@ -33,6 +33,7 @@ Telegram 指令（傳給 Bot）：
   /journal [N]            – 交易日誌（每筆自動交易的評分與原因）
   /rebalance [配置法]     – 再平衡顧問：Alpaca 持倉 vs HRP/Sharpe/風險平價 → 加減碼清單
   /dcf TICKER [成長%]     – DCF 內在價值估值（FCF/WACC/終值/隱含股價；投行標準流程）
+  /fund SYM [vs BENCH]    – 基金/ETF 評估：費用率/追蹤誤差/α β/捕獲率；overlap 比重疊
   /falsify [規格|故事]    – 假設反駁器：8 類測試推翻投資故事（bootstrap/regime/動能/DSR）
   /thesis [TICKER ...]    – 投資論點追蹤：論點/支柱/風險/失效價（自動監測失效與達標）
   /preview TICKER         – 財報前瞻（共識/beat率/隱含波動/三情境）或覆盤（自動判定）
@@ -308,6 +309,7 @@ def _cmd_help() -> str:
         "`/rebalance [hrp|max_sharpe|min_vol|erc|equal]` — 再平衡顧問（持倉 vs 目標權重 → 加減碼清單）\n"
         "`/dcf AAPL [成長%]` — DCF 內在價值估值（FCF→WACC→終值→隱含股價）\n"
         "`/fg` — 雙恐懼貪婪指數（美股+加密）；`/taifex` — 台指期三大法人籌碼\n"
+        "`/fund QQQ [vs SMH]` — 基金評估（費用/TE/α/捕獲）；`/fund overlap QQQ,VGT` 重疊度\n"
         "`/falsify MU,WDC vs SMH 126 故事` — 假設反駁器（只證偽不證實；口語模式需 LLM key）\n"
         "`/thesis` — 投資論點追蹤（失效價自動監測；`/thesis help` 看用法）\n"
         "`/preview NVDA` — 財報前瞻/覆盤（共識、beat 率、隱含波動、三情境）\n"
@@ -1189,6 +1191,41 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                             reply += "\n\n（僅報告；`/plantest apply` 套用、`/plantest clear` 還原）"
                     except Exception as e:
                         reply = f"❌ 回測失敗：{e}"
+
+        elif cmd == "/fund":
+            if not args:
+                reply = ("🎯 *基金評估*用法：\n"
+                         "`/fund QQQ` — 評估（費用/追蹤誤差/α β/捕獲率，基準預設 SPY）\n"
+                         "`/fund QQQ vs SMH` — 指定基準\n"
+                         "`/fund overlap QQQ,VGT` — 兩檔持股重疊度\n"
+                         "_限有代碼的 ETF/美股基金；台灣未上市投信基金無資料源_")
+            elif args[0].lower() == "overlap":
+                _pair = (args[1].split(",") if len(args) >= 2 else [])
+                _pair = [p.strip().upper() for p in _pair if p.strip()]
+                if len(_pair) != 2:
+                    reply = "用法：`/fund overlap QQQ,VGT`"
+                else:
+                    _tg_send(token, src_chat or chat_id, "🔍 比對持股中（約 15-30 秒）…")
+                    try:
+                        import fund_eval as fe
+                        reply = (fe.run_overlap(_pair[0], _pair[1])
+                                 or "❌ 持股資料取得失敗")
+                    except Exception as _e:
+                        reply = f"❌ 重疊比對失敗：{_e}"
+            else:
+                _fsym = args[0].upper()
+                _fbench = (args[2].upper() if len(args) >= 3
+                           and args[1].lower() == "vs" else "SPY")
+                _tg_send(token, src_chat or chat_id,
+                         f"🎯 評估 {_fsym} vs {_fbench}（約 20-40 秒）…")
+                try:
+                    import fund_eval as fe
+                    _fres = fe.run_fund_eval(_fsym, _fbench)
+                    reply = (_fres[1] if _fres
+                             else f"❌ {_fsym} 價格/資料不足（需 ≥半年日線；"
+                                  "台灣未上市基金不支援）")
+                except Exception as _e:
+                    reply = f"❌ 基金評估失敗：{_e}"
 
         elif cmd == "/falsify":
             import falsifier as fsf
