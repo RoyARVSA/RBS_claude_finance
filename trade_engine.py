@@ -318,7 +318,12 @@ def decide(scored: list[dict], positions: dict, equity: float, buying_power: flo
             rps = s.get("risk_per_share")
             rps = float(rps) if rps and float(rps) > 0 else px * 0.05
             scale = s.get("entry_scale")                 # 相關性控制等外部縮量
-            scale = float(scale) if scale is not None else 1.0   # 注意 0.0 是合法值
+            try:
+                scale = float(scale) if scale is not None else 1.0   # 0.0 是合法值
+            except Exception:
+                scale = 1.0
+            # NaN → 1、夾 [0,1]：縮量層只准縮不准放大，也不准把 int() 炸掉
+            scale = min(max(scale, 0.0), 1.0) if scale == scale else 1.0
             qty = int(min((equity * float(cfg["risk_pct"])) / rps,
                           (equity * float(cfg["max_position_pct"])) / px,
                           bp / px) * scale)
@@ -654,7 +659,14 @@ if __name__ == "__main__":
         [{"ticker": "ZERO", "score": 0.8, "price": 100.0, "entry_scale": 0.0}],
         {}, 100000, 100000, new_engine_state(), "risk_on", None, T)
     assert orders == [], orders
-    print("✅ 22 entry_scale 縮量/歸零")
+    orders, _, _ = decide(                                # >1 夾回 1、NaN 視為 1
+        [{"ticker": "BIG", "score": 0.8, "price": 100.0, "risk_per_share": 4.0,
+          "entry_scale": 3.0},
+         {"ticker": "NAN", "score": 0.7, "price": 100.0, "risk_per_share": 4.0,
+          "entry_scale": float("nan")}],
+        {}, 100000, 100000, new_engine_state(), "risk_on", None, T)
+    assert [o["qty"] for o in orders] == [150, 150], orders
+    print("✅ 22 entry_scale 縮量/歸零/夾制")
 
     print("\n─ engine_status_text ─")
     eng = mk_eng("AAPL", 100, 3)

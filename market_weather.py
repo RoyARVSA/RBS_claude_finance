@@ -39,6 +39,11 @@ HYSTERESIS = 5.0          # 前一狀態的門檻讓分（防翻來覆去）
 TTL_HOURS = 1.0
 
 
+def _bad(x) -> bool:
+    """None 或 NaN。NaN 會穿過所有 `is not None` 檢查並在 _lin 靜默變滿分——必須擋。"""
+    return x is None or x != x
+
+
 def _clamp01(x: float) -> float:
     return max(0.0, min(1.0, x))
 
@@ -61,7 +66,7 @@ def breadth_score(above_ma50: int, total: int) -> float | None:
 
 def credit_score(hyg_lqd_ratio: float, ratio_ma50: float) -> float | None:
     """HYG/LQD 相對其 MA50 的偏離：-2% → 0、+2% → 100。"""
-    if not ratio_ma50:
+    if _bad(hyg_lqd_ratio) or _bad(ratio_ma50) or not ratio_ma50:
         return None
     dev = hyg_lqd_ratio / ratio_ma50 - 1
     return round(_lin(dev, -0.02, 0.02), 1)
@@ -69,21 +74,21 @@ def credit_score(hyg_lqd_ratio: float, ratio_ma50: float) -> float | None:
 
 def vix_ts_score(vix: float, vix3m: float) -> float | None:
     """VIX3M/VIX：0.95（backwardation）→ 0、1.15（陡 contango）→ 100。"""
-    if not vix or vix <= 0:
+    if _bad(vix) or _bad(vix3m) or vix <= 0:
         return None
     return round(_lin(vix3m / vix, 0.95, 1.15), 1)
 
 
 def yield_curve_score(spread_pct: float) -> float | None:
     """10 年 − 3 月利差（百分點）：-0.5 → 0、+1.5 → 100。"""
-    if spread_pct is None:
+    if _bad(spread_pct):
         return None
     return round(_lin(spread_pct, -0.5, 1.5), 1)
 
 
 def copper_gold_score(chg_20d: float) -> float | None:
     """銅金比 20 日變化：-8% → 0、+8% → 100。"""
-    if chg_20d is None:
+    if _bad(chg_20d):
         return None
     return round(_lin(chg_20d, -0.08, 0.08), 1)
 
@@ -95,13 +100,13 @@ def composite(components: dict, weights: dict | None = None,
     回 {"score", "components", "missing"}；權重按有效成分重新歸一化。
     """
     w = weights or WEATHER_WEIGHTS
-    valid = {k: v for k, v in components.items() if v is not None and k in w}
+    valid = {k: v for k, v in components.items() if not _bad(v) and k in w}
     if len(valid) < min_components:
         return None
     tot_w = sum(w[k] for k in valid)
     score = sum(w[k] * v for k, v in valid.items()) / tot_w
     return {"score": round(score, 1), "components": components,
-            "missing": sorted(k for k in w if components.get(k) is None)}
+            "missing": sorted(k for k in w if _bad(components.get(k)))}
 
 
 def to_regime(score: float, prev: str | None = None) -> dict:
@@ -147,7 +152,11 @@ def weather_text(weather: dict, regime: dict | None = None) -> str:
         bar = "▰" * int(round(v / 12.5)) + "▱" * (8 - int(round(v / 12.5)))
         lines.append(f"・{lbl}：{v:.0f} {bar}")
     if weather.get("missing"):
-        lines.append(f"_缺席成分已重新配權：{', '.join(weather['missing'])}_")
+        # 成分英文名含底線（vix_ts…）會讓 Telegram legacy Markdown 炸掉整則訊息
+        # （PITFALLS D12）——一律轉中文短名
+        miss = "、".join(COMP_LABELS.get(m, m).split("（")[0]
+                         for m in weather["missing"])
+        lines.append(f"（缺席成分已重新配權：{miss}）")
     lines.append("_≥60 偏多／≤40 偏空；廣度與信用是領先權重最大的兩項_")
     return "\n".join(lines)
 
@@ -292,7 +301,15 @@ if __name__ == "__main__":
     assert vix_ts_score(30, 27) == 0.0            # 0.9 backwardation → 夾 0
     assert yield_curve_score(-1.0) == 0.0 and yield_curve_score(1.5) == 100.0
     assert copper_gold_score(0.0) == 50.0
-    print("✅ 1 子分數映射")
+    # NaN 防護：NaN 穿過 is-not-None、在 min/max 裡靜默變滿分——一律視為缺席
+    _nan = float("nan")
+    assert credit_score(_nan, 1.0) is None and credit_score(1.0, _nan) is None
+    assert vix_ts_score(_nan, 20) is None and vix_ts_score(20, _nan) is None
+    assert yield_curve_score(_nan) is None and copper_gold_score(_nan) is None
+    c_nan = composite({"breadth": 80, "credit": _nan, "vix_ts": 60,
+                       "yield_curve": 50, "copper_gold": 50})
+    assert c_nan and c_nan["score"] == c_nan["score"] and "credit" in c_nan["missing"]
+    print("✅ 1 子分數映射 + NaN 防護")
 
     # 2) composite：缺席重新配權、成分不足回 None
     c = composite({"breadth": 100, "credit": 100, "vix_ts": 100,
@@ -328,11 +345,13 @@ if __name__ == "__main__":
     assert w and w["score"] == 62.0 and w["regime"]["regime"] == "risk_on", w
     print("✅ 4 管線 + 快取（未打網路）")
 
-    # 5) weather_text 不炸（含缺項）
-    txt = weather_text({"score": 58.5, "components": {**comps, "credit": None},
-                        "missing": ["credit"]}, to_regime(58.5))
+    # 5) weather_text 不炸（含缺項）；缺席名單不得含底線（TG legacy Markdown 會炸）
+    txt = weather_text({"score": 58.5, "components": {**comps, "vix_ts": None},
+                        "missing": ["vix_ts"]}, to_regime(58.5))
     assert "市場氣象台" in txt and "資料缺" in txt
-    print("✅ 5 weather_text")
+    assert "vix_ts" not in txt, txt          # 缺席行必須用中文短名
+    assert txt.count("_") % 2 == 0, txt      # 底線必須成對
+    print("✅ 5 weather_text（Markdown 安全）")
     print()
     print(txt)
     print("\nmarket_weather selftest OK ✅")

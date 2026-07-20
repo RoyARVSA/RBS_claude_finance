@@ -2875,9 +2875,9 @@ def run_autotrade(state: dict, results: list[dict]) -> str | None:
             closes = raw["Close"] if (raw is not None and not raw.empty
                                       and "Close" in raw) else None
             if closes is not None:
-                guard = qt.corr_guard(closes, held_syms, cands,
-                                      hi=float(th.get("corr_hi", 0.85)),
-                                      mid=float(th.get("corr_mid", 0.75)))
+                hi = min(max(float(th.get("corr_hi", 0.85)), 0.2), 0.99)
+                mid = min(max(float(th.get("corr_mid", 0.75)), 0.1), hi)
+                guard = qt.corr_guard(closes, held_syms, cands, hi=hi, mid=mid)
                 for s in scored:
                     g = guard.get(s["ticker"])
                     if not g or g.get("avg_corr") is None or g["scale"] >= 1.0:
@@ -2947,9 +2947,17 @@ def run_autotrade(state: dict, results: list[dict]) -> str | None:
     for n in notes:
         if n.startswith(("⏸", "🚨")) or "曝險狀態" in n:
             lines.append(f"_{n}_")
+    order_syms = {o["symbol"] for o in orders}
     for n in ao_notes:
-        if any(o["symbol"] in n for o in orders) or n.startswith("🎭"):
-            lines.append(n)     # 只附與本輪訂單相關的資訊疊加說明，避免刷屏
+        # 🔗 相關性跳過/縮半與 🎭 帳戶級縮倉一律顯示（少量且都是「為什麼沒買/買少」
+        # 的關鍵解釋）；🧠 個股疊加只附本輪有下單的（精確 token 比對——子字串比對
+        # 會讓單字母 ticker 如 T/K/F 誤掛所有 note）
+        if n.startswith(("🔗", "🎭")):
+            lines.append(n)
+        else:
+            toks = n.split()
+            if len(toks) >= 2 and toks[1] in order_syms:
+                lines.append(n)
     if journal_entries:
         at.append_journal(JOURNAL_FILE, journal_entries)
     print(f"Autotrade: 送出 {len(orders)} 筆")

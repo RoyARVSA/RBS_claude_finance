@@ -187,12 +187,23 @@ def refresh_cache(state: dict, symbols: list[str], now: str,
     """
     cfg = _cfg(config)
     cache = state.setdefault("alpha_cache", {})
-    # 移除已不在清單的標的（避免快取只增不減）
-    for k in [k for k in cache if k not in symbols]:
-        del cache[k]
+    symbols = list(dict.fromkeys(symbols))               # 去重（重複會浪費刷新名額）
+    if symbols:
+        # 移除已不在清單的標的（避免快取只增不減）；空清單不剪——
+        # 一輪抓價失敗不該把整個快取炸掉再花 3 輪重建
+        for k in [k for k in cache if k not in symbols]:
+            del cache[k]
 
-    stale = [(s, _hours_since((cache.get(s) or {}).get("ts"), now)) for s in symbols]
-    stale = [(s, age) for s, age in stale if age >= float(cfg["ttl_hours"])]
+    stale = []
+    for s in symbols:
+        ent = cache.get(s) or {}
+        age = _hours_since(ent.get("ts"), now)
+        ttl = float(cfg["ttl_hours"])
+        if ent and not ent.get("inputs"):
+            # 上次全部抓取失敗（空 inputs）→ 用短 TTL 提早重試，不盲 12 小時
+            ttl = min(ttl, float(cfg["fg_ttl_hours"]))
+        if age >= ttl:
+            stale.append((s, age))
     stale.sort(key=lambda x: -x[1])                      # 最舊優先
     picked = [s for s, _ in stale[: int(cfg["refresh_per_run"])]]
     if not picked:
@@ -258,7 +269,7 @@ def enrich(state: dict, scored: list[dict], thresholds: dict | None = None,
     cfg = _cfg({k: th[f"ao_{k}"] for k in OVERLAY_DEFAULTS if f"ao_{k}" in th})
     now = now or datetime.now(timezone.utc).isoformat()
 
-    symbols = [s["ticker"] for s in scored if s.get("ticker")]
+    symbols = list(dict.fromkeys(s["ticker"] for s in scored if s.get("ticker")))
     refresh_cache(state, symbols, now, cfg, fetchers)
     edays = _earnings_days_map(state, now[:10])
 
@@ -279,8 +290,11 @@ def enrich(state: dict, scored: list[dict], thresholds: dict | None = None,
 
 
 def overlay_text(state: dict, today: str | None = None) -> str:
-    """/alpha 指令：顯示快取中每檔的資訊疊加現況（Telegram legacy Markdown 單 *）。"""
+    """/alpha 指令：顯示快取中每檔的資訊疊加現況（Telegram legacy Markdown 單 *）。
+    參數與 enrich 同源（讀 thresholds 的 ao_*），否則使用者 /set 後看到的現況是假的。"""
     today = (today or datetime.now(timezone.utc).isoformat())[:10]
+    th = state.get("thresholds") or {}
+    cfg = _cfg({k: th[f"ao_{k}"] for k in OVERLAY_DEFAULTS if f"ao_{k}" in th})
     cache = state.get("alpha_cache") or {}
     edays = _earnings_days_map(state, today)
     lines = ["🧠 *Alpha 資訊疊加層*（進場評分微調；出場不受影響）"]
@@ -290,13 +304,13 @@ def overlay_text(state: dict, today: str | None = None) -> str:
         inputs = dict((cache.get(sym) or {}).get("inputs") or {})
         if sym in edays:
             inputs["days_to_earnings"] = edays[sym]
-        ov = compute_symbol_overlay(inputs)
+        ov = compute_symbol_overlay(inputs, cfg)
         flag = "⛔" if ov["no_entry"] else ("➕" if ov["delta"] > 0 else ("➖" if ov["delta"] < 0 else "・"))
         why = "；".join(ov["reasons"]) if ov["reasons"] else "無顯著訊息"
         lines.append(f"{flag} *{sym}* Δ{ov['delta']:+.2f} — {why}")
     fg = state.get("alpha_fg") or {}
     if fg.get("cnn") is not None or fg.get("crypto") is not None:
-        acct = account_overlay(fg.get("cnn"), fg.get("crypto"))
+        acct = account_overlay(fg.get("cnn"), fg.get("crypto"), config=cfg)
 
         def _s(v):
             return f"{v:.0f}" if isinstance(v, (int, float)) else "－"
@@ -393,5 +407,27 @@ if __name__ == "__main__":
     assert "⛔" in txt and "NVDA" in txt, txt
     print("✅ 6 overlay_text")
     print("\n" + txt)
+
+    # 7) 全空 inputs 快取（上次抓取全敗）→ 短 TTL 提早重試；空清單不剪快取
+    st = {"alpha_cache": {
+        "BLIND": {"ts": "2026-07-20T10:00:00+00:00", "inputs": {}},          # 4h、空
+        "OK4H": {"ts": "2026-07-20T10:00:00+00:00", "inputs": {"opt_score": 0.1}},
+    }}
+    refresh_cache(st, ["BLIND", "OK4H"], NOW, {"refresh_per_run": 4},
+                  fetchers={"f": lambda s: {"opt_score": 0.5}})
+    assert st["alpha_cache"]["BLIND"]["ts"] == NOW      # 空 inputs 4h → 重試
+    assert st["alpha_cache"]["OK4H"]["ts"] != NOW       # 正常快取 4h < 12h → 不動
+    refresh_cache(st, [], NOW, None, fetchers={"f": lambda s: {}})
+    assert len(st["alpha_cache"]) == 2                  # 空清單不剪
+    print("✅ 7 空 inputs 短 TTL 重試 + 空清單不剪快取")
+
+    # 8) /alpha 顯示與 enrich 同源：/set ao_earnings_veto_days 10 → 6 天也顯示 ⛔
+    st = {"thresholds": {"ao_earnings_veto_days": 10.0},
+          "earnings_cache": {"LATE": {"checked": "2026-07-20",
+                                      "earnings": "2026-07-26"}},
+          "alpha_cache": {}}
+    txt = overlay_text(st, today="2026-07-20")
+    assert "⛔" in txt and "LATE" in txt, txt
+    print("✅ 8 overlay_text 吃 ao_ 覆蓋參數")
 
     print("\nalpha_overlay selftest OK ✅")
