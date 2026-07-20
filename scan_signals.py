@@ -2824,13 +2824,12 @@ def run_autotrade(state: dict, results: list[dict]) -> str | None:
 
     # Alpha 層資訊疊加：內部人/選擇權情緒/空單/財報迴避/恐貪 → 評分微調 + veto + 縮倉
     ao_notes = []
+    size_mult = 1.0
     try:
         import alpha_overlay as ao
         veto_days = int(th.get("ao_earnings_veto_days", 3))
         _upcoming_earnings(state, max_days=max(veto_days, 5))   # 補新財報日快取（每日快取，便宜）
         scored, ao_notes, size_mult = ao.enrich(state, scored, th)
-        if size_mult != 1.0:
-            config["risk_pct"] = float(config["risk_pct"]) * size_mult
         for n in ao_notes:
             print(f"Alpha: {n}")
     except Exception as e:
@@ -2843,6 +2842,9 @@ def run_autotrade(state: dict, results: list[dict]) -> str | None:
         for k in te.ENGINE_DEFAULTS:                     # /set eng_<參數> 覆蓋
             if f"eng_{k}" in th:
                 config[k] = th[f"eng_{k}"]
+        if size_mult != 1.0:
+            # 恐貪縮倉必須在 eng_ 覆蓋之後套用，否則 /set eng_risk_pct 會把乘數蓋掉
+            config["risk_pct"] = float(config["risk_pct"]) * size_mult
         regime = None
         if th.get("regime_filter_enabled", True):
             rg = market_regime()

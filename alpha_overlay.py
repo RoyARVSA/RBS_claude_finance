@@ -136,14 +136,15 @@ def apply_overlay(scored: list[dict], overlays: dict) -> tuple[list[dict], list[
         s2 = dict(s)
         ov = overlays.get(s.get("ticker"))
         if ov:
+            base = float(s.get("score") or 0)      # score=None 防炸
             if ov.get("delta"):
-                s2["score"] = round(float(s.get("score", 0)) + float(ov["delta"]), 3)
+                s2["score"] = round(base + float(ov["delta"]), 3)
             if ov.get("no_entry"):
                 s2["no_entry"] = True
             if ov.get("delta") or ov.get("no_entry"):
                 why = "；".join(ov.get("reasons") or [])
-                notes.append(f"🧠 {s['ticker']} 評分 {float(s.get('score', 0)):+.2f}"
-                             f"→{float(s2.get('score', 0)):+.2f}"
+                notes.append(f"🧠 {s['ticker']} 評分 {base:+.2f}"
+                             f"→{float(s2.get('score') or 0):+.2f}"
                              f"{'（禁新倉）' if ov.get('no_entry') else ''} {why}".rstrip())
         out.append(s2)
     return out, notes
@@ -296,7 +297,10 @@ def overlay_text(state: dict, today: str | None = None) -> str:
     fg = state.get("alpha_fg") or {}
     if fg.get("cnn") is not None or fg.get("crypto") is not None:
         acct = account_overlay(fg.get("cnn"), fg.get("crypto"))
-        seg = f"恐貪：美股 {fg.get('cnn')}／加密 {fg.get('crypto')}"
+
+        def _s(v):
+            return f"{v:.0f}" if isinstance(v, (int, float)) else "－"
+        seg = f"恐貪：美股 {_s(fg.get('cnn'))}／加密 {_s(fg.get('crypto'))}"
         if acct["reasons"]:
             seg += "\n" + "\n".join(acct["reasons"])
         lines.append(seg)

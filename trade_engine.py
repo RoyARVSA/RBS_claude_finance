@@ -201,7 +201,7 @@ def decide(scored: list[dict], positions: dict, equity: float, buying_power: flo
         peak = rec["peak"]
         r_now = (px - entry) / rps
         r_peak = (peak - entry) / rps
-        sc = float((score_map.get(sym) or {}).get("score", 0))
+        sc = float((score_map.get(sym) or {}).get("score") or 0)   # None 防炸
 
         def _sell(q, reason, mech):
             orders.append({"symbol": sym, "side": "sell", "qty": q,
@@ -308,7 +308,7 @@ def decide(scored: list[dict], positions: dict, equity: float, buying_power: flo
              if s["ticker"] not in held and s["ticker"] not in exited
              and s["ticker"] not in cd
              and not s.get("no_entry")          # alpha overlay veto（如財報前）只擋新倉
-             and float(s.get("score", 0)) >= float(cfg["buy_threshold"])
+             and float(s.get("score") or 0) >= float(cfg["buy_threshold"])
              and float(s.get("price", 0) or 0) > 0],
             key=lambda s: -float(s["score"]))
         for s in cands:
@@ -349,7 +349,7 @@ def decide(scored: list[dict], positions: dict, equity: float, buying_power: flo
             s_rec = score_map.get(sym) or {}
             if s_rec.get("no_entry"):           # veto 也擋加碼（出場機制不受影響）
                 continue
-            sc = float(s_rec.get("score", 0))
+            sc = float(s_rec.get("score") or 0)
             if adds < int(cfg["pyramid_max_adds"]) \
                     and r_now >= (adds + 1) * float(cfg["pyramid_r"]) \
                     and sc >= float(cfg["pyramid_min_score"]):
