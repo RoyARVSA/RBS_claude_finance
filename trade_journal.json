@@ -139,5 +139,16 @@
     "mechanism": "entry",
     "submitted": true,
     "error": null
+  },
+  {
+    "time": "2026-07-21T15:22:40Z",
+    "symbol": "COIN",
+    "side": "buy",
+    "qty": 65,
+    "score": 0.519,
+    "reason": "評分 +0.52 ≥ 門檻 0.5（風險部位 65 股）",
+    "mechanism": "entry",
+    "submitted": true,
+    "error": null
   }
 ]
