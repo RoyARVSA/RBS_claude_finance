@@ -46,7 +46,7 @@
     "at_max_position_pct": 0.15
   },
   "last_update_id": 280895072,
-  "last_scan_time": "2026-07-21 15:22 UTC",
+  "last_scan_time": "2026-07-21 16:53 UTC",
   "signal_history": {
     "AAPL": {
       "macd": "2026-07-17T14:56:29.057699+00:00",
@@ -740,34 +740,34 @@
   "last_weekly": "2026-W29",
   "theses": {},
   "weather": {
-    "ts": "2026-07-21T15:22:29.706353+00:00",
-    "score": 70.9,
+    "ts": "2026-07-21T16:53:12.721239+00:00",
+    "score": 72.7,
     "components": {
       "breadth": 63.6,
-      "credit": 83.4,
-      "vix_ts": 90.8,
+      "credit": 84.7,
+      "vix_ts": 96.6,
       "yield_curve": 29.5,
-      "copper_gold": 83.6
+      "copper_gold": 86.7
     },
     "missing": [],
     "regime": {
       "regime": "risk_on",
       "emoji": "🟢",
-      "label": "偏多（氣象台 71/100）"
+      "label": "偏多（氣象台 73/100）"
     }
   },
   "alpha_cache": {
     "AAPL": {
-      "ts": "2026-07-20T15:20:15.331081+00:00",
+      "ts": "2026-07-21T16:53:14.452298+00:00",
       "inputs": {
-        "opt_score": 0.14,
+        "opt_score": 0.6,
         "short_pct_float": 0.0095999995
       }
     },
     "MSFT": {
-      "ts": "2026-07-20T15:20:15.331081+00:00",
+      "ts": "2026-07-21T16:53:14.452298+00:00",
       "inputs": {
-        "opt_score": 0.2,
+        "opt_score": 0.27,
         "short_pct_float": 0.012
       }
     },
@@ -868,6 +868,20 @@
         "opt_score": -0.93,
         "short_pct_float": 0.0378
       }
+    },
+    "GLD": {
+      "ts": "2026-07-21T16:53:14.452298+00:00",
+      "inputs": {
+        "opt_score": -0.07,
+        "short_pct_float": null
+      }
+    },
+    "DRAM": {
+      "ts": "2026-07-21T16:53:14.452298+00:00",
+      "inputs": {
+        "opt_score": -0.28,
+        "short_pct_float": null
+      }
     }
   },
   "alpha_fg": {
@@ -898,7 +912,7 @@
       "JPM": {
         "entry": 333.31,
         "rps": 16.6655,
-        "peak": 343.49,
+        "peak": 345.54,
         "opened": "2026-07-20",
         "init_qty": 45.0,
         "adds": 0,
@@ -952,7 +966,7 @@
       "COIN": {
         "entry": 178.62,
         "rps": 15.140000000000015,
-        "peak": 178.62,
+        "peak": 179.02,
         "opened": "2026-07-21",
         "init_qty": 65,
         "adds": 0,
