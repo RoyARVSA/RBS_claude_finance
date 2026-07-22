@@ -150,5 +150,16 @@
     "mechanism": "entry",
     "submitted": true,
     "error": null
+  },
+  {
+    "time": "2026-07-22T15:01:14Z",
+    "symbol": "PLTR",
+    "side": "sell",
+    "qty": 93,
+    "score": 0.237,
+    "reason": "硬停損 127.72（進場 134.44−1.0×風險）",
+    "mechanism": "stop_loss",
+    "submitted": true,
+    "error": null
   }
 ]
