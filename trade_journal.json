@@ -161,5 +161,27 @@
     "mechanism": "stop_loss",
     "submitted": true,
     "error": null
+  },
+  {
+    "time": "2026-07-23T13:46:21Z",
+    "symbol": "AMZN",
+    "side": "sell",
+    "qty": 59,
+    "score": -0.205,
+    "reason": "硬停損 241.36（進場 254.06−1.0×風險）",
+    "mechanism": "stop_loss",
+    "submitted": true,
+    "error": null
+  },
+  {
+    "time": "2026-07-23T13:46:21Z",
+    "symbol": "META",
+    "side": "sell",
+    "qty": 24,
+    "score": -0.11,
+    "reason": "追蹤停損 616.73（峰值 651.28 回落 8%，保本地板 616.73）",
+    "mechanism": "trailing_stop",
+    "submitted": true,
+    "error": null
   }
 ]
