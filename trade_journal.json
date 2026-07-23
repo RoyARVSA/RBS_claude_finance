@@ -183,5 +183,27 @@
     "mechanism": "trailing_stop",
     "submitted": true,
     "error": null
+  },
+  {
+    "time": "2026-07-23T15:45:03Z",
+    "symbol": "COIN",
+    "side": "sell",
+    "qty": 65,
+    "score": 0.219,
+    "reason": "硬停損 163.48（進場 178.62−1.0×風險）",
+    "mechanism": "stop_loss",
+    "submitted": true,
+    "error": null
+  },
+  {
+    "time": "2026-07-23T15:45:03Z",
+    "symbol": "MSFT",
+    "side": "sell",
+    "qty": 36,
+    "score": -0.003,
+    "reason": "硬停損 385.33（進場 401.76−1.0×風險）",
+    "mechanism": "stop_loss",
+    "submitted": true,
+    "error": null
   }
 ]
