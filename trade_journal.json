@@ -205,5 +205,16 @@
     "mechanism": "stop_loss",
     "submitted": true,
     "error": null
+  },
+  {
+    "time": "2026-07-24T15:53:33Z",
+    "symbol": "AAPL",
+    "side": "sell",
+    "qty": 24,
+    "score": 0.866,
+    "reason": "獲利 +1.6R ≥ 1.5R，先賣一半鎖利（餘倉保本追蹤）",
+    "mechanism": "scale_out",
+    "submitted": true,
+    "error": null
   }
 ]
