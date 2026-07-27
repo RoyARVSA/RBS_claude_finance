@@ -46,7 +46,7 @@
     "at_max_position_pct": 0.15
   },
   "last_update_id": 280895072,
-  "last_scan_time": "2026-07-27 17:44 UTC",
+  "last_scan_time": "2026-07-27 19:02 UTC",
   "signal_history": {
     "AAPL": {
       "macd": "2026-07-27T15:58:22.107578+00:00",
@@ -141,106 +141,106 @@
   },
   "calibration": {
     "AAPL": {
-      "rsi": 1.023,
+      "rsi": 0.957,
       "bollinger": 1.025,
       "trend": 1.012,
-      "macd": 0.981
+      "macd": 0.99
     },
     "MSFT": {
       "rsi": 1.097,
       "macd": 0.986,
-      "bollinger": 0.978,
+      "bollinger": 0.975,
       "trend": 0.994
     },
     "NVDA": {
-      "bollinger": 1.052,
-      "macd": 0.991,
-      "trend": 0.986,
-      "rsi": 0.978
+      "bollinger": 1.058,
+      "macd": 0.99,
+      "rsi": 0.975,
+      "trend": 0.975
     },
     "GOOGL": {
-      "rsi": 1.02,
-      "macd": 1.011,
-      "bollinger": 1.023,
+      "rsi": 1.001,
+      "macd": 1.023,
+      "bollinger": 1.039,
       "trend": 1.0
     },
     "AMZN": {
       "trend": 1.111,
       "rsi": 1.063,
-      "macd": 1.005,
-      "bollinger": 0.982
+      "macd": 1.024,
+      "bollinger": 0.983
     },
     "TSLA": {
-      "macd": 1.097,
-      "bollinger": 0.971,
+      "macd": 1.171,
+      "bollinger": 0.968,
       "rsi": 0.98,
       "trend": 0.992
     },
     "META": {
-      "macd": 1.107,
-      "bollinger": 1.002,
-      "rsi": 1.017,
-      "trend": 1.0
+      "macd": 1.053,
+      "rsi": 1.098,
+      "bollinger": 1.021,
+      "trend": 0.989
     },
     "AMD": {
-      "bollinger": 1.018,
-      "macd": 1.001,
-      "rsi": 0.99,
+      "bollinger": 1.027,
+      "macd": 0.987,
+      "rsi": 0.991,
       "trend": 0.988
     },
     "JPM": {
-      "bollinger": 1.332,
+      "bollinger": 1.471,
+      "macd": 1.194,
       "trend": 1.054,
-      "macd": 1.08,
       "rsi": 1.093
     },
     "SPY": {
       "bollinger": 1.232,
-      "macd": 0.96,
+      "macd": 0.955,
       "rsi": 1.0,
       "trend": 1.0
     },
     "QQQ": {
-      "bollinger": 1.013,
-      "macd": 0.975,
-      "rsi": 0.989,
+      "bollinger": 1.0,
+      "macd": 0.983,
+      "rsi": 1.0,
       "trend": 0.998
     },
     "PLTR": {
       "bollinger": 1.137,
-      "macd": 1.023,
-      "rsi": 0.989,
+      "macd": 1.059,
+      "rsi": 0.986,
       "trend": 1.0
     },
     "COIN": {
-      "rsi": 1.003,
-      "macd": 1.01,
-      "bollinger": 0.967,
+      "rsi": 1.035,
+      "macd": 1.019,
+      "bollinger": 0.968,
       "trend": 0.987
     },
     "TSM": {
-      "macd": 1.0,
-      "bollinger": 0.959,
+      "macd": 1.037,
+      "bollinger": 0.961,
       "rsi": 1.0,
       "trend": 1.0
     },
     "ARKK": {
       "rsi": 1.083,
-      "macd": 0.985,
+      "macd": 0.978,
       "bollinger": 0.957,
       "trend": 0.99
     },
     "VRT": {
-      "bollinger": 1.324,
-      "macd": 0.967,
+      "bollinger": 1.185,
+      "macd": 0.969,
       "trend": 0.985,
       "rsi": 0.965
     },
     "GLD": {
-      "macd": 1.218,
-      "bollinger": 1.186,
+      "macd": 1.206,
+      "bollinger": 1.15,
       "trend": 1.007,
-      "rsi": 0.989
+      "rsi": 0.991
     },
     "DRAM": {
       "rsi": 1.0,
@@ -248,7 +248,7 @@
       "trend": 1.0,
       "bollinger": 1.0
     },
-    "_updated": "2026-07-20T18:50:36.541231+00:00"
+    "_updated": "2026-07-27T19:02:40.515842+00:00"
   },
   "fund_cache": {
     "AAPL": {
@@ -860,20 +860,20 @@
   "last_weekly": "2026-W30",
   "theses": {},
   "weather": {
-    "ts": "2026-07-27T17:44:50.623548+00:00",
-    "score": 64.2,
+    "ts": "2026-07-27T19:02:42.241476+00:00",
+    "score": 64.7,
     "components": {
       "breadth": 72.7,
-      "credit": 79.0,
-      "vix_ts": 53.8,
+      "credit": 78.2,
+      "vix_ts": 56.9,
       "yield_curve": 29.2,
-      "copper_gold": 75.3
+      "copper_gold": 75.5
     },
     "missing": [],
     "regime": {
       "regime": "risk_on",
       "emoji": "🟢",
-      "label": "偏多（氣象台 64/100）"
+      "label": "偏多（氣象台 65/100）"
     }
   },
   "alpha_cache": {
@@ -892,17 +892,17 @@
       }
     },
     "NVDA": {
-      "ts": "2026-07-24T17:25:22.440042+00:00",
+      "ts": "2026-07-27T19:02:44.812256+00:00",
       "inputs": {
-        "opt_score": -0.04,
-        "short_pct_float": 0.013300001
+        "opt_score": -0.18,
+        "short_pct_float": 0.0139
       }
     },
     "GOOGL": {
-      "ts": "2026-07-24T17:25:22.440042+00:00",
+      "ts": "2026-07-27T19:02:44.812256+00:00",
       "inputs": {
         "opt_score": 0.2,
-        "short_pct_float": 0.0146
+        "short_pct_float": 0.0134000005
       }
     },
     "AMZN": {
@@ -948,17 +948,17 @@
       }
     },
     "QQQ": {
-      "ts": "2026-07-24T15:53:30.347229+00:00",
+      "ts": "2026-07-27T19:02:44.812256+00:00",
       "inputs": {
-        "opt_score": -0.54,
+        "opt_score": -1.0,
         "short_pct_float": null
       }
     },
     "PLTR": {
-      "ts": "2026-07-24T15:53:30.347229+00:00",
+      "ts": "2026-07-27T19:02:44.812256+00:00",
       "inputs": {
-        "opt_score": 0.9,
-        "short_pct_float": 0.040700004
+        "opt_score": 0.48,
+        "short_pct_float": 0.0364
       }
     },
     "COIN": {
@@ -1005,8 +1005,8 @@
     }
   },
   "alpha_fg": {
-    "ts": "2026-07-27T15:58:23.099839+00:00",
-    "cnn": 39.4,
+    "ts": "2026-07-27T19:02:44.812256+00:00",
+    "cnn": 39.7,
     "crypto": 30.0
   },
   "engine": {
@@ -1023,7 +1023,7 @@
       "JPM": {
         "entry": 333.31,
         "rps": 16.6655,
-        "peak": 354.02,
+        "peak": 355.34,
         "opened": "2026-07-20",
         "init_qty": 45.0,
         "adds": 0,
