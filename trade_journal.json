@@ -216,5 +216,16 @@
     "mechanism": "scale_out",
     "submitted": true,
     "error": null
+  },
+  {
+    "time": "2026-07-27T15:58:26Z",
+    "symbol": "NVDA",
+    "side": "sell",
+    "qty": 72,
+    "score": -0.198,
+    "reason": "硬停損 198.76（進場 209.22−1.0×風險）",
+    "mechanism": "stop_loss",
+    "submitted": true,
+    "error": null
   }
 ]
