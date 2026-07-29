@@ -94,7 +94,10 @@ def frequency_stats(journal: list) -> dict | None:
 
 
 def _fifo_pairs(journal: list) -> list[dict]:
-    """買賣 FIFO 配對 → [{symbol, days, ret}]。以日曆日近似交易日。"""
+    """
+    買賣 FIFO 配對 → [{symbol, days, qty, buy_day, sell_day}]。以日曆日近似交易日。
+    注意：一筆賣單吃到多個 lot 會產生多對，統計為 lot-touch 等權（非成交量加權）。
+    """
     import datetime as dt
     open_lots: dict[str, list] = {}
     pairs = []
@@ -118,6 +121,7 @@ def _fifo_pairs(journal: list) -> list[dict]:
                 lot = lots[0]
                 take = min(remain, lot[0])
                 pairs.append({"symbol": sym, "days": (day - lot[1]).days,
+                              "qty": take,
                               "buy_day": lot[1].isoformat(), "sell_day": d})
                 lot[0] -= take
                 remain -= take
@@ -170,7 +174,18 @@ def holding_stats(journal: list) -> dict | None:
 
 
 def analyze(journal: list, closes: dict) -> dict:
-    """總入口（純函數）。closes: {sym: pd.Series（日期索引收盤價）}。"""
+    """總入口（純函數）。closes: {sym: pd.Series（日期索引收盤價）}。
+    tz-aware 索引統一去時區——否則 loc 比較 aware vs naive 會拋例外，
+    被內層 try 吃掉後樣本靜默歸零、誤報「樣本不足」。"""
+    norm = {}
+    for k, v in closes.items():
+        try:
+            if getattr(v.index, "tz", None) is not None:
+                v = v.tz_localize(None)
+        except Exception:
+            pass
+        norm[k] = v
+    closes = norm
     return {"chase": chase_stats(journal, closes),
             "freq": frequency_stats(journal),
             "exit": exit_quality(journal, closes),
@@ -315,6 +330,13 @@ if __name__ == "__main__":
     h = holding_stats(j5 + [J(d[70], "UP", "buy", 1), J(d[71], "UP", "sell", 1)])
     assert h and h["n"] == 5, h
     print("✅ 3 FIFO/頻率/持有期")
+
+    # 3b) tz-aware 索引：analyze 統一去時區，樣本不得靜默歸零
+    up_tz = up.copy()
+    up_tz.index = up_tz.index.tz_localize("America/New_York")
+    r_tz = analyze(j, {"UP": up_tz, "VV": vshape})
+    assert r_tz["chase"] and r_tz["chase"]["n"] == 6, r_tz["chase"]
+    print("✅ 3b tz-aware 索引正規化")
 
     # 4) 樣本不足 → None；checkup_text 全路徑不炸且無底線
     assert chase_stats(j[:2], closes) is None

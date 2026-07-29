@@ -20,6 +20,16 @@ state["shadow"] 結構：
 
 from __future__ import annotations
 
+STALE_CLOSE_DAYS = 5    # 連續 N 個日曆日無報價（如被 /remove 出 watchlist）→ 強制平倉
+
+
+def _days_between(a: str, b: str) -> int:
+    from datetime import date
+    try:
+        return (date.fromisoformat(str(b)[:10]) - date.fromisoformat(str(a)[:10])).days
+    except Exception:
+        return 0
+
 
 def init_book(real_equity: float, today: str) -> dict:
     return {"started": str(today)[:10],
@@ -96,8 +106,24 @@ def run_shadow(state: dict, scored_raw: list[dict], config: dict,
 
     prices = {s["ticker"]: float(s["price"]) for s in scored_raw
               if s.get("ticker") and s.get("price")}
-    pos_view = {sym: {"qty": p["qty"]} for sym, p in
-                (book.get("positions") or {}).items()}
+
+    # 殭屍倉防護：影子持股若不在本輪報價（被 /remove 出 watchlist、下市）——
+    # decide_orders 沒分數永遠不會賣，估值凍結且永久佔 max_positions 名額，
+    # /shadow 的「引擎增量」從此失真。連續 STALE_CLOSE_DAYS 天無報價 → 凍結價強平。
+    pos_book = book.setdefault("positions", {})
+    for sym, p in list(pos_book.items()):
+        if sym in prices:
+            p.pop("stale_since", None)
+            continue
+        p.setdefault("stale_since", str(today)[:10])
+        if _days_between(p["stale_since"], today) >= STALE_CLOSE_DAYS:
+            px = (book.get("last_px") or {}).get(sym) or p.get("entry") or 0
+            book["cash"] += float(p.get("qty", 0)) * float(px)
+            del pos_book[sym]
+            (book.get("last_px") or {}).pop(sym, None)
+            print(f"Shadow: {sym} 連續 {STALE_CLOSE_DAYS} 天無報價 → 以凍結價 {px:.2f} 強制平倉")
+
+    pos_view = {sym: {"qty": p["qty"]} for sym, p in pos_book.items()}
     eq = book_equity(book, prices)
     orders = decide_fn(scored_raw, pos_view, eq, book["cash"], config) or []
     apply_orders(book, orders, prices)
@@ -135,10 +161,14 @@ def shadow_text(book: dict | None, real_equity: float | None = None) -> str:
             lines.append(f"🤖 真帳（新引擎）：${float(re_eq):,.0f}（{re_ret:+.2%}）")
             lines.append(f"{icon} 引擎增量：{edge:+.2%}"
                          + ("（新引擎領先）" if edge >= 0 else "（舊邏輯領先——值得檢討）"))
-    npos = len(book.get("positions") or {})
+    pos = book.get("positions") or {}
+    npos = len(pos)
     lines.append(f"影子持倉 {npos} 檔"
-                 + ("：" + "、".join(sorted((book.get("positions") or {}).keys()))
-                    if npos else ""))
+                 + ("：" + "、".join(sorted(pos.keys())) if npos else ""))
+    stale = sorted(s for s, p in pos.items() if p.get("stale_since"))
+    if stale:
+        lines.append(f"⚠️ {len(stale)} 檔無報價、估值凍結中（{ '、'.join(stale) }）——"
+                     f"連續 {STALE_CLOSE_DAYS} 天後將以凍結價強制平倉")
     lines.append("同輪同價成交、無滑價；樣本 < 1 個月時勿下結論")
     return "\n".join(lines)
 
@@ -220,4 +250,30 @@ if __name__ == "__main__":
     print("✅ 7 shadow_text")
     print()
     print(txt)
+    # 8) 殭屍倉防護：/remove 出 watchlist → 無報價標記 → 5 天後凍結價強平、釋放名額
+    st5 = {}
+    run_shadow(st5, [{"ticker": "GONE", "score": 0.9, "price": 100.0}], {}, 10000.0,
+               "2026-07-20",
+               decide_fn=lambda *a: [{"symbol": "GONE", "side": "buy", "qty": 10}])
+    run_shadow(st5, [], {}, 10000.0, "2026-07-21", decide_fn=lambda *a: [])
+    b5 = st5["shadow"]
+    assert b5["positions"]["GONE"]["stale_since"] == "2026-07-21"
+    txt5 = shadow_text(b5)
+    assert "估值凍結" in txt5 and "GONE" in txt5, txt5
+    run_shadow(st5, [], {}, 10000.0, "2026-07-26", decide_fn=lambda *a: [])
+    b5 = st5["shadow"]
+    assert "GONE" not in b5["positions"], b5          # 5 天 → 強平
+    assert b5["cash"] == 10000.0                      # 凍結價=進場價 100 → 全額回收
+    assert b5["last_px"] == {}
+    # 報價恢復會重置計時
+    st6 = {}
+    run_shadow(st6, [{"ticker": "BK", "score": 0.9, "price": 50.0}], {}, 5000.0,
+               "2026-07-20",
+               decide_fn=lambda *a: [{"symbol": "BK", "side": "buy", "qty": 10}])
+    run_shadow(st6, [], {}, 5000.0, "2026-07-22", decide_fn=lambda *a: [])
+    run_shadow(st6, [{"ticker": "BK", "score": 0.5, "price": 55.0}], {}, 5000.0,
+               "2026-07-24", decide_fn=lambda *a: [])
+    assert "stale_since" not in st6["shadow"]["positions"]["BK"]
+    print("✅ 8 殭屍影子倉強平 + 報價恢復重置")
+
     print("\nshadow_book selftest OK ✅")
