@@ -43,6 +43,7 @@ def _px_on(s, d):
 
 def chase_stats(journal: list, closes: dict) -> dict | None:
     """追高：買進日收盤價在前 20 日高低區間的百分位。"""
+    import pandas as pd
     pcts = []
     for e in journal:
         if e.get("side") != "buy" or not e.get("submitted"):
@@ -51,7 +52,6 @@ def chase_stats(journal: list, closes: dict) -> dict | None:
         d = _day(e)
         if s is None or not d:
             continue
-        import pandas as pd
         try:
             win = s.loc[:pd.Timestamp(d)].tail(21)
         except Exception:
