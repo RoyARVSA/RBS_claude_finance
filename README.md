@@ -59,6 +59,10 @@ Streamlit 網頁應用 + 獨立的訊號掃描 Bot（GitHub Actions 排程版 / 
   機制歸因雛形）、持有期分佈（概念參考 HKUDS/Vibe-Trading，MIT）
 - **Shadow 對照**（`/shadow`）：舊版決策邏輯以虛擬帳本平行記帳（同一訊號流、
   疊加前原始評分）——直接量化引擎重製的增量價值，比任何回測都有說服力
+- **機制歸因報告**（`/attrib`）：FIFO 重建每筆已實現損益，按出場機制
+  （硬停損/追蹤/分批/訊號/死錢）與進場機制（首進/加碼）分組：損益/勝率/
+  持有天 + 賣後 10 日追蹤——用實測數據回答「引擎哪一層在賺錢、哪個機制太急」，
+  自我學習閉環的依據；broker 對帳淘汰 journal 外平倉的 lot
 - **當日交易計畫**：`/today [帳戶 風險%]` 盤中訂單票（VWAP/ORB/RVOL 進場、停損/停利/股數、財報日迴避）；進場票自動記入決策計分板（隔日結算，與量化/委員會同板比較）
 - **當日計畫歷史回測**：`/plantest` 用過去 ~60 交易日 5 分 K 逐日重放訂單票（無前視、扣成本、停損優先），統計各型態實證勝率/R 期望值；`/plantest apply` 把 walk-forward 校準（負期望型態停用、不穩定降信心）套進 /today——**讓判定吃歷史實證自我修正**；**每週自動重跑校準**（動作有變時推播通知，`/set plan_autocal_enabled off` 關閉）
 - **參數尋優**：`/plantest opt` 掃 ORB 分鐘 × 停損 ATR 倍數 × 目標 R:R 共 27 組參數，訓練段排序、**驗證段沒明確勝過現行預設就不推薦**（防過擬合）；`opt apply` 一鍵套用推薦參數＋對應校準
@@ -162,8 +166,9 @@ committee.py            機構決策委員會：角色提示/立場解析/硬風
 trade_engine.py         分層自動交易引擎：追蹤停損/分批/保險絲/三態曝險（純邏輯）
 alpha_overlay.py        Alpha 資訊疊加層：內部人/選擇權/空單/財報 veto/恐貪縮倉
 market_weather.py       市場氣象台：廣度/信用/VIX期限/曲線/銅金五因子體質分
-behavior_check.py       交易行為體檢：追高/頻率/出場品質(機制歸因)/持有期
+behavior_check.py       交易行為體檢：追高/頻率/出場品質/持有期
 shadow_book.py          Shadow 對照帳本：舊決策邏輯平行記帳 vs 新引擎
+attribution.py          機制歸因報告：各機制實測損益/勝率/賣後追蹤(FIFO)
 alpaca_trader.py        Alpaca 紙上交易 REST client + bracket 單（decide_orders=legacy）
 stock_db.py             選股資料庫（5 市場、30+ 產業、200+ 標的，含 AI 供應鏈瓶頸主題）
 rbs_lib.py              風險計算函式庫（VaR/CVaR/共變異數/情境）
