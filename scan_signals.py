@@ -33,6 +33,8 @@ Telegram 指令（傳給 Bot）：
   /alpha                  – Alpha 資訊疊加層：內部人/選擇權情緒/空單/財報迴避/恐貪縮倉
   /positions /pnl /closeall – 模擬持倉 / 帳戶報酬 / 一鍵平倉
   /journal [N]            – 交易日誌（每筆自動交易的評分與原因）
+  /checkup                – 交易行為體檢：追高/過度交易/太早出場/持有期（journal 實測）
+  /shadow                 – Shadow 對照：舊決策邏輯平行記帳 vs 新引擎（同訊號流）
   /rebalance [配置法]     – 再平衡顧問：Alpaca 持倉 vs HRP/Sharpe/風險平價 → 加減碼清單
   /dcf TICKER [成長%]     – DCF 內在價值估值（FCF/WACC/終值/隱含股價；投行標準流程）
   /fund SYM [vs BENCH]    – 基金/ETF 評估：費用率/追蹤誤差/α β/捕獲率；overlap 比重疊
@@ -311,6 +313,8 @@ def _cmd_help() -> str:
         "`/positions` — 目前持倉 + 損益\n"
         "`/pnl` — 帳戶淨值 + 報酬\n"
         "`/journal [N]` — 交易日誌（含評分/原因）\n"
+        "`/checkup` — 交易行為體檢：追高/過度交易/太早出場（各機制賣後 10 日追蹤）\n"
+        "`/shadow` — Shadow 對照：舊邏輯虛擬帳 vs 新引擎真帳，量化引擎增量\n"
         "`/rebalance [hrp|max_sharpe|min_vol|erc|equal]` — 再平衡顧問（持倉 vs 目標權重 → 加減碼清單）\n"
         "`/dcf AAPL [成長%]` — DCF 內在價值估值（FCF→WACC→終值→隱含股價）\n"
         "`/fg` — 雙恐懼貪婪指數（美股+加密）；`/taifex` — 台指期三大法人籌碼\n"
@@ -944,6 +948,28 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                 "設定範例：`/risk 100000 1`（帳戶 $10萬、單筆風險 1%）\n"
                 "或 `/set atr_mult 2`、`/set position_sizing_enabled off`"
             )
+
+        elif cmd == "/shadow":
+            try:
+                import shadow_book as sb
+                re_eq = None
+                key, secret = _alpaca_keys()
+                if key and secret:
+                    import alpaca_trader as at
+                    acc = at.get_account(key, secret)
+                    if acc:
+                        re_eq = at._f(acc.get("equity"))
+                reply = sb.shadow_text(state.get("shadow"), re_eq)
+            except Exception as e:
+                reply = f"❌ Shadow 讀取失敗：{e}"
+
+        elif cmd == "/checkup":
+            _tg_send(token, src_chat or chat_id, "🩺 分析交易紀錄與行情中，約 20 秒…")
+            try:
+                import behavior_check as bc
+                reply = bc.run_checkup(JOURNAL_FILE)
+            except Exception as e:
+                reply = f"❌ 行為體檢失敗：{e}"
 
         elif cmd == "/weather":
             try:
@@ -2846,6 +2872,15 @@ def run_autotrade(state: dict, results: list[dict]) -> str | None:
         "risk_pct":         th.get("risk_pct", 0.01),
     }
 
+    # Shadow 對照：舊決策邏輯以虛擬帳本平行記帳（吃疊加前的原始評分、不下單）
+    # ——量化引擎重製的增量價值；/shadow 查看
+    try:
+        import shadow_book as sb
+        sb.run_shadow(state, [dict(s) for s in scored], dict(config),
+                      equity, datetime.now(ET).strftime("%Y-%m-%d"))
+    except Exception as e:
+        print(f"Shadow: 記帳失敗 {e}")
+
     # Alpha 層資訊疊加：內部人/選擇權情緒/空單/財報迴避/恐貪 → 評分微調 + veto + 縮倉
     ao_notes = []
     size_mult = 1.0
@@ -2940,6 +2975,10 @@ def run_autotrade(state: dict, results: list[dict]) -> str | None:
         journal_entries.append({
             "time": now_iso, "symbol": o["symbol"], "side": o["side"],
             "qty": int(o["qty"]), "score": score_by_sym.get(o["symbol"]),
+            # price：/checkup 目前用收盤近似，記下實際掃描價供未來精確 PnL 歸因
+            # （Vibe-Trading 式歸因瀑布需要它）
+            "price": next((s.get("price") for s in scored
+                           if s["ticker"] == o["symbol"]), None),
             "reason": o["reason"], "mechanism": o.get("mechanism"),
             "submitted": ok,
             "error": None if ok else msg,
