@@ -95,9 +95,15 @@ def frequency_stats(journal: list) -> dict | None:
 
 def _fifo_pairs(journal: list) -> list[dict]:
     """
-    買賣 FIFO 配對 → [{symbol, days, qty, buy_day, sell_day}]。以日曆日近似交易日。
+    買賣 FIFO 配對 → [{symbol, days, qty, buy_day, sell_day, buy_price,
+    sell_price, buy_mech, sell_mech}]。以日曆日近似交易日。
     注意：一筆賣單吃到多個 lot 會產生多對，統計為 lot-touch 等權（非成交量加權）。
     """
+    return _fifo_state(journal)[0]
+
+
+def _fifo_state(journal: list) -> tuple[list[dict], dict]:
+    """FIFO 完整狀態：(配對清單, 未平倉 lots {sym: [[qty, buy_date, entry_dict], ...]})。"""
     import datetime as dt
     open_lots: dict[str, list] = {}
     pairs = []
@@ -122,12 +128,17 @@ def _fifo_pairs(journal: list) -> list[dict]:
                 take = min(remain, lot[0])
                 pairs.append({"symbol": sym, "days": (day - lot[1]).days,
                               "qty": take,
-                              "buy_day": lot[1].isoformat(), "sell_day": d})
+                              "buy_day": lot[1].isoformat(), "sell_day": d,
+                              "buy_price": lot[2].get("price"),
+                              "sell_price": e.get("price"),
+                              "buy_mech": lot[2].get("mechanism"),
+                              "sell_mech": e.get("mechanism")})
                 lot[0] -= take
                 remain -= take
                 if lot[0] <= 0:
                     lots.pop(0)
-    return pairs
+    open_lots = {s: v for s, v in open_lots.items() if v}
+    return pairs, open_lots
 
 
 def exit_quality(journal: list, closes: dict, horizon: int = 10) -> dict | None:
@@ -173,10 +184,9 @@ def holding_stats(journal: list) -> dict | None:
             "avg_days": sum(days) / len(days), "max_days": days[-1]}
 
 
-def analyze(journal: list, closes: dict) -> dict:
-    """總入口（純函數）。closes: {sym: pd.Series（日期索引收盤價）}。
-    tz-aware 索引統一去時區——否則 loc 比較 aware vs naive 會拋例外，
-    被內層 try 吃掉後樣本靜默歸零、誤報「樣本不足」。"""
+def _normalize_tz(closes: dict) -> dict:
+    """tz-aware 索引統一去時區——否則 loc/searchsorted 比較 aware vs naive
+    拋例外被內層 try 吃掉，樣本靜默歸零。冪等，所有吃 closes 的入口都該套。"""
     norm = {}
     for k, v in closes.items():
         try:
@@ -185,7 +195,12 @@ def analyze(journal: list, closes: dict) -> dict:
         except Exception:
             pass
         norm[k] = v
-    closes = norm
+    return norm
+
+
+def analyze(journal: list, closes: dict) -> dict:
+    """總入口（純函數）。closes: {sym: pd.Series（日期索引收盤價）}。"""
+    closes = _normalize_tz(closes)
     return {"chase": chase_stats(journal, closes),
             "freq": frequency_stats(journal),
             "exit": exit_quality(journal, closes),

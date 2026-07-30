@@ -93,6 +93,15 @@
   (2) 定期全 repo 掃金鑰 pattern（sk-/ghp_/token=/長 base64），包含沒人動的檔案；
   (3) 刪檔救不了 git 歷史——**撤銷（revoke）才是真正的補救**。
 
+### B9. 防護修在呼叫端 → 新呼叫端繞過，同坑二次踩
+- **症狀**：tz-aware 索引防護修在 `behavior_check.analyze()`（呼叫端聚合層），
+  數日後新增的 `attribution.run_attrib` 直呼底層 `exit_quality`/`_px_on` → 同一個
+  tz 例外被 try 吃掉、配對靜默蒸發（對抗驗證評 High）。同一份 closes，
+  `/checkup` 對、`/attrib` 錯。
+- **原因**：加固放在「目前唯一的呼叫端」而不是「吃該資料的純函數入口」。
+- **修法**：防護一律下沉為冪等 helper（如 `_normalize_tz`）放資料入口，每個入口
+  都套、重複套用無害；修 bug 時 Grep 同一底層函數的**所有**呼叫鏈一併補。
+
 ## C. Python 生態版本
 
 ### C1. NumPy 2.0：`float(array)` 對 ndim>0 陣列拋 TypeError

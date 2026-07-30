@@ -34,6 +34,7 @@ Telegram 指令（傳給 Bot）：
   /positions /pnl /closeall – 模擬持倉 / 帳戶報酬 / 一鍵平倉
   /journal [N]            – 交易日誌（每筆自動交易的評分與原因）
   /checkup                – 交易行為體檢：追高/過度交易/太早出場/持有期（journal 實測）
+  /attrib                 – 機制歸因報告：各出場/進場機制的損益/勝率/賣後追蹤
   /shadow                 – Shadow 對照：舊決策邏輯平行記帳 vs 新引擎（同訊號流）
   /rebalance [配置法]     – 再平衡顧問：Alpaca 持倉 vs HRP/Sharpe/風險平價 → 加減碼清單
   /dcf TICKER [成長%]     – DCF 內在價值估值（FCF/WACC/終值/隱含股價；投行標準流程）
@@ -314,6 +315,7 @@ def _cmd_help() -> str:
         "`/pnl` — 帳戶淨值 + 報酬\n"
         "`/journal [N]` — 交易日誌（含評分/原因）\n"
         "`/checkup` — 交易行為體檢：追高/過度交易/太早出場（各機制賣後 10 日追蹤）\n"
+        "`/attrib` — 機制歸因報告：各出場/進場機制的實測損益、勝率、賣後追蹤（哪一層在賺錢）\n"
         "`/shadow` — Shadow 對照：舊邏輯虛擬帳 vs 新引擎真帳，量化引擎增量\n"
         "`/rebalance [hrp|max_sharpe|min_vol|erc|equal]` — 再平衡顧問（持倉 vs 目標權重 → 加減碼清單）\n"
         "`/dcf AAPL [成長%]` — DCF 內在價值估值（FCF→WACC→終值→隱含股價）\n"
@@ -962,6 +964,14 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                 reply = sb.shadow_text(state.get("shadow"), re_eq)
             except Exception as e:
                 reply = f"❌ Shadow 讀取失敗：{e}"
+
+        elif cmd == "/attrib":
+            _tg_send(token, src_chat or chat_id, "🧾 重建配對損益中，約 20 秒…")
+            try:
+                import attribution as ab
+                reply = ab.run_attrib(JOURNAL_FILE)
+            except Exception as e:
+                reply = f"❌ 歸因報告失敗：{e}"
 
         elif cmd == "/checkup":
             _tg_send(token, src_chat or chat_id, "🩺 分析交易紀錄與行情中，約 20 秒…")
