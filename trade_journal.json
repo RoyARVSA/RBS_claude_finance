@@ -227,5 +227,17 @@
     "mechanism": "stop_loss",
     "submitted": true,
     "error": null
+  },
+  {
+    "time": "2026-07-30T15:07:52Z",
+    "symbol": "MSFT",
+    "side": "buy",
+    "qty": 31,
+    "score": 0.781,
+    "price": 444.92,
+    "reason": "評分 +0.78 ≥ 門檻 0.5（風險部位 31 股）",
+    "mechanism": "entry",
+    "submitted": true,
+    "error": null
   }
 ]
