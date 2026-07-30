@@ -184,10 +184,9 @@ def holding_stats(journal: list) -> dict | None:
             "avg_days": sum(days) / len(days), "max_days": days[-1]}
 
 
-def analyze(journal: list, closes: dict) -> dict:
-    """總入口（純函數）。closes: {sym: pd.Series（日期索引收盤價）}。
-    tz-aware 索引統一去時區——否則 loc 比較 aware vs naive 會拋例外，
-    被內層 try 吃掉後樣本靜默歸零、誤報「樣本不足」。"""
+def _normalize_tz(closes: dict) -> dict:
+    """tz-aware 索引統一去時區——否則 loc/searchsorted 比較 aware vs naive
+    拋例外被內層 try 吃掉，樣本靜默歸零。冪等，所有吃 closes 的入口都該套。"""
     norm = {}
     for k, v in closes.items():
         try:
@@ -196,7 +195,12 @@ def analyze(journal: list, closes: dict) -> dict:
         except Exception:
             pass
         norm[k] = v
-    closes = norm
+    return norm
+
+
+def analyze(journal: list, closes: dict) -> dict:
+    """總入口（純函數）。closes: {sym: pd.Series（日期索引收盤價）}。"""
+    closes = _normalize_tz(closes)
     return {"chase": chase_stats(journal, closes),
             "freq": frequency_stats(journal),
             "exit": exit_quality(journal, closes),
