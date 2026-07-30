@@ -269,78 +269,78 @@
       "text": "🏢 *Apple Inc.* (AAPL)\nTechnology · Consumer Electronics\n\n📊 *財務健康*：75（優，5/5構面）\nROE：141.5%　淨利率：27.2%\n營收成長：16.6%　盈餘成長：21.8%\nP/E：34.15　PEG：2.28　P/B：38.81\n負債權益比：0.80　流動比：1.07\n分析師目標：315.09（+11.8%）\n\n_資料 yfinance，季報非即時 · 僅供參考_"
     }
   },
-  "last_briefing_date": "2026-07-29",
+  "last_briefing_date": "2026-07-30",
   "earnings_cache": {
     "AAPL": {
-      "checked": "2026-07-29",
+      "checked": "2026-07-30",
       "earnings": "2026-07-30"
     },
     "MSFT": {
-      "checked": "2026-07-29",
-      "earnings": "2026-07-29"
+      "checked": "2026-07-30",
+      "earnings": "2026-10-28"
     },
     "NVDA": {
-      "checked": "2026-07-29",
+      "checked": "2026-07-30",
       "earnings": "2026-08-26"
     },
     "GOOGL": {
-      "checked": "2026-07-29",
+      "checked": "2026-07-30",
       "earnings": "2026-10-28"
     },
     "AMZN": {
-      "checked": "2026-07-29",
+      "checked": "2026-07-30",
       "earnings": "2026-07-30"
     },
     "TSLA": {
-      "checked": "2026-07-29",
+      "checked": "2026-07-30",
       "earnings": "2026-10-21"
     },
     "META": {
-      "checked": "2026-07-29",
-      "earnings": "2026-07-29"
+      "checked": "2026-07-30",
+      "earnings": "2026-10-28"
     },
     "AMD": {
-      "checked": "2026-07-29",
+      "checked": "2026-07-30",
       "earnings": "2026-08-04"
     },
     "JPM": {
-      "checked": "2026-07-29",
+      "checked": "2026-07-30",
       "earnings": "2026-10-13"
     },
     "SPY": {
-      "checked": "2026-07-29",
+      "checked": "2026-07-30",
       "earnings": null
     },
     "QQQ": {
-      "checked": "2026-07-29",
+      "checked": "2026-07-30",
       "earnings": null
     },
     "PLTR": {
-      "checked": "2026-07-29",
+      "checked": "2026-07-30",
       "earnings": "2026-08-03"
     },
     "COIN": {
-      "checked": "2026-07-29",
+      "checked": "2026-07-30",
       "earnings": "2026-07-30"
     },
     "TSM": {
-      "checked": "2026-07-29",
+      "checked": "2026-07-30",
       "earnings": "2026-10-15"
     },
     "ARKK": {
-      "checked": "2026-07-29",
+      "checked": "2026-07-30",
       "earnings": null
     },
     "VRT": {
-      "checked": "2026-07-29",
-      "earnings": "2026-07-29"
+      "checked": "2026-07-30",
+      "earnings": "2026-10-21"
     },
     "GLD": {
-      "checked": "2026-07-29",
+      "checked": "2026-07-30",
       "earnings": null
     },
     "DRAM": {
-      "checked": "2026-07-29",
+      "checked": "2026-07-30",
       "earnings": null
     }
   },
@@ -940,20 +940,20 @@
   "last_weekly": "2026-W30",
   "theses": {},
   "weather": {
-    "ts": "2026-07-29T19:59:32.891929+00:00",
-    "score": 58.8,
+    "ts": "2026-07-30T12:53:38.348966+00:00",
+    "score": 64.0,
     "components": {
       "breadth": 63.6,
-      "credit": 81.7,
-      "vix_ts": 48.7,
-      "yield_curve": 29.8,
-      "copper_gold": 51.3
+      "credit": 81.8,
+      "vix_ts": 62.7,
+      "yield_curve": 30.1,
+      "copper_gold": 74.4
     },
     "missing": [],
     "regime": {
       "regime": "risk_on",
       "emoji": "🟢",
-      "label": "偏多（氣象台 59/100）"
+      "label": "偏多（氣象台 64/100）"
     }
   },
   "alpha_cache": {
