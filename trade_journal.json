@@ -239,5 +239,29 @@
     "mechanism": "entry",
     "submitted": true,
     "error": null
+  },
+  {
+    "time": "2026-07-31T14:56:52Z",
+    "symbol": "AAPL",
+    "side": "sell",
+    "qty": 24,
+    "score": -0.299,
+    "price": 302.15,
+    "reason": "追蹤停損 326.39（峰值 343.57 回落 5%，保本地板 309.15）",
+    "mechanism": "trailing_stop",
+    "submitted": true,
+    "error": null
+  },
+  {
+    "time": "2026-07-31T14:56:52Z",
+    "symbol": "AMZN",
+    "side": "buy",
+    "qty": 52,
+    "score": 0.796,
+    "price": 271.29,
+    "reason": "評分 +0.80 ≥ 門檻 0.5（風險部位 52 股）",
+    "mechanism": "entry",
+    "submitted": true,
+    "error": null
   }
 ]
