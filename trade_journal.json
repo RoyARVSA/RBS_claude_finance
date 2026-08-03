@@ -263,5 +263,29 @@
     "mechanism": "entry",
     "submitted": true,
     "error": null
+  },
+  {
+    "time": "2026-08-03T14:27:52Z",
+    "symbol": "MSFT",
+    "side": "sell",
+    "qty": 15,
+    "score": 0.695,
+    "price": 486.59,
+    "reason": "獲利 +1.8R ≥ 1.5R，先賣一半鎖利（餘倉保本追蹤）",
+    "mechanism": "scale_out",
+    "submitted": true,
+    "error": null
+  },
+  {
+    "time": "2026-08-03T14:27:52Z",
+    "symbol": "GOOGL",
+    "side": "buy",
+    "qty": 39,
+    "score": 0.704,
+    "price": 368.27,
+    "reason": "評分 +0.70 ≥ 門檻 0.5（風險部位 39 股）",
+    "mechanism": "entry",
+    "submitted": true,
+    "error": null
   }
 ]
