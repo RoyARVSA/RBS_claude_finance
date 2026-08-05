@@ -276,78 +276,78 @@
     "_updated": "2026-08-04T15:04:40.546434+00:00"
   },
   "fund_cache": {},
-  "last_briefing_date": "2026-08-04",
+  "last_briefing_date": "2026-08-05",
   "earnings_cache": {
     "AAPL": {
-      "checked": "2026-08-04",
+      "checked": "2026-08-05",
       "earnings": "2026-10-29"
     },
     "MSFT": {
-      "checked": "2026-08-04",
+      "checked": "2026-08-05",
       "earnings": "2026-10-28"
     },
     "NVDA": {
-      "checked": "2026-08-04",
+      "checked": "2026-08-05",
       "earnings": "2026-08-26"
     },
     "GOOGL": {
-      "checked": "2026-08-04",
+      "checked": "2026-08-05",
       "earnings": "2026-10-28"
     },
     "AMZN": {
-      "checked": "2026-08-04",
+      "checked": "2026-08-05",
       "earnings": "2026-10-29"
     },
     "TSLA": {
-      "checked": "2026-08-04",
+      "checked": "2026-08-05",
       "earnings": "2026-10-21"
     },
     "META": {
-      "checked": "2026-08-04",
+      "checked": "2026-08-05",
       "earnings": "2026-10-28"
     },
     "AMD": {
-      "checked": "2026-08-04",
-      "earnings": "2026-08-04"
+      "checked": "2026-08-05",
+      "earnings": "2026-11-03"
     },
     "JPM": {
-      "checked": "2026-08-04",
+      "checked": "2026-08-05",
       "earnings": "2026-10-13"
     },
     "SPY": {
-      "checked": "2026-08-04",
+      "checked": "2026-08-05",
       "earnings": null
     },
     "QQQ": {
-      "checked": "2026-08-04",
+      "checked": "2026-08-05",
       "earnings": null
     },
     "PLTR": {
-      "checked": "2026-08-04",
+      "checked": "2026-08-05",
       "earnings": "2026-11-02"
     },
     "COIN": {
-      "checked": "2026-08-04",
+      "checked": "2026-08-05",
       "earnings": "2026-10-29"
     },
     "TSM": {
-      "checked": "2026-08-04",
+      "checked": "2026-08-05",
       "earnings": "2026-10-15"
     },
     "ARKK": {
-      "checked": "2026-08-04",
+      "checked": "2026-08-05",
       "earnings": null
     },
     "VRT": {
-      "checked": "2026-08-04",
+      "checked": "2026-08-05",
       "earnings": "2026-10-21"
     },
     "GLD": {
-      "checked": "2026-08-04",
+      "checked": "2026-08-05",
       "earnings": null
     },
     "DRAM": {
-      "checked": "2026-08-04",
+      "checked": "2026-08-05",
       "earnings": null
     }
   },
@@ -1084,20 +1084,20 @@
   "last_weekly": "2026-W31",
   "theses": {},
   "weather": {
-    "ts": "2026-08-04T18:50:46.560013+00:00",
-    "score": 81.3,
+    "ts": "2026-08-05T13:11:05.534840+00:00",
+    "score": 79.7,
     "components": {
       "breadth": 90.9,
-      "credit": 79.0,
+      "credit": 77.6,
       "vix_ts": 100.0,
       "yield_curve": 29.5,
-      "copper_gold": 98.3
+      "copper_gold": 86.0
     },
     "missing": [],
     "regime": {
       "regime": "risk_on",
       "emoji": "🟢",
-      "label": "偏多（氣象台 81/100）"
+      "label": "偏多（氣象台 80/100）"
     }
   },
   "alpha_cache": {
