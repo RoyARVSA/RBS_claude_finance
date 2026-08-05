@@ -323,5 +323,17 @@
     "mechanism": "entry",
     "submitted": true,
     "error": null
+  },
+  {
+    "time": "2026-08-05T15:26:36Z",
+    "symbol": "QQQ",
+    "side": "buy",
+    "qty": 20,
+    "score": 0.525,
+    "price": 722.19,
+    "reason": "評分 +0.53 ≥ 門檻 0.5（風險部位 20 股）",
+    "mechanism": "entry",
+    "submitted": true,
+    "error": null
   }
 ]
