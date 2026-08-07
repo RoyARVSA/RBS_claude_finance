@@ -46,7 +46,7 @@
     "at_max_position_pct": 0.15
   },
   "last_update_id": 280895072,
-  "last_scan_time": "2026-08-07 18:31 UTC",
+  "last_scan_time": "2026-08-07 19:37 UTC",
   "signal_history": {
     "AAPL": {
       "atr": "2026-08-05T15:26:30.811932+00:00"
@@ -1105,14 +1105,14 @@
   "last_weekly": "2026-W31",
   "theses": {},
   "weather": {
-    "ts": "2026-08-07T17:44:08.878550+00:00",
-    "score": 76.5,
+    "ts": "2026-08-07T19:37:54.970071+00:00",
+    "score": 76.3,
     "components": {
       "breadth": 90.9,
-      "credit": 82.5,
+      "credit": 81.3,
       "vix_ts": 100.0,
-      "yield_curve": 29.7,
-      "copper_gold": 41.9
+      "yield_curve": 29.8,
+      "copper_gold": 42.6
     },
     "missing": [],
     "regime": {
@@ -1371,18 +1371,18 @@
       }
     },
     "last_px": {
-      "JPM": 357.72,
-      "MSFT": 499.39,
-      "AMZN": 274.61,
-      "GOOGL": 354.11,
-      "PLTR": 170.78,
-      "NVDA": 221.96,
-      "QQQ": 719.95
+      "JPM": 358.31,
+      "MSFT": 501.38,
+      "AMZN": 274.53,
+      "GOOGL": 354.54,
+      "PLTR": 171.09,
+      "NVDA": 222.79,
+      "QQQ": 721.91
     },
     "last": {
       "date": "2026-08-07",
-      "equity": 98244.47,
-      "real_equity": 97647.56
+      "equity": 98457.88,
+      "real_equity": 97855.24
     }
   }
 }
