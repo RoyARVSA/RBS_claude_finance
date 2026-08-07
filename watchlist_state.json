@@ -46,7 +46,7 @@
     "at_max_position_pct": 0.15
   },
   "last_update_id": 280895072,
-  "last_scan_time": "2026-08-07 16:48 UTC",
+  "last_scan_time": "2026-08-07 17:44 UTC",
   "signal_history": {
     "AAPL": {
       "atr": "2026-08-05T15:26:30.811932+00:00"
@@ -1107,14 +1107,14 @@
   "last_weekly": "2026-W31",
   "theses": {},
   "weather": {
-    "ts": "2026-08-07T15:51:25.818513+00:00",
-    "score": 76.3,
+    "ts": "2026-08-07T17:44:08.878550+00:00",
+    "score": 76.5,
     "components": {
       "breadth": 90.9,
-      "credit": 82.0,
+      "credit": 82.5,
       "vix_ts": 100.0,
       "yield_curve": 29.7,
-      "copper_gold": 41.0
+      "copper_gold": 41.9
     },
     "missing": [],
     "regime": {
@@ -1202,16 +1202,16 @@
       }
     },
     "COIN": {
-      "ts": "2026-08-06T14:52:55.958172+00:00",
+      "ts": "2026-08-07T17:44:10.621714+00:00",
       "inputs": {
-        "opt_score": 0.71,
+        "opt_score": 0.0,
         "short_pct_float": 0.113900006
       }
     },
     "TSM": {
-      "ts": "2026-08-06T14:52:55.958172+00:00",
+      "ts": "2026-08-07T17:44:10.621714+00:00",
       "inputs": {
-        "opt_score": 0.37,
+        "opt_score": -0.39,
         "short_pct_float": 0.0069
       }
     },
@@ -1306,7 +1306,7 @@
       "PLTR": {
         "entry": 157.79,
         "rps": 12.169999999999987,
-        "peak": 170.22,
+        "peak": 171.11,
         "opened": "2026-08-04",
         "init_qty": 79,
         "adds": 0,
@@ -1373,18 +1373,18 @@
       }
     },
     "last_px": {
-      "JPM": 357.44,
-      "MSFT": 502.7,
-      "AMZN": 275.74,
-      "GOOGL": 355.48,
-      "PLTR": 170.22,
-      "NVDA": 222.48,
-      "QQQ": 721.2
+      "JPM": 357.58,
+      "MSFT": 499.71,
+      "AMZN": 274.26,
+      "GOOGL": 354.73,
+      "PLTR": 171.11,
+      "NVDA": 222.32,
+      "QQQ": 720.91
     },
     "last": {
       "date": "2026-08-07",
-      "equity": 98468.64,
-      "real_equity": 97850.13
+      "equity": 98319.77,
+      "real_equity": 97739.85
     }
   }
 }
