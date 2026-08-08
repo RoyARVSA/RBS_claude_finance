@@ -117,7 +117,8 @@ streamlit run app.py
 | `GITHUB_TOKEN` | 決策計分板持久化（委員會紀錄 commit 進 repo） | 紀錄只存本地，app 重啟即消失 | GitHub → Fine-grained PAT，**只授權本 repo 的 Contents 讀寫**（勿用全域 classic token） |
 
 > SEC 內部人交易（Form 4）走 EDGAR、選擇權情緒走 yfinance，兩者**皆免 key**。
-> SEC 可選設 `SEC_USER_AGENT` 自訂聯絡用 User-Agent（選填，有預設值即可用）。
+> SEC **建議**設 `SEC_USER_AGENT`（格式「`名字 email`」）：SEC 對雲端 IP + 匿名 UA
+> 常回 403，GitHub Actions 上不設會導致內部人資料靜默缺席（Alpha 疊加層少一源）。
 
 **放哪裡：**
 - **Bot（GitHub Actions）** → repo Settings → Secrets and variables → Actions
