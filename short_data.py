@@ -134,6 +134,11 @@ def short_summary(sv: dict | None, info: dict | None, ftd: list | None) -> dict:
 def _ua() -> dict:
     ua = os.environ.get("SEC_USER_AGENT",
                         "RBS-Finance-Dashboard/1.0 (contact via GitHub repo)")
+    try:
+        from sec_insider import clean_header_value    # secrets 帶換行會炸 header
+        ua = clean_header_value(ua)
+    except Exception:
+        ua = ua.strip()
     return {"User-Agent": ua}
 
 
