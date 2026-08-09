@@ -200,26 +200,39 @@ def format_insider_text(summary: dict, window_label: str = "近90天") -> str:
 
 def _ua():
     import os
-    # SEC 要求帶可識別的 User-Agent；可用 SEC_USER_AGENT 覆寫為自己的聯絡方式
-    return os.environ.get("SEC_USER_AGENT",
-                          "RBS-Finance-Dashboard/1.0 (contact via GitHub repo)")
+    # SEC 公平使用政策要求 User-Agent 帶「識別名稱 + 聯絡 email」格式；
+    # 雲端 IP（GitHub Actions 等）配上不合格 UA 特別容易被 WAF 403。
+    # 強烈建議設 SEC_USER_AGENT 為「你的名字 你的email」。
+    return os.environ.get(
+        "SEC_USER_AGENT",
+        "RBS-Finance-Dashboard/1.0 (https://github.com/RoyARVSA/RBS_claude_finance;"
+        " rbs-dashboard@users.noreply.github.com)")
+
+
+_TICKER_MAP_CACHE: dict = {}    # 製程內快取：一次抓、整輪用（少打 WAF）
 
 
 def ticker_to_cik(ticker: str, session=None) -> str | None:
-    """用 SEC 對照表把美股代碼轉 10 碼 CIK。"""
+    """用 SEC 對照表把美股代碼轉 10 碼 CIK。對照表每製程只抓一次。"""
     import requests
-    s = session or requests
-    try:
-        r = s.get(f"{BASE}/files/company_tickers.json",
-                  headers={"User-Agent": _ua()}, timeout=15)
-        data = r.json() if r.ok else {}
-    except Exception:
-        return None
     tk = ticker.upper()
-    for row in data.values():
-        if str(row.get("ticker", "")).upper() == tk:
-            return f"{int(row['cik_str']):010d}"
-    return None
+    if not _TICKER_MAP_CACHE:
+        s = session or requests
+        try:
+            r = s.get(f"{BASE}/files/company_tickers.json",
+                      headers={"User-Agent": _ua()}, timeout=15)
+            if not r.ok:
+                print(f"sec_insider: company_tickers.json HTTP {r.status_code}"
+                      "（雲端 IP 被 SEC WAF 拒？設 SEC_USER_AGENT=名字 email 可解）")
+                return None
+            for row in r.json().values():
+                t = str(row.get("ticker", "")).upper()
+                if t:
+                    _TICKER_MAP_CACHE[t] = f"{int(row['cik_str']):010d}"
+        except Exception as e:
+            print(f"sec_insider: 對照表抓取例外 {e}")
+            return None
+    return _TICKER_MAP_CACHE.get(tk)
 
 
 def fetch_insider(ticker: str, max_filings: int = 20, window_days: int = 90) -> dict | None:
@@ -238,8 +251,12 @@ def fetch_insider(ticker: str, max_filings: int = 20, window_days: int = 90) -> 
         return None
     try:
         r = sess.get(f"{DATA}/submissions/CIK{cik}.json", timeout=15)
-        sub = r.json() if r.ok else {}
-    except Exception:
+        if not r.ok:
+            print(f"sec_insider: {ticker} submissions HTTP {r.status_code}")
+            return None
+        sub = r.json()
+    except Exception as e:
+        print(f"sec_insider: {ticker} submissions 例外 {e}")
         return None
 
     recent = (sub.get("filings") or {}).get("recent") or {}
