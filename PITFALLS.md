@@ -140,6 +140,11 @@
   大規模刪除前先 commit（此檢查點 commit 不需先過子代理驗證，照常帶 footer），
   刪後立即語法檢查 + 抽查存活函數還在。
 
+> **2026-08 續集**：`SEC_USER_AGENT` secret 貼上帶**尾端換行** → requests
+> 「Invalid ... return character(s) in header value」拒發 → 內部人抓取全滅。
+> 消毒已下沉到 `sec_insider.clean_header_value`（short_data / whales_13f 共用）。
+> 原則：**任何進 HTTP header 的 env 值都要先消毒**，別假設使用者貼得乾淨。
+
 ### D5. LLM API key 隱形字元
 - **症狀**：`'ascii' codec can't encode characters in position 7-10`（Bearer 前綴剛好 7 字元）。
 - **原因**：使用者貼 key 時混入零寬空格/BOM/全形空白，HTTP header 只吃 ASCII。

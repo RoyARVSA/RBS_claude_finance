@@ -198,15 +198,28 @@ def format_insider_text(summary: dict, window_label: str = "近90天") -> str:
 
 # ── 抓取層（EDGAR；需網路 + User-Agent）────────────────────────────────────────
 
+def clean_header_value(v: str) -> str:
+    """
+    Secrets 貼上常帶尾端換行/隱形字元，HTTP header 遇到 \\r\\n 直接
+    「Invalid ... return character(s) in header value」拒發（2026-08 實案：
+    SEC_USER_AGENT 帶 \\n 讓內部人抓取全滅）。所有進 header 的 env 值都過這關。
+    """
+    for ch in ("\r", "\n", "\t"):
+        v = v.replace(ch, " ")
+    for ch in ("​", "‌", "‍", "﻿", " "):
+        v = v.replace(ch, "")
+    return " ".join(v.split()).strip()
+
+
 def _ua():
     import os
     # SEC 公平使用政策要求 User-Agent 帶「識別名稱 + 聯絡 email」格式；
     # 雲端 IP（GitHub Actions 等）配上不合格 UA 特別容易被 WAF 403。
     # 強烈建議設 SEC_USER_AGENT 為「你的名字 你的email」。
-    return os.environ.get(
+    return clean_header_value(os.environ.get(
         "SEC_USER_AGENT",
         "RBS-Finance-Dashboard/1.0 (https://github.com/RoyARVSA/RBS_claude_finance;"
-        " rbs-dashboard@users.noreply.github.com)")
+        " rbs-dashboard@users.noreply.github.com)"))
 
 
 _TICKER_MAP_CACHE: dict = {}    # 製程內快取：一次抓、整輪用（少打 WAF）
@@ -342,5 +355,14 @@ if __name__ == "__main__":
     assert none_win["score"] is None
     # 壞 XML 安全
     assert parse_form4("<not xml")["ok"] is False
+
+    # header 消毒：尾端換行（2026-08 實案）、零寬字元、tab、連續空白
+    assert clean_header_value("Roy roy@x.com\n") == "Roy roy@x.com"
+    assert clean_header_value("​Roy\troy@x.com  \r\n") == "Roy roy@x.com"
+    import os as _os
+    _os.environ["SEC_USER_AGENT"] = "Name mail@x.com\n"
+    assert _ua() == "Name mail@x.com"
+    del _os.environ["SEC_USER_AGENT"]
+    print("✅ header 消毒（換行/隱形字元）")
 
     print("\n✅ sec_insider 純解析測試通過")
