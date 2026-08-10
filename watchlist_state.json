@@ -46,7 +46,7 @@
     "at_max_position_pct": 0.15
   },
   "last_update_id": 280895076,
-  "last_scan_time": "2026-08-10 16:30 UTC",
+  "last_scan_time": "2026-08-10 17:34 UTC",
   "signal_history": {
     "AAPL": {
       "atr": "2026-08-10T13:41:58.249815+00:00",
@@ -1050,20 +1050,20 @@
   "last_weekly": "2026-W32",
   "theses": {},
   "weather": {
-    "ts": "2026-08-10T16:31:00.609606+00:00",
-    "score": 73.1,
+    "ts": "2026-08-10T17:34:52.842390+00:00",
+    "score": 73.5,
     "components": {
       "breadth": 81.8,
-      "credit": 86.0,
+      "credit": 87.7,
       "vix_ts": 100.0,
       "yield_curve": 29.9,
-      "copper_gold": 25.8
+      "copper_gold": 25.0
     },
     "missing": [],
     "regime": {
       "regime": "risk_on",
       "emoji": "🟢",
-      "label": "偏多（氣象台 73/100）"
+      "label": "偏多（氣象台 74/100）"
     }
   },
   "alpha_cache": {
@@ -1145,16 +1145,16 @@
       }
     },
     "COIN": {
-      "ts": "2026-08-07T17:44:10.621714+00:00",
+      "ts": "2026-08-10T17:34:53.956399+00:00",
       "inputs": {
-        "opt_score": 0.0,
+        "opt_score": 0.44,
         "short_pct_float": 0.113900006
       }
     },
     "TSM": {
-      "ts": "2026-08-07T17:44:10.621714+00:00",
+      "ts": "2026-08-10T17:34:53.956399+00:00",
       "inputs": {
-        "opt_score": -0.39,
+        "opt_score": -0.2,
         "short_pct_float": 0.0069
       }
     },
@@ -1325,18 +1325,18 @@
       }
     },
     "last_px": {
-      "JPM": 357.84,
-      "MSFT": 509.95,
-      "AMZN": 278.37,
-      "GOOGL": 354.45,
-      "PLTR": 177.73,
-      "NVDA": 218.47,
-      "QQQ": 722.47
+      "JPM": 357.39,
+      "MSFT": 508.26,
+      "AMZN": 277.26,
+      "GOOGL": 354.66,
+      "PLTR": 177.31,
+      "NVDA": 218.57,
+      "QQQ": 721.98
     },
     "last": {
       "date": "2026-08-10",
-      "equity": 99175.6,
-      "real_equity": 98550.23
+      "equity": 99015.85,
+      "real_equity": 98453.67
     }
   }
 }
