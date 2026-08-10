@@ -46,13 +46,14 @@
     "at_max_position_pct": 0.15
   },
   "last_update_id": 280895076,
-  "last_scan_time": "2026-08-07 19:37 UTC",
+  "last_scan_time": "2026-08-10 13:41 UTC",
   "signal_history": {
     "AAPL": {
-      "atr": "2026-08-05T15:26:30.811932+00:00"
+      "atr": "2026-08-10T13:41:58.249815+00:00",
+      "macd": "2026-08-10T13:41:58.249815+00:00"
     },
     "NVDA": {
-      "macd": "2026-08-07T13:49:40.356820+00:00",
+      "macd": "2026-08-10T13:41:58.249815+00:00",
       "price": "2026-08-05T15:26:30.811932+00:00",
       "bollinger": "2026-08-07T13:49:40.356820+00:00",
       "atr": "2026-08-03T14:27:46.397735+00:00",
@@ -61,7 +62,7 @@
     "GOOGL": {
       "macd": "2026-08-05T15:26:30.811932+00:00",
       "price": "2026-08-05T17:01:43.137606+00:00",
-      "atr": "2026-08-07T13:49:40.356820+00:00"
+      "atr": "2026-08-10T13:41:58.249815+00:00"
     },
     "AMZN": {
       "macd": "2026-08-05T15:26:30.811932+00:00",
@@ -77,7 +78,7 @@
     "TSM": {
       "macd": "2026-08-04T15:04:43.391640+00:00",
       "price": "2026-08-04T18:50:48.674135+00:00",
-      "atr": "2026-08-07T13:49:40.356820+00:00"
+      "atr": "2026-08-10T13:41:58.249815+00:00"
     },
     "ARKK": {
       "macd": "2026-08-05T15:26:30.811932+00:00",
@@ -91,21 +92,22 @@
     },
     "PLTR": {
       "atr": "2026-08-03T14:27:46.397735+00:00",
-      "macd": "2026-08-07T13:49:40.356820+00:00",
+      "macd": "2026-08-10T13:41:58.249815+00:00",
       "price": "2026-08-07T13:49:40.356820+00:00",
-      "rsi": "2026-08-07T13:49:40.356820+00:00",
-      "bollinger": "2026-08-07T13:49:40.356820+00:00",
+      "rsi": "2026-08-10T13:41:58.249815+00:00",
+      "bollinger": "2026-08-10T13:41:58.249815+00:00",
       "volume": "2026-08-04T15:04:43.391640+00:00",
       "ma_cross": "2026-08-05T15:26:30.811932+00:00"
     },
     "AMD": {
       "price": "2026-08-05T15:26:30.811932+00:00",
       "atr": "2026-08-07T13:49:40.356820+00:00",
-      "ma_cross": "2026-08-03T14:27:46.397735+00:00"
+      "ma_cross": "2026-08-03T14:27:46.397735+00:00",
+      "macd": "2026-08-10T13:41:58.249815+00:00"
     },
     "META": {
       "price": "2026-08-03T14:27:46.397735+00:00",
-      "atr": "2026-08-07T13:49:40.356820+00:00"
+      "atr": "2026-08-10T13:41:58.249815+00:00"
     },
     "DRAM": {
       "price": "2026-08-07T14:48:42.525440+00:00",
@@ -114,7 +116,7 @@
     "MSFT": {
       "price": "2026-08-03T14:27:46.397735+00:00",
       "macd": "2026-08-05T15:26:30.811932+00:00",
-      "rsi": "2026-08-07T13:49:40.356820+00:00",
+      "rsi": "2026-08-10T13:41:58.249815+00:00",
       "bollinger": "2026-08-06T14:52:54.833797+00:00",
       "ma_cross": "2026-08-03T14:27:46.397735+00:00"
     },
@@ -127,7 +129,7 @@
       "bollinger": "2026-08-07T14:48:42.525440+00:00"
     },
     "QQQ": {
-      "macd": "2026-08-07T13:49:40.356820+00:00",
+      "macd": "2026-08-10T13:41:58.249815+00:00",
       "price": "2026-08-04T18:50:48.674135+00:00",
       "atr": "2026-08-03T18:48:52.606812+00:00"
     },
@@ -139,8 +141,8 @@
     },
     "GLD": {
       "price": "2026-08-05T15:26:30.811932+00:00",
-      "bollinger": "2026-08-07T13:49:40.356820+00:00",
-      "macd": "2026-08-07T13:49:40.356820+00:00"
+      "bollinger": "2026-08-10T13:41:58.249815+00:00",
+      "macd": "2026-08-10T13:41:58.249815+00:00"
     }
   },
   "calibration": {
@@ -255,160 +257,83 @@
     "_updated": "2026-08-04T15:04:40.546434+00:00"
   },
   "fund_cache": {},
-  "last_briefing_date": "2026-08-07",
+  "last_briefing_date": "2026-08-10",
   "earnings_cache": {
     "AAPL": {
-      "checked": "2026-08-09",
+      "checked": "2026-08-10",
       "earnings": "2026-10-29"
     },
     "MSFT": {
-      "checked": "2026-08-09",
+      "checked": "2026-08-10",
       "earnings": "2026-10-28"
     },
     "NVDA": {
-      "checked": "2026-08-09",
+      "checked": "2026-08-10",
       "earnings": "2026-08-26"
     },
     "GOOGL": {
-      "checked": "2026-08-09",
+      "checked": "2026-08-10",
       "earnings": "2026-10-28"
     },
     "AMZN": {
-      "checked": "2026-08-09",
+      "checked": "2026-08-10",
       "earnings": "2026-10-29"
     },
     "TSLA": {
-      "checked": "2026-08-09",
+      "checked": "2026-08-10",
       "earnings": "2026-10-21"
     },
     "META": {
-      "checked": "2026-08-09",
+      "checked": "2026-08-10",
       "earnings": "2026-10-28"
     },
     "AMD": {
-      "checked": "2026-08-09",
+      "checked": "2026-08-10",
       "earnings": "2026-11-03"
     },
     "JPM": {
-      "checked": "2026-08-09",
+      "checked": "2026-08-10",
       "earnings": "2026-10-13"
     },
     "SPY": {
-      "checked": "2026-08-09",
+      "checked": "2026-08-10",
       "earnings": null
     },
     "QQQ": {
-      "checked": "2026-08-09",
+      "checked": "2026-08-10",
       "earnings": null
     },
     "PLTR": {
-      "checked": "2026-08-09",
+      "checked": "2026-08-10",
       "earnings": "2026-11-02"
     },
     "COIN": {
-      "checked": "2026-08-09",
+      "checked": "2026-08-10",
       "earnings": "2026-10-29"
     },
     "TSM": {
-      "checked": "2026-08-09",
+      "checked": "2026-08-10",
       "earnings": "2026-10-15"
     },
     "ARKK": {
-      "checked": "2026-08-09",
+      "checked": "2026-08-10",
       "earnings": null
     },
     "VRT": {
-      "checked": "2026-08-09",
+      "checked": "2026-08-10",
       "earnings": "2026-10-21"
     },
     "GLD": {
-      "checked": "2026-08-09",
+      "checked": "2026-08-10",
       "earnings": null
     },
     "DRAM": {
-      "checked": "2026-08-09",
+      "checked": "2026-08-10",
       "earnings": null
     }
   },
   "reflections": {
     "pending": [
-      {
-        "ticker": "TSLA",
-        "score": -0.89,
-        "price": 318.33,
-        "date": "2026-08-03",
-        "source": "quant"
-      },
-      {
-        "ticker": "ARKK",
-        "score": -0.84,
-        "price": 72.61,
-        "date": "2026-08-03",
-        "source": "quant"
-      },
-      {
-        "ticker": "DRAM",
-        "score": -0.78,
-        "price": 49.48,
-        "date": "2026-08-03",
-        "source": "quant"
-      },
-      {
-        "ticker": "TSLA",
-        "score": -0.88,
-        "price": 324.17,
-        "date": "2026-08-04",
-        "source": "quant"
-      },
-      {
-        "ticker": "DRAM",
-        "score": -0.78,
-        "price": 54.17,
-        "date": "2026-08-04",
-        "source": "quant"
-      },
-      {
-        "ticker": "AMZN",
-        "score": 0.78,
-        "price": 277.53,
-        "date": "2026-08-04",
-        "source": "quant"
-      },
-      {
-        "ticker": "PLTR",
-        "score": 0.82,
-        "price": 162.62,
-        "date": "2026-08-04",
-        "source": "quant"
-      },
-      {
-        "ticker": "COIN",
-        "score": -0.78,
-        "price": 150.4,
-        "date": "2026-08-04",
-        "source": "quant"
-      },
-      {
-        "ticker": "TSLA",
-        "score": -0.88,
-        "price": 322.41,
-        "date": "2026-08-05",
-        "source": "quant"
-      },
-      {
-        "ticker": "AMZN",
-        "score": 0.84,
-        "price": 276.01,
-        "date": "2026-08-05",
-        "source": "quant"
-      },
-      {
-        "ticker": "NVDA",
-        "score": 0.75,
-        "price": 219.03,
-        "date": "2026-08-05",
-        "source": "quant"
-      },
       {
         "ticker": "AMZN",
         "score": 0.88,
@@ -450,119 +375,30 @@
         "price": 504.85,
         "date": "2026-08-07",
         "source": "quant"
+      },
+      {
+        "ticker": "AMZN",
+        "score": 0.89,
+        "price": 275.7,
+        "date": "2026-08-10",
+        "source": "quant"
+      },
+      {
+        "ticker": "MSFT",
+        "score": 0.76,
+        "price": 504.74,
+        "date": "2026-08-10",
+        "source": "quant"
+      },
+      {
+        "ticker": "PLTR",
+        "score": 0.71,
+        "price": 174.7,
+        "date": "2026-08-10",
+        "source": "quant"
       }
     ],
     "history": [
-      {
-        "ticker": "ARKK",
-        "score": 0.69,
-        "price": 81.99,
-        "date": "2026-07-07",
-        "source": "quant",
-        "fwd_ret": -0.0337,
-        "hit": false,
-        "settled": "2026-07-13"
-      },
-      {
-        "ticker": "NVDA",
-        "score": -0.65,
-        "price": 191.85,
-        "date": "2026-07-07",
-        "source": "quant",
-        "fwd_ret": 0.0882,
-        "hit": false,
-        "settled": "2026-07-13"
-      },
-      {
-        "ticker": "ARKK",
-        "score": 0.77,
-        "price": 79.53,
-        "date": "2026-07-08",
-        "source": "quant",
-        "fwd_ret": -0.0038,
-        "hit": false,
-        "settled": "2026-07-13"
-      },
-      {
-        "ticker": "AAPL",
-        "score": 0.65,
-        "price": 310.34,
-        "date": "2026-07-08",
-        "source": "quant",
-        "fwd_ret": 0.0354,
-        "hit": true,
-        "settled": "2026-07-13"
-      },
-      {
-        "ticker": "JPM",
-        "score": 0.52,
-        "price": 332.27,
-        "date": "2026-07-08",
-        "source": "quant",
-        "fwd_ret": 0.0106,
-        "hit": true,
-        "settled": "2026-07-13"
-      },
-      {
-        "ticker": "ARKK",
-        "score": 0.78,
-        "price": 81.66,
-        "date": "2026-07-09",
-        "source": "quant",
-        "fwd_ret": -0.0348,
-        "hit": false,
-        "settled": "2026-07-14"
-      },
-      {
-        "ticker": "VRT",
-        "score": 0.74,
-        "price": 330.54,
-        "date": "2026-07-09",
-        "source": "quant",
-        "fwd_ret": -0.0778,
-        "hit": false,
-        "settled": "2026-07-14"
-      },
-      {
-        "ticker": "AAPL",
-        "score": 0.71,
-        "price": 310.4,
-        "date": "2026-07-09",
-        "source": "quant",
-        "fwd_ret": 0.0136,
-        "hit": true,
-        "settled": "2026-07-14"
-      },
-      {
-        "ticker": "AAPL",
-        "score": 0.79,
-        "price": 312.69,
-        "date": "2026-07-10",
-        "source": "quant",
-        "fwd_ret": 0.0381,
-        "hit": true,
-        "settled": "2026-07-15"
-      },
-      {
-        "ticker": "META",
-        "score": 0.77,
-        "price": 673.29,
-        "date": "2026-07-10",
-        "source": "quant",
-        "fwd_ret": -0.0068,
-        "hit": false,
-        "settled": "2026-07-15"
-      },
-      {
-        "ticker": "ARKK",
-        "score": 0.67,
-        "price": 80.25,
-        "date": "2026-07-10",
-        "source": "quant",
-        "fwd_ret": -0.0097,
-        "hit": false,
-        "settled": "2026-07-15"
-      },
       {
         "ticker": "META",
         "score": 0.77,
@@ -1052,6 +888,116 @@
         "fwd_ret": 0.1482,
         "hit": false,
         "settled": "2026-08-05"
+      },
+      {
+        "ticker": "TSLA",
+        "score": -0.89,
+        "price": 318.33,
+        "date": "2026-08-03",
+        "source": "quant",
+        "fwd_ret": 0.0297,
+        "hit": false,
+        "settled": "2026-08-10"
+      },
+      {
+        "ticker": "ARKK",
+        "score": -0.84,
+        "price": 72.61,
+        "date": "2026-08-03",
+        "source": "quant",
+        "fwd_ret": 0.099,
+        "hit": false,
+        "settled": "2026-08-10"
+      },
+      {
+        "ticker": "DRAM",
+        "score": -0.78,
+        "price": 49.48,
+        "date": "2026-08-03",
+        "source": "quant",
+        "fwd_ret": 0.001,
+        "hit": false,
+        "settled": "2026-08-10"
+      },
+      {
+        "ticker": "TSLA",
+        "score": -0.88,
+        "price": 324.17,
+        "date": "2026-08-04",
+        "source": "quant",
+        "fwd_ret": 0.0111,
+        "hit": false,
+        "settled": "2026-08-10"
+      },
+      {
+        "ticker": "DRAM",
+        "score": -0.78,
+        "price": 54.17,
+        "date": "2026-08-04",
+        "source": "quant",
+        "fwd_ret": -0.0857,
+        "hit": true,
+        "settled": "2026-08-10"
+      },
+      {
+        "ticker": "AMZN",
+        "score": 0.78,
+        "price": 277.53,
+        "date": "2026-08-04",
+        "source": "quant",
+        "fwd_ret": -0.0066,
+        "hit": false,
+        "settled": "2026-08-10"
+      },
+      {
+        "ticker": "PLTR",
+        "score": 0.82,
+        "price": 162.62,
+        "date": "2026-08-04",
+        "source": "quant",
+        "fwd_ret": 0.0743,
+        "hit": true,
+        "settled": "2026-08-10"
+      },
+      {
+        "ticker": "COIN",
+        "score": -0.78,
+        "price": 150.4,
+        "date": "2026-08-04",
+        "source": "quant",
+        "fwd_ret": 0.0036,
+        "hit": false,
+        "settled": "2026-08-10"
+      },
+      {
+        "ticker": "TSLA",
+        "score": -0.88,
+        "price": 322.41,
+        "date": "2026-08-05",
+        "source": "quant",
+        "fwd_ret": 0.0166,
+        "hit": false,
+        "settled": "2026-08-10"
+      },
+      {
+        "ticker": "AMZN",
+        "score": 0.84,
+        "price": 276.01,
+        "date": "2026-08-05",
+        "source": "quant",
+        "fwd_ret": -0.0011,
+        "hit": false,
+        "settled": "2026-08-10"
+      },
+      {
+        "ticker": "NVDA",
+        "score": 0.75,
+        "price": 219.03,
+        "date": "2026-08-05",
+        "source": "quant",
+        "fwd_ret": 0.0175,
+        "hit": true,
+        "settled": "2026-08-10"
       }
     ]
   },
@@ -1105,20 +1051,20 @@
   "last_weekly": "2026-W32",
   "theses": {},
   "weather": {
-    "ts": "2026-08-07T19:37:54.970071+00:00",
-    "score": 76.3,
+    "ts": "2026-08-10T13:41:45.565066+00:00",
+    "score": 73.3,
     "components": {
-      "breadth": 90.9,
-      "credit": 81.3,
+      "breadth": 81.8,
+      "credit": 86.0,
       "vix_ts": 100.0,
       "yield_curve": 29.8,
-      "copper_gold": 42.6
+      "copper_gold": 27.7
     },
     "missing": [],
     "regime": {
       "regime": "risk_on",
       "emoji": "🟢",
-      "label": "偏多（氣象台 76/100）"
+      "label": "偏多（氣象台 73/100）"
     }
   },
   "alpha_cache": {
@@ -1165,9 +1111,9 @@
       }
     },
     "AMD": {
-      "ts": "2026-08-07T13:49:41.808869+00:00",
+      "ts": "2026-08-10T13:41:59.839918+00:00",
       "inputs": {
-        "opt_score": 0.53,
+        "opt_score": 0.06,
         "short_pct_float": 0.024500001
       }
     },
@@ -1214,16 +1160,16 @@
       }
     },
     "ARKK": {
-      "ts": "2026-08-07T13:49:41.808869+00:00",
+      "ts": "2026-08-10T13:41:59.839918+00:00",
       "inputs": {
         "opt_score": -1.0,
         "short_pct_float": null
       }
     },
     "VRT": {
-      "ts": "2026-08-07T13:49:41.808869+00:00",
+      "ts": "2026-08-10T13:41:59.839918+00:00",
       "inputs": {
-        "opt_score": -0.2,
+        "opt_score": -0.75,
         "short_pct_float": 0.0292
       }
     },
@@ -1242,17 +1188,17 @@
       }
     },
     "AMZN": {
-      "ts": "2026-08-07T13:49:41.808869+00:00",
+      "ts": "2026-08-10T13:41:59.839918+00:00",
       "inputs": {
-        "opt_score": -0.01,
+        "opt_score": 0.39,
         "short_pct_float": 0.0109
       }
     }
   },
   "alpha_fg": {
-    "ts": "2026-08-07T18:31:39.906025+00:00",
-    "cnn": 63.3,
-    "crypto": 29.0
+    "ts": "2026-08-10T13:41:59.839918+00:00",
+    "cnn": 64.5,
+    "crypto": 30.0
   },
   "engine": {
     "pos": {
@@ -1304,7 +1250,7 @@
       "PLTR": {
         "entry": 157.79,
         "rps": 12.169999999999987,
-        "peak": 171.11,
+        "peak": 174.7,
         "opened": "2026-08-04",
         "init_qty": 79,
         "adds": 0,
@@ -1325,6 +1271,15 @@
         "peak": 723.12,
         "opened": "2026-08-05",
         "init_qty": 20,
+        "adds": 0,
+        "scaled_out": false
+      },
+      "ARKK": {
+        "entry": 79.8,
+        "rps": 3.75,
+        "peak": 79.8,
+        "opened": "2026-08-10",
+        "init_qty": 184,
         "adds": 0,
         "scaled_out": false
       }
@@ -1371,18 +1326,18 @@
       }
     },
     "last_px": {
-      "JPM": 358.31,
-      "MSFT": 501.38,
-      "AMZN": 274.53,
-      "GOOGL": 354.54,
-      "PLTR": 171.09,
-      "NVDA": 222.79,
-      "QQQ": 721.91
+      "JPM": 358.36,
+      "MSFT": 504.74,
+      "AMZN": 275.7,
+      "GOOGL": 354.5,
+      "PLTR": 174.7,
+      "NVDA": 222.82,
+      "QQQ": 721.14
     },
     "last": {
-      "date": "2026-08-07",
-      "equity": 98457.88,
-      "real_equity": 97855.24
+      "date": "2026-08-10",
+      "equity": 98917.62,
+      "real_equity": 98250.25
     }
   }
 }

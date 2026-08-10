@@ -335,5 +335,17 @@
     "mechanism": "entry",
     "submitted": true,
     "error": null
+  },
+  {
+    "time": "2026-08-10T13:42:04Z",
+    "symbol": "ARKK",
+    "side": "buy",
+    "qty": 184,
+    "score": 0.52,
+    "price": 79.8,
+    "reason": "評分 +0.52 ≥ 門檻 0.5（風險部位 184 股）",
+    "mechanism": "entry",
+    "submitted": true,
+    "error": null
   }
 ]
