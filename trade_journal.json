@@ -347,5 +347,17 @@
     "mechanism": "entry",
     "submitted": true,
     "error": null
+  },
+  {
+    "time": "2026-08-10T14:43:23Z",
+    "symbol": "PLTR",
+    "side": "sell",
+    "qty": 39,
+    "score": 0.703,
+    "price": 179.01,
+    "reason": "獲利 +1.7R ≥ 1.5R，先賣一半鎖利（餘倉保本追蹤）",
+    "mechanism": "scale_out",
+    "submitted": true,
+    "error": null
   }
 ]
