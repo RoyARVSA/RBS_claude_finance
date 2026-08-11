@@ -359,5 +359,17 @@
     "mechanism": "scale_out",
     "submitted": true,
     "error": null
+  },
+  {
+    "time": "2026-08-11T17:40:08Z",
+    "symbol": "GOOGL",
+    "side": "sell",
+    "qty": 39,
+    "score": 0.148,
+    "price": 347.3,
+    "reason": "硬停損 347.42（進場 368.27−1.0×風險）",
+    "mechanism": "stop_loss",
+    "submitted": true,
+    "error": null
   }
 ]
