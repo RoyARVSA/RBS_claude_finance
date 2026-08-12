@@ -240,8 +240,16 @@ def _trip(reason: str) -> None:
 
 
 # 內建 CIK 備援：對照表（www.sec.gov，WAF 最兇的一台）抓不到時退用。
-# CIK 是 SEC 永久編號、不會變；此表 2026-08-12 經多來源查證（見 commit 訊息）。
-_CIK_FALLBACK: dict = {}
+# CIK 是 SEC 永久編號、不會變；2026-08-12 每檔經兩個以上獨立非 SEC 來源
+# 交叉查證（edgar.tools/secdatabase/bamsec/官方 IR CDN 等）。
+# 陷阱備忘：COIN 是 Coinbase Global（非 Coinbase, Inc. 1576711）、
+# JPM 是控股公司（非銀行子公司 869090）、GOOGL 是 Alphabet（非舊 Google 1288776）。
+_CIK_FALLBACK: dict = {
+    "AAPL": 320193,  "MSFT": 789019,  "NVDA": 1045810, "GOOGL": 1652044,
+    "AMZN": 1018724, "TSLA": 1318605, "META": 1326801, "AMD": 2488,
+    "JPM": 19617,    "PLTR": 1321655, "COIN": 1679788, "TSM": 1046179,
+    "VRT": 1674101,
+}
 
 
 def ticker_to_cik(ticker: str, session=None) -> str | None:
@@ -414,7 +422,9 @@ if __name__ == "__main__":
     assert ticker_to_cik("ZZZZ") == "0001234567"            # 對照表不可用 → 備援
     assert ticker_to_cik("NOPE") is None
     _CIK_FALLBACK.pop("ZZZZ")
+    assert ticker_to_cik("AAPL") == "0000320193"            # 內建地圖（熔斷中仍可解析）
+    assert ticker_to_cik("VRT") == "0001674101"
     _SEC_DOWN = False
-    print("✅ 熔斷器 + CIK 備援地圖")
+    print("✅ 熔斷器 + CIK 備援地圖（13 檔內建映射）")
 
     print("\n✅ sec_insider 純解析測試通過")
