@@ -371,5 +371,29 @@
     "mechanism": "stop_loss",
     "submitted": true,
     "error": null
+  },
+  {
+    "time": "2026-08-12T14:05:55Z",
+    "symbol": "AMZN",
+    "side": "sell",
+    "qty": 52,
+    "score": 0.915,
+    "price": 269.66,
+    "reason": "追蹤停損 271.29（峰值 285.55 回落 8%，保本地板 271.29）",
+    "mechanism": "trailing_stop",
+    "submitted": true,
+    "error": null
+  },
+  {
+    "time": "2026-08-12T14:05:55Z",
+    "symbol": "TSM",
+    "side": "buy",
+    "qty": 34,
+    "score": 0.57,
+    "price": 430.99,
+    "reason": "評分 +0.57 ≥ 門檻 0.5（風險部位 34 股）",
+    "mechanism": "entry",
+    "submitted": true,
+    "error": null
   }
 ]
