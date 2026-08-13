@@ -252,13 +252,18 @@ _CIK_FALLBACK: dict = {
 }
 
 
+_MAP_TRIED = False   # 對照表每製程只嘗試一次——失敗別讓每一檔各付 8 秒
+
+
 def ticker_to_cik(ticker: str, session=None) -> str | None:
     """代碼→10 碼 CIK。對照表每製程只抓一次；抓不到退內建備援地圖。"""
     import requests
+    global _MAP_TRIED
     tk = ticker.upper()
     if _TICKER_MAP_CACHE.get(tk):
         return _TICKER_MAP_CACHE[tk]
-    if not _TICKER_MAP_CACHE and not _SEC_DOWN:
+    if not _TICKER_MAP_CACHE and not _MAP_TRIED and not _SEC_DOWN:
+        _MAP_TRIED = True
         s = session or requests
         try:
             r = s.get(f"{BASE}/files/company_tickers.json",
@@ -269,13 +274,12 @@ def ticker_to_cik(ticker: str, session=None) -> str | None:
                     if t:
                         _TICKER_MAP_CACHE[t] = f"{int(row['cik_str']):010d}"
             else:
+                # 注意：對照表失敗「不觸發」熔斷——否則備援地圖永遠沒機會用
+                # （熔斷會讓 fetch_insider 直接放棄；此處失敗成本每輪僅一次 8 秒）
                 print(f"sec_insider: company_tickers.json HTTP {r.status_code}"
-                      "（雲端 IP 被 SEC WAF 拒？）")
-                if r.status_code in (403, 429):
-                    _trip(f"對照表 HTTP {r.status_code}")
+                      "（雲端 IP 被 SEC WAF 拒？改用內建備援 CIK）")
         except Exception as e:
-            print(f"sec_insider: 對照表抓取例外 {e}")
-            _trip("對照表連線失敗/逾時")
+            print(f"sec_insider: 對照表抓取例外 {e}（改用內建備援 CIK）")
     if _TICKER_MAP_CACHE.get(tk):
         return _TICKER_MAP_CACHE[tk]
     fb = _CIK_FALLBACK.get(tk)
@@ -300,7 +304,7 @@ def fetch_insider(ticker: str, max_filings: int = 20, window_days: int = 90) -> 
     sess.headers.update({"User-Agent": _ua()})
 
     cik = ticker_to_cik(ticker, sess)
-    if not cik or _SEC_DOWN:
+    if not cik:
         return None
     try:
         r = sess.get(f"{DATA}/submissions/CIK{cik}.json", timeout=_TIMEOUT)
@@ -425,6 +429,10 @@ if __name__ == "__main__":
     assert ticker_to_cik("AAPL") == "0000320193"            # 內建地圖（熔斷中仍可解析）
     assert ticker_to_cik("VRT") == "0001674101"
     _SEC_DOWN = False
-    print("✅ 熔斷器 + CIK 備援地圖（13 檔內建映射）")
+    # 關鍵迴歸（2026-08-12 實案）：對照表失敗「未熔斷」時備援地圖必須可用——
+    # 先前對照表失敗會 _trip，fetch_insider 看到熔斷直接放棄，備援形同虛設
+    _MAP_TRIED = True                                       # 模擬「本輪已試過且失敗」
+    assert not _SEC_DOWN and ticker_to_cik("MSFT") == "0000789019"
+    print("✅ 熔斷器 + CIK 備援地圖（13 檔內建映射；對照表失敗不熔斷）")
 
     print("\n✅ sec_insider 純解析測試通過")
