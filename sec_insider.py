@@ -224,28 +224,65 @@ def _ua():
 
 _TICKER_MAP_CACHE: dict = {}    # 製程內快取：一次抓、整輪用（少打 WAF）
 
+# SEC 熔斷器（製程內）：GitHub 機房 IP 有時不是被快速拒絕、而是連線被掛著等逾時
+# ——內部人一檔最多 1+1+N 個請求 × 逾時秒數，alpha 一輪刷 4 檔能拖垮整個 cron
+# （2026-08 實案：state commit 從每 15 分退化成每小時、指令回覆延遲 40 分鐘）。
+# 第一次連線層失敗就熔斷，本製程（=本輪 cron）內不再打 SEC，下輪重試。
+_SEC_DOWN = False
+_TIMEOUT = 8
+
+
+def _trip(reason: str) -> None:
+    global _SEC_DOWN
+    if not _SEC_DOWN:
+        _SEC_DOWN = True
+        print(f"sec_insider: 熔斷——本輪跳過所有 SEC 請求（{reason}）")
+
+
+# 內建 CIK 備援：對照表（www.sec.gov，WAF 最兇的一台）抓不到時退用。
+# CIK 是 SEC 永久編號、不會變；2026-08-12 每檔經兩個以上獨立非 SEC 來源
+# 交叉查證（edgar.tools/secdatabase/bamsec/官方 IR CDN 等）。
+# 陷阱備忘：COIN 是 Coinbase Global（非 Coinbase, Inc. 1576711）、
+# JPM 是控股公司（非銀行子公司 869090）、GOOGL 是 Alphabet（非舊 Google 1288776）。
+_CIK_FALLBACK: dict = {
+    "AAPL": 320193,  "MSFT": 789019,  "NVDA": 1045810, "GOOGL": 1652044,
+    "AMZN": 1018724, "TSLA": 1318605, "META": 1326801, "AMD": 2488,
+    "JPM": 19617,    "PLTR": 1321655, "COIN": 1679788, "TSM": 1046179,
+    "VRT": 1674101,
+}
+
 
 def ticker_to_cik(ticker: str, session=None) -> str | None:
-    """用 SEC 對照表把美股代碼轉 10 碼 CIK。對照表每製程只抓一次。"""
+    """代碼→10 碼 CIK。對照表每製程只抓一次；抓不到退內建備援地圖。"""
     import requests
     tk = ticker.upper()
-    if not _TICKER_MAP_CACHE:
+    if _TICKER_MAP_CACHE.get(tk):
+        return _TICKER_MAP_CACHE[tk]
+    if not _TICKER_MAP_CACHE and not _SEC_DOWN:
         s = session or requests
         try:
             r = s.get(f"{BASE}/files/company_tickers.json",
-                      headers={"User-Agent": _ua()}, timeout=15)
-            if not r.ok:
+                      headers={"User-Agent": _ua()}, timeout=_TIMEOUT)
+            if r.ok:
+                for row in r.json().values():
+                    t = str(row.get("ticker", "")).upper()
+                    if t:
+                        _TICKER_MAP_CACHE[t] = f"{int(row['cik_str']):010d}"
+            else:
                 print(f"sec_insider: company_tickers.json HTTP {r.status_code}"
-                      "（雲端 IP 被 SEC WAF 拒？設 SEC_USER_AGENT=名字 email 可解）")
-                return None
-            for row in r.json().values():
-                t = str(row.get("ticker", "")).upper()
-                if t:
-                    _TICKER_MAP_CACHE[t] = f"{int(row['cik_str']):010d}"
+                      "（雲端 IP 被 SEC WAF 拒？）")
+                if r.status_code in (403, 429):
+                    _trip(f"對照表 HTTP {r.status_code}")
         except Exception as e:
             print(f"sec_insider: 對照表抓取例外 {e}")
-            return None
-    return _TICKER_MAP_CACHE.get(tk)
+            _trip("對照表連線失敗/逾時")
+    if _TICKER_MAP_CACHE.get(tk):
+        return _TICKER_MAP_CACHE[tk]
+    fb = _CIK_FALLBACK.get(tk)
+    if fb:
+        print(f"sec_insider: {tk} 使用內建備援 CIK {fb}")
+        return f"{int(fb):010d}"
+    return None
 
 
 def fetch_insider(ticker: str, max_filings: int = 20, window_days: int = 90) -> dict | None:
@@ -256,20 +293,26 @@ def fetch_insider(ticker: str, max_filings: int = 20, window_days: int = 90) -> 
     import requests
     import pandas as pd
 
+    if _SEC_DOWN:
+        return None                      # 本輪已熔斷，快速跳過（下輪 cron 重試）
+
     sess = requests.Session()
     sess.headers.update({"User-Agent": _ua()})
 
     cik = ticker_to_cik(ticker, sess)
-    if not cik:
+    if not cik or _SEC_DOWN:
         return None
     try:
-        r = sess.get(f"{DATA}/submissions/CIK{cik}.json", timeout=15)
+        r = sess.get(f"{DATA}/submissions/CIK{cik}.json", timeout=_TIMEOUT)
         if not r.ok:
             print(f"sec_insider: {ticker} submissions HTTP {r.status_code}")
+            if r.status_code in (403, 429):
+                _trip(f"submissions HTTP {r.status_code}")
             return None
         sub = r.json()
     except Exception as e:
         print(f"sec_insider: {ticker} submissions 例外 {e}")
+        _trip("submissions 連線失敗/逾時")
         return None
 
     recent = (sub.get("filings") or {}).get("recent") or {}
@@ -278,6 +321,7 @@ def fetch_insider(ticker: str, max_filings: int = 20, window_days: int = 90) -> 
     docs = recent.get("primaryDocument") or []
     parsed = []
     n = 0
+    fails = 0
     for i, form in enumerate(forms):
         if form != "4":
             continue
@@ -285,11 +329,16 @@ def fetch_insider(ticker: str, max_filings: int = 20, window_days: int = 90) -> 
             acc = accns[i].replace("-", "")
             doc = docs[i]
             url = f"{BASE}/Archives/edgar/data/{int(cik)}/{acc}/{doc}"
-            rr = sess.get(url, timeout=15)
+            rr = sess.get(url, timeout=_TIMEOUT)
             if rr.ok and rr.text.lstrip().startswith("<"):
                 parsed.append(parse_form4(rr.text))
+            elif not rr.ok:
+                fails += 1
         except Exception:
-            pass
+            fails += 1
+        if fails >= 3:                   # 連環失敗別再耗：熔斷本輪
+            _trip(f"{ticker} 文件抓取連續失敗")
+            break
         n += 1
         if n >= max_filings:
             break
@@ -364,5 +413,18 @@ if __name__ == "__main__":
     assert _ua() == "Name mail@x.com"
     del _os.environ["SEC_USER_AGENT"]
     print("✅ header 消毒（換行/隱形字元）")
+
+    # 熔斷器 + CIK 備援（離線可測：熔斷後不打網路）
+    # 注意不能 import sec_insider 設旗標——__main__ 下那是另一份模組分身
+    _SEC_DOWN = True
+    assert fetch_insider("AAPL") is None                    # 熔斷 → 秒回 None
+    _CIK_FALLBACK["ZZZZ"] = 1234567
+    assert ticker_to_cik("ZZZZ") == "0001234567"            # 對照表不可用 → 備援
+    assert ticker_to_cik("NOPE") is None
+    _CIK_FALLBACK.pop("ZZZZ")
+    assert ticker_to_cik("AAPL") == "0000320193"            # 內建地圖（熔斷中仍可解析）
+    assert ticker_to_cik("VRT") == "0001674101"
+    _SEC_DOWN = False
+    print("✅ 熔斷器 + CIK 備援地圖（13 檔內建映射）")
 
     print("\n✅ sec_insider 純解析測試通過")
