@@ -395,5 +395,17 @@
     "mechanism": "entry",
     "submitted": true,
     "error": null
+  },
+  {
+    "time": "2026-08-13T13:56:39Z",
+    "symbol": "GLD",
+    "side": "buy",
+    "qty": 36,
+    "score": 0.529,
+    "price": 401.27,
+    "reason": "評分 +0.53 ≥ 門檻 0.5（風險部位 36 股）",
+    "mechanism": "entry",
+    "submitted": true,
+    "error": null
   }
 ]
