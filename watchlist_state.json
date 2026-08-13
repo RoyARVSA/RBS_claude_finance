@@ -46,7 +46,7 @@
     "at_max_position_pct": 0.15
   },
   "last_update_id": 280895080,
-  "last_scan_time": "2026-08-13 15:54 UTC",
+  "last_scan_time": "2026-08-13 16:51 UTC",
   "signal_history": {
     "AAPL": {
       "atr": "2026-08-13T13:56:32.646917+00:00",
@@ -1127,16 +1127,20 @@
       }
     },
     "TSLA": {
-      "ts": "2026-08-12T17:10:56.674257+00:00",
+      "ts": "2026-08-13T16:51:44.028722+00:00",
       "inputs": {
-        "opt_score": 0.62,
+        "insider_score": -0.3,
+        "cluster_buy": false,
+        "opt_score": -0.13,
         "short_pct_float": 0.0194
       }
     },
     "META": {
-      "ts": "2026-08-12T17:10:56.674257+00:00",
+      "ts": "2026-08-13T16:51:44.028722+00:00",
       "inputs": {
-        "opt_score": 0.2,
+        "insider_score": -0.3,
+        "cluster_buy": false,
+        "opt_score": 0.46,
         "short_pct_float": 0.0143
       }
     },
@@ -1166,16 +1170,18 @@
       }
     },
     "QQQ": {
-      "ts": "2026-08-12T17:10:56.674257+00:00",
+      "ts": "2026-08-13T16:51:44.028722+00:00",
       "inputs": {
-        "opt_score": -0.85,
+        "opt_score": -1.0,
         "short_pct_float": null
       }
     },
     "PLTR": {
-      "ts": "2026-08-12T17:10:56.674257+00:00",
+      "ts": "2026-08-13T16:51:44.028722+00:00",
       "inputs": {
-        "opt_score": 0.32,
+        "insider_score": -0.3,
+        "cluster_buy": false,
+        "opt_score": 0.66,
         "short_pct_float": 0.0317
       }
     },
@@ -1234,8 +1240,8 @@
     }
   },
   "alpha_fg": {
-    "ts": "2026-08-13T13:56:34.015219+00:00",
-    "cnn": 67.5,
+    "ts": "2026-08-13T16:51:44.028722+00:00",
+    "cnn": 65.5,
     "crypto": 29.0
   },
   "engine": {
@@ -1373,19 +1379,19 @@
       }
     },
     "last_px": {
-      "JPM": 362.83,
-      "MSFT": 495.26,
-      "AMZN": 266.09,
+      "JPM": 363.17,
+      "MSFT": 494.61,
+      "AMZN": 265.93,
       "PLTR": 175.15,
-      "NVDA": 224.41,
-      "QQQ": 730.35,
-      "SPY": 775.77,
-      "ARKK": 81.48
+      "NVDA": 225.22,
+      "QQQ": 732.11,
+      "SPY": 776.73,
+      "ARKK": 81.6
     },
     "last": {
       "date": "2026-08-13",
-      "equity": 98143.1,
-      "real_equity": 98443.94
+      "equity": 98221.08,
+      "real_equity": 98637.01
     }
   }
 }
