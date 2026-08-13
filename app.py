@@ -4541,7 +4541,7 @@ def _cached_options(ticker: str):
 def _cached_insider(ticker: str):
     """快取 SEC Form 4 內部人交易彙總（1 小時；申報低頻）。"""
     import sec_insider as si
-    return si.fetch_insider(ticker)
+    return si.fetch_insider_any(ticker)
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
