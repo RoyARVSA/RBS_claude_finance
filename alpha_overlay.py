@@ -155,11 +155,11 @@ def apply_overlay(scored: list[dict], overlays: dict) -> tuple[list[dict], list[
 def _default_fetchers(cfg: dict) -> dict:
     def _insider(sym):
         import sec_insider
-        r = sec_insider.fetch_insider(sym, max_filings=int(cfg["insider_max_filings"]))
+        r = sec_insider.fetch_insider_any(sym, max_filings=int(cfg["insider_max_filings"]))
         if not r:
-            # None = 查無 CIK / SEC 拒絕 / 無可解析 Form 4——留一行日誌，
+            # None = 查無 CIK / SEC+Finnhub 皆無 / 無可解析資料——留一行日誌，
             # 否則 production 全體缺 insider_score 時完全無跡可循（2026-08 實案）
-            print(f"alpha_overlay: {sym} insider 無資料（非美股個股或 SEC 拒絕，"
+            print(f"alpha_overlay: {sym} insider 無資料（非美股個股或雙源皆不可用，"
                   "詳見上方 sec_insider 日誌）")
             return {}
         return {"insider_score": r.get("score"),

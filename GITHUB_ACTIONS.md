@@ -38,7 +38,7 @@
 | `LLM_BASE_URL` | 選填 | 自訂 API 端點（留空自動判斷 Anthropic/OpenAI） |
 | `LLM_MODEL` | 選填 | 模型名（預設 Claude 用 `claude-3-5-haiku`，OpenAI 用 `gpt-4o-mini`） |
 | `FRED_API_KEY` | 選填 | 晨報總經數據（免費申請 fred.stlouisfed.org） |
-| `FINNHUB_API_KEY` | 選填 | 基本面備援；yfinance `.info` 被限流時的後援（免費申請 finnhub.io） |
+| `FINNHUB_API_KEY` | **建議** | 基本面備援 + **內部人交易備援**：SEC EDGAR 封鎖 GitHub 機房 IP 時（2026-08 實測發生），/ins、晨報亮點與 Alpha 疊加層的內部人資料改走 Finnhub（免費申請 finnhub.io，60 次/分） |
 | `SEC_USER_AGENT` | **建議** | SEC 內部人交易（Form 4）的 User-Agent。SEC 公平使用政策要求「`名字 email`」格式，**GitHub Actions 的雲端 IP 配預設 UA 容易被 SEC WAF 拒（403）→ 內部人資料靜默缺席**。設成如 `你的名字 your-email@example.com`（用你真實信箱）可解；免申請、只是自我識別 |
 | `ALPACA_KEY_ID` | 選填 | Alpaca **paper** trading key（模擬自動交易；**不設則不下單**） |
 | `ALPACA_SECRET_KEY` | 選填 | Alpaca paper secret |

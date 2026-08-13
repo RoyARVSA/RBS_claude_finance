@@ -500,13 +500,15 @@ def _cmd_insider(ticker: str) -> str:
     if "." in ticker:
         return f"⚠️ {ticker}：SEC Form 4 僅涵蓋美股掛牌公司"
     try:
-        summ = si.fetch_insider(ticker)
+        summ = si.fetch_insider_any(ticker)
     except Exception as e:
         return f"❌ {ticker} 內部人查詢失敗：{e}"
     if not summ:
-        return f"⚠️ {ticker}：查無近期 Form 4（無內部人申報或代碼無法對應 CIK）"
+        return (f"⚠️ {ticker}：查無近期內部人交易（SEC 未回應且 Finnhub 無資料；"
+                "未設 FINNHUB API KEY 的話設了可多一條備援）")
     win = f"近{summ.get('window_days', 90)}天"
-    return f"🕵️ *內部人交易* {ticker}\n" + si.format_insider_text(summ, win) \
+    src = "（資料源：Finnhub 備援）" if summ.get("source") == "finnhub" else ""
+    return f"🕵️ *內部人交易* {ticker}{src}\n" + si.format_insider_text(summ, win) \
         + "\n_輔助訊號，非投資建議_"
 
 
@@ -575,7 +577,7 @@ def _cmd_committee(state: dict, ticker: str) -> tuple[str, bool]:
             if o:
                 chips_parts.append(ops.format_options_text(o))
             import sec_insider as si
-            i_ = si.fetch_insider(tk, max_filings=8)
+            i_ = si.fetch_insider_any(tk, max_filings=8)
             if i_:
                 chips_parts.append(si.format_insider_text(i_))
     except Exception:
@@ -2380,7 +2382,7 @@ def daily_briefing(state: dict, force: bool = False) -> str | None:
                      if r.get("score", 0) >= 0.3 and "." not in r.get("ticker", "")), None)
         if cand:
             import sec_insider as _si
-            ins = _si.fetch_insider(cand["ticker"], max_filings=8)  # 限縮抓取數，控制晨報延遲
+            ins = _si.fetch_insider_any(cand["ticker"], max_filings=8)  # 限縮抓取數，控制晨報延遲
             if ins and ins.get("n_buys") and (ins.get("cluster_buy")
                                               or (ins.get("net_value") or 0) > 0):
                 net = ins.get("net_value")

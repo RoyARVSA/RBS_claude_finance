@@ -358,6 +358,87 @@ def fetch_insider(ticker: str, max_filings: int = 20, window_days: int = 90) -> 
     return summary
 
 
+# ── Finnhub 備援源（SEC 對雲端機房整段封鎖時的換路方案，2026-08 實案）──────────
+# 規格查證自官方 finnhub-python client 與 finnhub-go model（欄位 JSON tag）：
+#   GET /api/v1/stock/insider-transactions?symbol&from&to&token
+#   data[]: name / share(交易後持股) / change(正=買、負=賣) / transactionDate /
+#           filingDate / transactionPrice(獎酬贈與常為 0) / transactionCode(沿用
+#           SEC Form 4 代碼 P/S/A/G/M/F)
+# 免費版可用（僅美股）、60 calls/min；Finnhub 曾把免費端點轉 premium（403 要處理）。
+
+def _finnhub_rows_to_docs(rows: list) -> list[dict]:
+    """Finnhub data[] → summarize_insiders 可吃的合成 doc 清單（純函數）。
+    ad 由 change 正負推得：P+A=公開市場買、S+D=賣，其他代碼自然落入 other。"""
+    docs = []
+    for r in rows or []:
+        try:
+            change = float(r.get("change") or 0)
+            price = float(r.get("transactionPrice") or 0)
+            shares = abs(change)
+            if shares <= 0:
+                continue
+            docs.append({
+                "ok": True,
+                "owner": r.get("name") or "?",
+                "transactions": [{
+                    "date": str(r.get("transactionDate") or r.get("filingDate") or "")[:10],
+                    "code": r.get("transactionCode"),
+                    "ad": "A" if change > 0 else "D",
+                    "shares": shares,
+                    "value": shares * price if price > 0 else None,
+                }],
+            })
+        except Exception:
+            continue
+    return docs
+
+
+def fetch_insider_finnhub(ticker: str, window_days: int = 90) -> dict | None:
+    """Finnhub 內部人備援。無 key / 無資料 / 被拒 → None。"""
+    import os
+    import datetime as dt
+    import requests
+    key = clean_header_value(os.environ.get("FINNHUB_API_KEY", ""))
+    if not key:
+        return None
+    to = dt.date.today()
+    frm = to - dt.timedelta(days=window_days)
+    try:
+        r = requests.get("https://finnhub.io/api/v1/stock/insider-transactions",
+                         params={"symbol": ticker.upper(), "from": frm.isoformat(),
+                                 "to": to.isoformat(), "token": key}, timeout=10)
+        if not r.ok:
+            # 403=端點轉 premium/非美股、429=限流、401=key 無效
+            print(f"sec_insider: finnhub insider HTTP {r.status_code}")
+            return None
+        rows = (r.json() or {}).get("data") or []
+    except Exception as e:
+        print(f"sec_insider: finnhub insider 例外 {e}")
+        return None
+    docs = _finnhub_rows_to_docs(rows)
+    if not docs:
+        return None
+    summary = summarize_insiders(docs, frm.isoformat())
+    summary.update({"ticker": ticker, "window_days": window_days,
+                    "n_filings": len(docs), "source": "finnhub"})
+    return summary
+
+
+def fetch_insider_any(ticker: str, max_filings: int = 20,
+                      window_days: int = 90) -> dict | None:
+    """統一入口：SEC 優先（資料最完整），失敗且有 FINNHUB_API_KEY → Finnhub 備援。
+    回傳 summary 帶 source 欄（"sec"/"finnhub"）。"""
+    try:
+        s = fetch_insider(ticker, max_filings=max_filings, window_days=window_days)
+    except Exception as e:
+        print(f"sec_insider: SEC 路徑例外 {e}")
+        s = None
+    if s:
+        s.setdefault("source", "sec")
+        return s
+    return fetch_insider_finnhub(ticker, window_days)
+
+
 # ── CLI 自我測試（純解析）─────────────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -434,5 +515,26 @@ if __name__ == "__main__":
     _MAP_TRIED = True                                       # 模擬「本輪已試過且失敗」
     assert not _SEC_DOWN and ticker_to_cik("MSFT") == "0000789019"
     print("✅ 熔斷器 + CIK 備援地圖（13 檔內建映射；對照表失敗不熔斷）")
+
+    # Finnhub 列 → 合成 doc → summarize 全鏈（純邏輯）
+    rows = [
+        {"name": "CEO A", "change": 1000, "transactionPrice": 190.5,
+         "transactionCode": "P", "transactionDate": "2026-08-01"},
+        {"name": "CFO B", "change": 500, "transactionPrice": 188.0,
+         "transactionCode": "P", "transactionDate": "2026-08-03"},
+        {"name": "VP C", "change": -800, "transactionPrice": 195.0,
+         "transactionCode": "S", "transactionDate": "2026-08-05"},
+        {"name": "VP C", "change": 2000, "transactionPrice": 0,
+         "transactionCode": "A", "transactionDate": "2026-08-02"},   # 獎酬 → other
+        {"name": "bad", "change": 0},                                # 零股數 → 略過
+        {"name": "bad2", "change": "x"},                             # 壞值 → 略過
+    ]
+    docs = _finnhub_rows_to_docs(rows)
+    assert len(docs) == 4, docs
+    s = summarize_insiders(docs, "2026-07-01")
+    assert s["n_buys"] == 2 and s["n_sells"] == 1 and s["n_other"] == 1
+    assert s["cluster_buy"] is True and s["score"] is not None
+    assert abs(s["buy_value"] - (1000 * 190.5 + 500 * 188.0)) < 1e-6
+    print("✅ Finnhub 列轉換 + summarize 全鏈")
 
     print("\n✅ sec_insider 純解析測試通過")

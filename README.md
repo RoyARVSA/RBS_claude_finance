@@ -112,7 +112,7 @@ streamlit run app.py
 | `TELEGRAM_TOKEN` + `TELEGRAM_CHAT_ID` | Bot 推播 | Bot 無法推送 | @BotFather |
 | `LLM_API_KEY` | AI 分析 / 晨報解讀 | 晨報走純數據版；AI 頁不可用 | Claude / OpenAI |
 | `FRED_API_KEY` | 總經數據 | 總經指標區塊不顯示 | [fred.stlouisfed.org](https://fred.stlouisfed.org/) |
-| `FINNHUB_API_KEY` | 基本面備援 | yfinance `.info` 被限流時，市值/P/E/ROE 顯示「—」 | [finnhub.io](https://finnhub.io/) |
+| `FINNHUB_API_KEY` | 基本面 + 內部人備援 | yfinance 限流時市值/P/E/ROE 顯示「—」；SEC 封鎖雲端 IP 時內部人資料缺席 | [finnhub.io](https://finnhub.io/) |
 | `ALPACA_KEY_ID` + `ALPACA_SECRET_KEY` | 模擬交易（**paper**）| 模擬交易不執行 | [alpaca.markets](https://alpaca.markets/) Trading API |
 | `GITHUB_TOKEN` | 決策計分板持久化（委員會紀錄 commit 進 repo） | 紀錄只存本地，app 重啟即消失 | GitHub → Fine-grained PAT，**只授權本 repo 的 Contents 讀寫**（勿用全域 classic token） |
 
