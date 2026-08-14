@@ -46,7 +46,7 @@
     "at_max_position_pct": 0.15
   },
   "last_update_id": 280895080,
-  "last_scan_time": "2026-08-14 18:31 UTC",
+  "last_scan_time": "2026-08-14 19:35 UTC",
   "signal_history": {
     "AAPL": {
       "atr": "2026-08-14T13:40:51.124284+00:00",
@@ -1091,14 +1091,14 @@
   "last_weekly": "2026-W32",
   "theses": {},
   "weather": {
-    "ts": "2026-08-14T17:36:53.373616+00:00",
-    "score": 76.9,
+    "ts": "2026-08-14T19:36:05.411114+00:00",
+    "score": 77.0,
     "components": {
       "breadth": 90.9,
-      "credit": 90.5,
+      "credit": 90.7,
       "vix_ts": 100.0,
       "yield_curve": 30.0,
-      "copper_gold": 24.9
+      "copper_gold": 25.4
     },
     "missing": [],
     "regime": {
@@ -1250,6 +1250,15 @@
         "opt_score": 1.0,
         "short_pct_float": 0.01
       }
+    },
+    "GOOGL": {
+      "ts": "2026-08-14T19:36:07.196557+00:00",
+      "inputs": {
+        "insider_score": -0.3,
+        "cluster_buy": false,
+        "opt_score": 1.0,
+        "short_pct_float": 0.012
+      }
     }
   },
   "alpha_fg": {
@@ -1392,19 +1401,19 @@
       }
     },
     "last_px": {
-      "JPM": 363.61,
-      "MSFT": 495.26,
-      "AMZN": 263.35,
-      "PLTR": 175.23,
-      "NVDA": 224.78,
-      "QQQ": 729.26,
-      "SPY": 775.99,
-      "ARKK": 81.03
+      "JPM": 362.64,
+      "MSFT": 495.48,
+      "AMZN": 263.57,
+      "PLTR": 174.74,
+      "NVDA": 225.22,
+      "QQQ": 730.09,
+      "SPY": 776.18,
+      "ARKK": 81.18
     },
     "last": {
       "date": "2026-08-14",
-      "equity": 98051.97,
-      "real_equity": 98203.78
+      "equity": 98037.94,
+      "real_equity": 98299.57
     }
   }
 }
