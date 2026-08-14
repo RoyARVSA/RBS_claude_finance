@@ -46,7 +46,7 @@
     "at_max_position_pct": 0.15
   },
   "last_update_id": 280895080,
-  "last_scan_time": "2026-08-14 16:31 UTC",
+  "last_scan_time": "2026-08-14 17:36 UTC",
   "signal_history": {
     "AAPL": {
       "atr": "2026-08-14T13:40:51.124284+00:00",
@@ -1091,20 +1091,20 @@
   "last_weekly": "2026-W32",
   "theses": {},
   "weather": {
-    "ts": "2026-08-14T16:31:22.287394+00:00",
-    "score": 79.2,
+    "ts": "2026-08-14T17:36:53.373616+00:00",
+    "score": 76.9,
     "components": {
       "breadth": 90.9,
-      "credit": 100.0,
+      "credit": 90.5,
       "vix_ts": 100.0,
-      "yield_curve": 29.9,
-      "copper_gold": 24.6
+      "yield_curve": 30.0,
+      "copper_gold": 24.9
     },
     "missing": [],
     "regime": {
       "regime": "risk_on",
       "emoji": "🟢",
-      "label": "偏多（氣象台 79/100）"
+      "label": "偏多（氣象台 77/100）"
     }
   },
   "alpha_cache": {
@@ -1204,20 +1204,20 @@
       }
     },
     "COIN": {
-      "ts": "2026-08-13T17:54:09.272017+00:00",
+      "ts": "2026-08-14T17:36:55.366444+00:00",
       "inputs": {
         "insider_score": -0.3,
         "cluster_buy": false,
-        "opt_score": -0.03,
+        "opt_score": 0.83,
         "short_pct_float": 0.0991
       }
     },
     "TSM": {
-      "ts": "2026-08-13T17:54:09.272017+00:00",
+      "ts": "2026-08-14T17:36:55.366444+00:00",
       "inputs": {
         "insider_score": -0.82,
         "cluster_buy": true,
-        "opt_score": -0.23,
+        "opt_score": -0.51,
         "short_pct_float": 0.0069
       }
     },
@@ -1401,19 +1401,19 @@
       }
     },
     "last_px": {
-      "JPM": 363.11,
-      "MSFT": 497.53,
-      "AMZN": 264.23,
-      "PLTR": 177.04,
-      "NVDA": 225.42,
-      "QQQ": 729.68,
-      "SPY": 776.52,
-      "ARKK": 81.22
+      "JPM": 362.39,
+      "MSFT": 495.71,
+      "AMZN": 263.29,
+      "PLTR": 176.84,
+      "NVDA": 225.24,
+      "QQQ": 729.27,
+      "SPY": 775.72,
+      "ARKK": 81.24
     },
     "last": {
       "date": "2026-08-14",
-      "equity": 98361.18,
-      "real_equity": 98462.4
+      "equity": 98172.51,
+      "real_equity": 98333.37
     }
   }
 }
