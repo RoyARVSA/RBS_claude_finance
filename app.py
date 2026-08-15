@@ -3115,17 +3115,20 @@ def page_risk_management():
     if px_df is None or px_df.empty:
         st.error("價格資料為空，請稍後重試或更換標的")
         return
+    names = list(tickers)
     if len(px_df.columns) != len(ws):
         missing = [t for t in tickers if t not in px_df.columns]
-        st.warning(f"部分標的無資料已剔除：{', '.join(missing) or '?'}（權重已等比重算）")
+        st.warning(f"部分標的無資料已剔除：{', '.join(missing) or '?'}（改以等權重計算）")
         kept = [t for t in tickers if t in px_df.columns]
-        ws = np.repeat(1 / len(kept), len(kept)) if kept else ws
         if not kept:
             st.error("所有標的皆無資料")
             return
+        ws = np.repeat(1 / len(kept), len(kept))
         px_df = px_df[kept]
+        names = kept
 
-    w = pd.Series(ws, index=px_df.columns)
+    # 按名稱對齊（欄序可能與輸入序不同——位置對齊會錯配權重）
+    w = pd.Series(dict(zip(names, ws))).reindex(px_df.columns)
 
     tab1, tab2, tab3, tab4 = st.tabs([
         "📊 VaR / CVaR", "🔁 Kupiec 回測", "💥 壓力測試", "🔗 相關性分析",

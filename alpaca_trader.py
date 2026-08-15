@@ -209,7 +209,8 @@ def _base() -> str:
     from urllib.parse import urlparse
     b = os.environ.get("ALPACA_BASE_URL", PAPER_BASE).rstrip("/")
     try:
-        host = urlparse(b).hostname or ""
+        # 無 scheme 的合法值（paper-api.alpaca.markets）hostname 會是 None——補 scheme 再解析
+        host = urlparse(b if "://" in b else f"https://{b}").hostname or ""
     except Exception:
         host = ""
     if host != "paper-api.alpaca.markets":

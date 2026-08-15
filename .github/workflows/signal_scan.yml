@@ -99,7 +99,9 @@ jobs:
             git reset --hard "origin/${GITHUB_REF_NAME}"
             cp /tmp/ws.json watchlist_state.json 2>/dev/null || true
             cp /tmp/tj.json trade_journal.json  2>/dev/null || true
-            git add watchlist_state.json trade_journal.json 2>/dev/null || true
+            # 分開 add：多 pathspec 是原子的，任一檔缺席會整批中止（上方步驟同理）
+            git add watchlist_state.json 2>/dev/null || true
+            git add trade_journal.json  2>/dev/null || true
             git diff --staged --quiet || \
               git commit -m "chore: update bot state + trade journal [skip ci]"
           done

@@ -138,6 +138,10 @@ SET_CLAMPS = {
     "briefing_hour_et":    (0.0, 23.5),
     "earnings_alert_days": (0.0, 30.0),
     "atr_mult":            (0.5, 5.0),
+    # 引擎鍵的風險上限（trade_engine 只夾 trail/guard/max_positions，
+    # 這兩鍵在引擎端無夾制——/set eng_risk_pct 50 曾可讓單檔吃滿買力）
+    "eng_risk_pct":        (0.0005, 0.05),
+    "eng_max_position_pct": (0.01, 0.50),
 }
 
 ET = ZoneInfo("America/New_York")
@@ -240,7 +244,9 @@ def load_state() -> dict:
             # watchlist:null 會讓每輪 cron 硬崩且不自癒，必須「取代」而非補預設
             if not isinstance(state.get("thresholds"), dict):
                 state["thresholds"] = DEFAULT_THRESHOLDS.copy()
-            if not isinstance(state.get("watchlist"), list) or not state["watchlist"]:
+            # 注意只驗型別不驗空值：/clear 合法寫入 []，強制還原預設會讓
+            # autotrade 對使用者明確清空的標的繼續下單（修復包驗證抓到的回歸）
+            if not isinstance(state.get("watchlist"), list):
                 state["watchlist"] = DEFAULT_WATCHLIST.copy()
             if not isinstance(state.get("signal_history"), dict):
                 state["signal_history"] = {}

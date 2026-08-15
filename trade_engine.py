@@ -139,6 +139,9 @@ def decide(scored: list[dict], positions: dict, equity: float, buying_power: flo
         cfg[k] = min(max(float(cfg[k]), 0.005), 0.5)
     cfg["stoploss_guard_n"] = max(1, int(cfg["stoploss_guard_n"]))
     cfg["max_positions"] = max(1, int(cfg["max_positions"]))
+    # 風險預算雙保險（B9 原則：防護放純函數入口）——/set 端也夾，這裡再夾一次
+    cfg["risk_pct"] = min(max(float(cfg["risk_pct"]), 0.0005), 0.05)
+    cfg["max_position_pct"] = min(max(float(cfg["max_position_pct"]), 0.01), 0.50)
     engine = engine if isinstance(engine, dict) and engine.get("pos") is not None \
         else new_engine_state()
     equity = float(equity)
