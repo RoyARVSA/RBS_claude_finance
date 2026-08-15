@@ -7,6 +7,7 @@ Colab:  see RBS_Finance_Colab.ipynb (Cell 1-3: Drive, sync, launch)
 from __future__ import annotations
 
 import io
+import os
 import sys
 import zipfile
 from pathlib import Path
@@ -1658,7 +1659,7 @@ def _assistant_fetch(tickers, intents, fred_key):
     if "macro" in intents and fred_key:
         try:
             import macro as _m
-            md = _m.fetch_macro(fred_key)
+            md = _cached_macro(fred_key)
             if md:
                 macro_data = {"summary": _m.macro_summary_text(md),
                               "signals": _m.macro_regime(md)["signals"]}
@@ -2056,7 +2057,7 @@ def page_ai_assistant():
                     if fred_key:
                         try:
                             import macro as _m
-                            _md = _m.fetch_macro(fred_key)
+                            _md = _cached_macro(fred_key)
                             if _md:
                                 macro_dom = _m.macro_summary_text(_md)
                             _rel = _m.fetch_release_calendar(fred_key, 7)
@@ -2586,6 +2587,14 @@ def _cached_intraday(ticker: str, period: str, interval: str):
                        auto_adjust=True, progress=False)
 
 
+@st.cache_data(ttl=900, show_spinner=False)
+def _cached_macro(fred_key: str):
+    """FRED 總經（快取 15 分）。審查團 F18：先前唯一無快取的網路呼叫，
+    且在市場總覽主流程——設了 FRED key 後每次 rerun 都重打 ~6 支序列。"""
+    import macro as _m
+    return _m.fetch_macro(fred_key)
+
+
 @st.cache_data(ttl=1800, show_spinner=False)
 def _cached_fear_greed():
     """雙恐懼貪婪指數（快取 30 分）。"""
@@ -2845,7 +2854,10 @@ def page_market_overview():
     # ── Major indices ──────────────────────────────────────────────
     section("主要指數")
     index_items = [(n, v) for n, v in snapshot.items() if v["cat"] in ("index", "fear")]
-    cols_idx = st.columns(len(index_items))
+    if not index_items:
+        st.info("指數資料暫時無法取得")   # st.columns(0) 會 raise（審查團 F21）
+        index_items = []
+    cols_idx = st.columns(len(index_items)) if index_items else []
     for i, (name, data) in enumerate(index_items):
         with cols_idx[i]:
             chg = data["chg"]
@@ -2864,7 +2876,9 @@ def page_market_overview():
     # ── Macro: rates / commodities / FX ───────────────────────────
     section("宏觀指標")
     macro_items = [(n, v) for n, v in snapshot.items() if v["cat"] in ("rate", "commodity", "fx")]
-    cols_mac = st.columns(len(macro_items))
+    if not macro_items:
+        st.info("宏觀報價暫時無法取得")
+    cols_mac = st.columns(len(macro_items)) if macro_items else []
     for i, (name, data) in enumerate(macro_items):
         with cols_mac[i]:
             chg = data["chg"]
@@ -2924,7 +2938,7 @@ def page_market_overview():
         try:
             import macro as _macro
             with st.spinner("載入總經數據…"):
-                md = _macro.fetch_macro(fred_key)
+                md = _cached_macro(fred_key)
             st.session_state["macro_data"] = md
             order = ["fed_funds", "y10", "y2", "curve", "cpi", "unemploy"]
             items = ([(k, md[k]) for k in order if k in md and md[k].get("value") is not None]
@@ -3096,6 +3110,20 @@ def page_risk_management():
         except Exception as e:
             st.error(f"資料載入失敗：{e}")
             return
+
+    # 部分代碼抓取失敗時欄位數 < 權重數 → Series 建構 ValueError 整頁紅屏（審查團 F19）
+    if px_df is None or px_df.empty:
+        st.error("價格資料為空，請稍後重試或更換標的")
+        return
+    if len(px_df.columns) != len(ws):
+        missing = [t for t in tickers if t not in px_df.columns]
+        st.warning(f"部分標的無資料已剔除：{', '.join(missing) or '?'}（權重已等比重算）")
+        kept = [t for t in tickers if t in px_df.columns]
+        ws = np.repeat(1 / len(kept), len(kept)) if kept else ws
+        if not kept:
+            st.error("所有標的皆無資料")
+            return
+        px_df = px_df[kept]
 
     w = pd.Series(ws, index=px_df.columns)
 
@@ -4577,7 +4605,9 @@ def _cached_whale(cik: str, name: str):
 # 本地檔案活不久 → 有 GITHUB_TOKEN 時直接 commit 進 repo，跨重啟持久。
 _CMT_LOG_PATH = "committee_log.json"
 _GH_REPO = "RoyARVSA/RBS_claude_finance"
-_GH_BRANCH = "claude/optimize-analysis-dashboard-NZUKB"
+# 審查團 F20：先前寫死開發分支——委員會決策紀錄永遠 commit 到舊分支、
+# 讀取 404 靜默回空。改由 secrets/env 覆蓋，預設 main。
+_GH_BRANCH = os.environ.get("GH_STATE_BRANCH", "main")
 
 
 def _gh_token() -> str:

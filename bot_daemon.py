@@ -6,7 +6,10 @@ bot_daemon.py – 常駐版 Telegram Bot（即時回應，不用等排程）
   • 差別只在「執行方式」：
       scan_signals.py  → GitHub Actions 每 15 分鐘跑一次（適合零成本、免主機）
       bot_daemon.py    → 常駐迴圈，秒級回應指令 + 定時自動掃描（適合 VPS / 本機）
-  • 兩者共用同一個 watchlist_state.json，可隨時切換，互不衝突
+  • 兩者共用同一個 watchlist_state.json，可隨時「切換」——
+    ⚠️ 但**絕不可同時跑**（審查團紅隊實測）：Telegram getUpdates 只容一個
+    消費者，並行會指令雙派工（/closeall 執行兩次）、雙下單、state 互相覆蓋
+    （停損事件遺失→保險絲失準）。開常駐版前先停用 GitHub Actions 排程。
 
 用法：
   # 環境變數
@@ -98,10 +101,24 @@ def main() -> int:
 
     last_scan = 0.0
     tick = 0
+    _reload_at = 0.0
     while True:
         try:
+            # 0. 週期重讀磁碟 state（審查團 F5）：若外部（cron/人工）改了檔案，
+            #    別讓記憶體舊資料覆蓋掉——每 60 秒同步一次
+            nowt = time.monotonic()
+            if nowt - _reload_at >= 60:
+                state = ss.load_state()
+                _reload_at = nowt
+
             # 1. 即時處理 Telegram 指令
-            state, changed = ss.process_commands(TOKEN, CHAT_ID, state)
+            try:
+                state, changed = ss.process_commands(TOKEN, CHAT_ID, state)
+            except Exception as e:
+                # 毒訊息防護（審查團 F13）：process_commands 內 offset 已前進，
+                # 必須落盤消耗掉，否則 systemd 重啟會重放毒訊息
+                print(f"Command processing error: {e}")
+                changed = True
             if changed:
                 ss.save_state(state)
 
@@ -115,8 +132,22 @@ def main() -> int:
                 state["last_briefing_date"] = _dt.now(ss.ET).strftime("%Y-%m-%d")
                 ss.save_state(state)
 
+            # 1.6 每週深度週報（審查團 F11：原本只在排程版，daemon 部署收不到）
+            if ss._should_send_weekly(state):
+                print("發送每週週報…")
+                try:
+                    wmsg = ss.weekly_report(state)
+                    if wmsg:
+                        ss._tg_send(TOKEN, CHAT_ID, wmsg)
+                except Exception as e:
+                    print(f"Weekly report error: {e}")
+                from datetime import datetime as _dt2
+                _nw = _dt2.now(ss.ET)
+                # 格式必須與 scan_signals.main 一致（週 ID 非日期，寫錯會每輪狂發）
+                state["last_weekly"] = f"{_nw.isocalendar().year}-W{_nw.isocalendar().week}"
+                ss.save_state(state)
+
             # 2. 定時自動掃描
-            nowt = time.monotonic()
             if nowt - last_scan >= SCAN_INTERVAL:
                 _auto_scan(state)
                 ss.save_state(state)

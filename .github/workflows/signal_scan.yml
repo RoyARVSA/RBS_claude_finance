@@ -16,6 +16,12 @@ env:
 permissions:
   contents: write   # 允許 workflow 把 watchlist_state.json commit 回 repo
 
+# 防自我重疊（審查團 F1，紅隊+維運獨立匯合）：一輪拖過 15 分時下一輪不得並跑——
+# 並跑會雙 getUpdates（指令雙派工、autotrade 雙下單）+ 雙 commit state 必衝突
+concurrency:
+  group: signal-scan
+  cancel-in-progress: false
+
 jobs:
   scan:
     runs-on: ubuntu-latest
@@ -42,7 +48,9 @@ jobs:
             ${{ runner.os }}-pip-scanner-
 
       - name: Install dependencies
-        run: pip install yfinance pandas numpy requests
+        # 釘版（審查團 F14）：此環境載有全部 Secrets，未釘版等於每 15 分鐘
+        # 對供應鏈投毒開門。版本取自 2026-08 production 實跑紀錄。
+        run: pip install yfinance==1.5.2 pandas==3.0.5 numpy==2.4.6 requests==2.34.2
 
       - name: Run signal scanner
         env:
@@ -77,19 +85,22 @@ jobs:
 
       - name: Push state changes
         run: |
-          # rebase-retry：避免非快進推送失敗導致 last_briefing_date 等狀態遺失（→ 晨報重複發送）
+          # 衝突安全推送（審查團 F2）：舊 rebase-retry 撞 state 檔內容衝突會卡半途、
+          # || true 吞錯、其後 push 必敗——狀態遺失且可能把衝突標記寫進 state（連鎖
+          # 觸發 last_update_id 歸零重播）。改為「本輪結果為準」：push 失敗就同步遠端
+          # 最新，重放本輪 state 檔再 commit。state 是本輪剛產生的最新真相，覆蓋合理。
+          cp watchlist_state.json /tmp/ws.json 2>/dev/null || true
+          cp trade_journal.json  /tmp/tj.json 2>/dev/null || true
           for i in 1 2 3; do
             git push origin HEAD && exit 0
-            echo "push 失敗，rebase 後重試 ($i)…"
-            git pull --rebase --autostash origin "${GITHUB_REF_NAME}" || true
+            echo "push 失敗，同步遠端後重放 state ($i)…"
+            git rebase --abort 2>/dev/null || true
+            git fetch origin "${GITHUB_REF_NAME}"
+            git reset --hard "origin/${GITHUB_REF_NAME}"
+            cp /tmp/ws.json watchlist_state.json 2>/dev/null || true
+            cp /tmp/tj.json trade_journal.json  2>/dev/null || true
+            git add watchlist_state.json trade_journal.json 2>/dev/null || true
+            git diff --staged --quiet || \
+              git commit -m "chore: update bot state + trade journal [skip ci]"
           done
-          git push origin HEAD || echo "push 最終失敗（狀態未持久化，下次可能重發）"
-
-      - name: Upload scan log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: scan-log-${{ github.run_number }}
-          path: '*.log'
-          if-no-files-found: ignore
-          retention-days: 7
+          git push origin HEAD || echo "::warning::push 最終失敗（狀態未持久化，下次可能重發）"

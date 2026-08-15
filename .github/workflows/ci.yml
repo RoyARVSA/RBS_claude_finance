@@ -14,6 +14,9 @@ on:
       - 'requirements.txt'
       - '.github/workflows/ci.yml'
 
+permissions:
+  contents: read   # CI 只讀（審查團 F16）：pull_request 會執行分支上的任意 Python
+
 jobs:
   selftest:
     runs-on: ubuntu-latest

@@ -117,6 +117,27 @@ DEFAULT_THRESHOLDS = {
     "at_exit_threshold": -0.2,        # 評分 ≤ 此值 → 平倉
     "at_max_positions":   10.0,       # 最多持倉檔數
     "at_max_position_pct": 0.15,      # 每檔最多佔淨值
+    # ── 相關性控制 / 週報 / 計畫自動校準（審查團 F26：預設值不再散落讀取點）──
+    "corr_hi":            0.85,       # 新倉與持倉平均相關 ≥ 此值 → 跳過
+    "corr_mid":           0.75,       # ≥ 此值 → 部位縮半
+    "weekly_enabled":     True,       # 每週深度週報
+    "plan_autocal_enabled": True,     # /plantest 週期自動校準
+}
+
+# /set 數值夾制（審查團 F6：/set 曾可設 risk_pct=50 → 5000% 風險，繞過所有下游夾制）
+SET_CLAMPS = {
+    "risk_pct":            (0.0005, 0.05),
+    "account_size":        (100.0, 1e9),
+    "at_max_position_pct": (0.01, 0.50),
+    "at_max_positions":    (1.0, 50.0),
+    "at_buy_threshold":    (-1.0, 1.0),
+    "at_exit_threshold":   (-1.0, 1.0),
+    "cooldown_hours":      (0.5, 720.0),
+    "corr_hi":             (0.2, 0.99),
+    "corr_mid":            (0.1, 0.99),
+    "briefing_hour_et":    (0.0, 23.5),
+    "earnings_alert_days": (0.0, 30.0),
+    "atr_mult":            (0.5, 5.0),
 }
 
 ET = ZoneInfo("America/New_York")
@@ -186,26 +207,60 @@ def market_status() -> dict:
     mins_left = int((market_close - now_et).total_seconds() / 60)
     return {"open": True, "reason": f"交易中（距收盤 {mins_left} 分鐘）", "now_et": now_et.strftime("%H:%M ET")}
 
-TELEGRAM_TOKEN   = os.environ.get("TELEGRAM_TOKEN", "")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+def _clean_env(v: str) -> str:
+    """secrets 貼上常帶換行/隱形字元，進 HTTP URL/header 會炸（PITFALLS D5/B10）。"""
+    for ch in ("\r", "\n", "\t", "​", "‌", "‍", "﻿", " "):
+        v = v.replace(ch, "")
+    return v.strip()
+
+
+TELEGRAM_TOKEN   = _clean_env(os.environ.get("TELEGRAM_TOKEN", ""))
+TELEGRAM_CHAT_ID = _clean_env(os.environ.get("TELEGRAM_CHAT_ID", ""))
 
 
 # ── State persistence ────────────────────────────────────────────────────────
 
+def _salvage_last_update_id(raw: str) -> int:
+    """壞 state 檔搶救 last_update_id——歸零會讓 Telegram 24h 內全部指令重播
+    （含 /closeall、/autotrade on；審查團 F3，紅隊實跑復現）。"""
+    import re
+    m = re.search(r'"last_update_id"\s*:\s*(\d+)', raw or "")
+    return int(m.group(1)) if m else 0
+
+
 def load_state() -> dict:
+    raw = ""
     if STATE_FILE.exists():
         try:
-            state = json.loads(STATE_FILE.read_text(encoding="utf-8"))
-            # 向後相容：補上新版才有的 threshold 預設鍵（不覆蓋既有值）
-            th = state.setdefault("thresholds", {})
+            raw = STATE_FILE.read_text(encoding="utf-8")
+            state = json.loads(raw)
+            if not isinstance(state, dict):
+                raise ValueError(f"state 頂層不是 dict：{type(state)}")
+            # 欄位級防護（審查團 F4）：setdefault 擋不住既有的 null——
+            # watchlist:null 會讓每輪 cron 硬崩且不自癒，必須「取代」而非補預設
+            if not isinstance(state.get("thresholds"), dict):
+                state["thresholds"] = DEFAULT_THRESHOLDS.copy()
+            if not isinstance(state.get("watchlist"), list) or not state["watchlist"]:
+                state["watchlist"] = DEFAULT_WATCHLIST.copy()
+            if not isinstance(state.get("signal_history"), dict):
+                state["signal_history"] = {}
+            try:
+                state["last_update_id"] = int(state.get("last_update_id") or 0)
+            except (TypeError, ValueError):
+                state["last_update_id"] = _salvage_last_update_id(raw)
+            th = state["thresholds"]
             for k, v in DEFAULT_THRESHOLDS.items():
                 th.setdefault(k, v)
-            state.setdefault("signal_history", {})
-            state.setdefault("last_update_id", 0)
-            state.setdefault("watchlist", DEFAULT_WATCHLIST.copy())
             return state
         except Exception as e:
-            print(f"State load error: {e}, using defaults")
+            print(f"State load error: {e}")
+            # 壞檔改名備份（供事後鑑識），不要靜默蓋掉
+            try:
+                bak = STATE_FILE.with_suffix(".json.corrupt")
+                STATE_FILE.replace(bak)
+                print(f"壞 state 已備份 → {bak}")
+            except Exception:
+                pass
     # Bootstrap from env var if first run
     raw_wl = os.environ.get("WATCHLIST", "")
     watchlist = [t.strip().upper() for t in raw_wl.split(",") if t.strip()] or DEFAULT_WATCHLIST
@@ -213,7 +268,8 @@ def load_state() -> dict:
         "watchlist":      watchlist,
         "thresholds":     DEFAULT_THRESHOLDS.copy(),
         "signal_history": {},
-        "last_update_id": 0,
+        # 關鍵：bootstrap 也要帶壞檔搶救出的 offset，絕不歸零重播
+        "last_update_id": _salvage_last_update_id(raw),
     }
 
 
@@ -902,9 +958,20 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                 reply = f"✅ `{key}` → {'開啟' if th[key] else '關閉'}"
             elif key in float_keys or eng_ok:
                 try:
-                    th[key] = float(val)
+                    v = float(val)
+                    lo_hi = SET_CLAMPS.get(key)
+                    if lo_hi:
+                        clamped = min(max(v, lo_hi[0]), lo_hi[1])
+                        if clamped != v:
+                            reply = (f"✅ `{key}` → {clamped}"
+                                     f"（輸入 {v} 超出安全範圍 {lo_hi[0]}~{lo_hi[1]}，已夾制）")
+                            v = clamped
+                        else:
+                            reply = f"✅ `{key}` → {v}"
+                    else:
+                        reply = f"✅ `{key}` → {v}"
+                    th[key] = v
                     changed = True
-                    reply = f"✅ `{key}` → {th[key]}"
                 except ValueError:
                     reply = f"❌ 無效數值：{val}"
             else:
@@ -2281,7 +2348,8 @@ def daily_briefing(state: dict, force: bool = False) -> str | None:
     elif dual_note:
         top_call = dual_note
     elif regime and regime.get("regime") == "risk_off":
-        top_call = "大盤跌破 MA50 轉偏空——濾網收緊，新倉縮手、檢查停損"
+        # regime 可能來自氣象台五因子或 MA50 退回路徑——文案用實際 label 別寫死
+        top_call = f"大盤轉偏空（{regime.get('label', '風險偏空')}）——濾網收緊，新倉縮手、檢查停損"
     elif flagged:
         _fstar = max(flagged, key=lambda r: abs(r.get("score", 0)))
         top_call = (f"{len(flagged)} 檔觸發訊號，最強 {_fstar['ticker']}"
@@ -2414,7 +2482,8 @@ def daily_briefing(state: dict, force: bool = False) -> str | None:
 
     if not state["watchlist"]:
         lines.append("_觀察清單為空，用 /add 新增標的_")
-    lines.append("_每日晨報 · /set briefing_enabled off 可關閉_")
+    # 最高頻的輸出反而漏了揭露（審查團 F24）
+    lines.append("_每日晨報 · 分析教育用途非投資建議 · /set briefing_enabled off 可關閉_")
     return "\n".join(lines)
 
 
@@ -2929,14 +2998,16 @@ def run_autotrade(state: dict, results: list[dict]) -> str | None:
                     g = guard.get(s["ticker"])
                     if not g or g.get("avg_corr") is None or g["scale"] >= 1.0:
                         continue
+                    _mx = g.get("max_corr")
+                    _desc = (f"與持倉相關 均{g['avg_corr']:.2f}/高{_mx:.2f}"
+                             if _mx is not None else
+                             f"與持倉平均相關 {g['avg_corr']:.2f}")
                     if g["scale"] <= 0:
                         s["no_entry"] = True
-                        ao_notes.append(f"🔗 {s['ticker']} 與持倉平均相關 "
-                                        f"{g['avg_corr']:.2f} → 跳過進場（分散不足）")
+                        ao_notes.append(f"🔗 {s['ticker']} {_desc} → 跳過進場（分散不足）")
                     else:
                         s["entry_scale"] = g["scale"]
-                        ao_notes.append(f"🔗 {s['ticker']} 與持倉平均相關 "
-                                        f"{g['avg_corr']:.2f} → 部位縮半")
+                        ao_notes.append(f"🔗 {s['ticker']} {_desc} → 部位縮半")
     except Exception as e:
         print(f"Autotrade: 相關性控制失敗，跳過 {e}")
 

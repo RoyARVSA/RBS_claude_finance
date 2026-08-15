@@ -204,8 +204,15 @@ def _f(x):
 def _base() -> str:
     # 安全鎖：只接受 paper API。若有人把 ALPACA_BASE_URL 設成正式盤（真錢），
     # 靜默退回 paper——本專案的 /autotrade、/closeall 絕不允許碰真實帳戶。
+    # 審查團 F15：子字串檢查可被 userinfo 繞過（https://paper-api@api.alpaca.markets
+    # 會以真錢端點下單）——改 hostname 精確比對。
+    from urllib.parse import urlparse
     b = os.environ.get("ALPACA_BASE_URL", PAPER_BASE).rstrip("/")
-    if "paper-api" not in b:
+    try:
+        host = urlparse(b).hostname or ""
+    except Exception:
+        host = ""
+    if host != "paper-api.alpaca.markets":
         print(f"ALPACA_BASE_URL '{b}' 非 paper API，已強制退回 {PAPER_BASE}")
         return PAPER_BASE
     return b
