@@ -335,5 +335,77 @@
     "mechanism": "entry",
     "submitted": true,
     "error": null
+  },
+  {
+    "time": "2026-08-10T13:42:04Z",
+    "symbol": "ARKK",
+    "side": "buy",
+    "qty": 184,
+    "score": 0.52,
+    "price": 79.8,
+    "reason": "評分 +0.52 ≥ 門檻 0.5（風險部位 184 股）",
+    "mechanism": "entry",
+    "submitted": true,
+    "error": null
+  },
+  {
+    "time": "2026-08-10T14:43:23Z",
+    "symbol": "PLTR",
+    "side": "sell",
+    "qty": 39,
+    "score": 0.703,
+    "price": 179.01,
+    "reason": "獲利 +1.7R ≥ 1.5R，先賣一半鎖利（餘倉保本追蹤）",
+    "mechanism": "scale_out",
+    "submitted": true,
+    "error": null
+  },
+  {
+    "time": "2026-08-11T17:40:08Z",
+    "symbol": "GOOGL",
+    "side": "sell",
+    "qty": 39,
+    "score": 0.148,
+    "price": 347.3,
+    "reason": "硬停損 347.42（進場 368.27−1.0×風險）",
+    "mechanism": "stop_loss",
+    "submitted": true,
+    "error": null
+  },
+  {
+    "time": "2026-08-12T14:05:55Z",
+    "symbol": "AMZN",
+    "side": "sell",
+    "qty": 52,
+    "score": 0.915,
+    "price": 269.66,
+    "reason": "追蹤停損 271.29（峰值 285.55 回落 8%，保本地板 271.29）",
+    "mechanism": "trailing_stop",
+    "submitted": true,
+    "error": null
+  },
+  {
+    "time": "2026-08-12T14:05:55Z",
+    "symbol": "TSM",
+    "side": "buy",
+    "qty": 34,
+    "score": 0.57,
+    "price": 430.99,
+    "reason": "評分 +0.57 ≥ 門檻 0.5（風險部位 34 股）",
+    "mechanism": "entry",
+    "submitted": true,
+    "error": null
+  },
+  {
+    "time": "2026-08-13T13:56:39Z",
+    "symbol": "GLD",
+    "side": "buy",
+    "qty": 36,
+    "score": 0.529,
+    "price": 401.27,
+    "reason": "評分 +0.53 ≥ 門檻 0.5（風險部位 36 股）",
+    "mechanism": "entry",
+    "submitted": true,
+    "error": null
   }
 ]
