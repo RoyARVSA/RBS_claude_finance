@@ -51,7 +51,8 @@ st.set_page_config(
 # 把 Streamlit Secrets 複製到環境變數，讓各模組用 os.environ 統一讀取
 import os as _os_boot
 for _k in ("FINNHUB_API_KEY", "FRED_API_KEY", "LLM_API_KEY", "LLM_BASE_URL",
-           "LLM_MODEL", "ALPACA_KEY_ID", "ALPACA_SECRET_KEY", "SEC_USER_AGENT"):
+           "LLM_MODEL", "ALPACA_KEY_ID", "ALPACA_SECRET_KEY", "SEC_USER_AGENT",
+           "STATE_ENC_KEY"):
     if not _os_boot.environ.get(_k):
         try:
             _v = st.secrets.get(_k)
@@ -2126,9 +2127,10 @@ def page_ai_assistant():
                     # ③ 硬風控（確定性規則，LLM 不可推翻）
                     gfacts = {"regime_label": (regime_c or {}).get("label")}
                     try:
+                        import state_crypto as _sc2
                         _sf2 = Path("watchlist_state.json")
                         if _sf2.exists():
-                            _hh = [h for h in _json.loads(_sf2.read_text(encoding="utf-8"))
+                            _hh = [h for h in _sc2.read_state(_sf2)
                                    .get("reflections", {}).get("history", [])
                                    if h.get("hit") is not None][-20:]
                             if _hh:
@@ -2341,9 +2343,10 @@ def page_ai_assistant():
                         _save_cmt_log(log)
                 hist_all = list(log.get("reflections", {}).get("history", []))
                 try:
+                    import state_crypto as _sc3
                     _sf3 = Path("watchlist_state.json")
                     if _sf3.exists():
-                        hist_all += (_json2.loads(_sf3.read_text(encoding="utf-8"))
+                        hist_all += (_sc3.read_state(_sf3)
                                      .get("reflections", {}).get("history", []))
                 except Exception:
                     pass
@@ -2454,9 +2457,10 @@ def page_ai_assistant():
                         import json as _json
 
                         import reflection as _rfl
+                        import state_crypto as _sc
                         _sf = Path("watchlist_state.json")
                         if _sf.exists():
-                            _s_ref = _rfl.summary_text(_json.loads(_sf.read_text(encoding="utf-8")))
+                            _s_ref = _rfl.summary_text(_sc.read_state(_sf))
                             if _s_ref:
                                 context += f"\n\n【AI 判斷回顧】{_s_ref}"
                     except Exception:
@@ -5362,8 +5366,8 @@ def page_alerts():
         # 投資論點檢視（Bot /thesis 管理；此處唯讀——state 由 bot workflow commit）
         with st.expander("📖 投資論點追蹤（Telegram `/thesis` 管理）", expanded=False):
             try:
-                import json as _json_th
-                _ths = (_json_th.load(open("watchlist_state.json"))
+                import state_crypto as _sc_th
+                _ths = (_sc_th.read_state("watchlist_state.json")
                         .get("theses") or {})
             except Exception:
                 _ths = {}
@@ -5680,8 +5684,8 @@ def page_alerts():
             # Bot 用 /plantest apply 套用的校準會 commit 進 watchlist_state.json——網頁共用
             _tp_cal = None
             try:
-                import json as _json
-                _tp_cal = _json.load(open("watchlist_state.json")).get("plan_calib")
+                import state_crypto as _sc_tp
+                _tp_cal = _sc_tp.read_state("watchlist_state.json").get("plan_calib")
             except Exception:
                 pass
             with st.spinner(f"抓取 {min(len(tp_tickers), 10)} 檔盤中數據並計算…"):

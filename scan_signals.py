@@ -240,6 +240,19 @@ def load_state() -> dict:
             state = json.loads(raw)
             if not isinstance(state, dict):
                 raise ValueError(f"state 頂層不是 dict：{type(state)}")
+            # 敏感區塊解密（STATE_ENC_KEY；未啟用者完全透明）
+            try:
+                import state_crypto as sc
+                state, _enc_failed = sc.decrypt_state(state, sc.get_key())
+                if _enc_failed:
+                    print(f"⚠️ {len(_enc_failed)} 個加密區塊無法解密（STATE_ENC_KEY "
+                          f"未設或錯誤）：{_enc_failed}——本輪以預設值降級運作，"
+                          "密文原樣保留、絕不覆蓋")
+                    locked = state.setdefault("__enc_locked__", {})
+                    for k in _enc_failed:
+                        locked[k] = state.pop(k)
+            except ImportError:
+                pass
             # 欄位級防護（審查團 F4）：setdefault 擋不住既有的 null——
             # watchlist:null 會讓每輪 cron 硬崩且不自癒，必須「取代」而非補預設
             if not isinstance(state.get("thresholds"), dict):
@@ -287,9 +300,23 @@ def save_state(state: dict) -> None:
         if isinstance(c, dict):
             state[ck] = {k: v for k, v in c.items()
                          if isinstance(v, dict) and str(v.get(datekey, "")) >= cutoff}
+    # 敏感區塊加密後才落檔（STATE_ENC_KEY；未設 key 明文照舊）。
+    # 注意對「寫入用複本」操作——記憶體中的 state 必須維持明文供後續使用
+    out = state
+    try:
+        import state_crypto as sc
+        _key = sc.get_key()
+        out = dict(state)
+        _locked = out.pop("__enc_locked__", {})
+        if _key:
+            out = sc.encrypt_state(out, _key)
+        for _k, _blob in _locked.items():
+            out[_k] = _blob          # 無 key 輪：原密文優先於本輪的降級預設值
+    except ImportError:
+        pass
     # 原子寫入：先寫暫存檔再 os.replace，中途被砍不會留下截斷的 JSON
     tmp = STATE_FILE.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
+    tmp.write_text(json.dumps(out, indent=2, ensure_ascii=False), encoding="utf-8")
     os.replace(tmp, STATE_FILE)
     print(f"State saved → {STATE_FILE}")
 

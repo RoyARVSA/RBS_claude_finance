@@ -71,6 +71,8 @@ jobs:
           # Alpaca 模擬交易（可選；未設則自動交易不執行）
           ALPACA_KEY_ID:     ${{ secrets.ALPACA_KEY_ID }}
           ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
+          # 敏感區塊加密（可選；設了之後論點/淨值/引擎簿記/策略參數以密文 commit）
+          STATE_ENC_KEY: ${{ secrets.STATE_ENC_KEY }}
         run: python scan_signals.py
 
       - name: Commit updated state + trade journal

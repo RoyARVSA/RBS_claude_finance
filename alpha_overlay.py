@@ -9,7 +9,8 @@ alpha_overlay.py – Alpha 層主動資訊布建（純邏輯與抓取分離、�
   • 雙恐懼貪婪（sentiment_fg）：同時極度貪婪 → 新倉風險減半（帳戶級 size_mult）
 
 輸出三件事：
-  1. per-symbol score delta（夾在 ±max_abs_delta，微調不翻案——alpha 主體仍是原評分）
+  1. per-symbol score delta（夾在 ±max_abs_delta=0.15——基礎分 0.35-0.49 的
+     邊界案例仍可能被推過買進門檻，這是刻意保留的邊際影響力，非「絕不翻案」）
   2. per-symbol no_entry veto（只擋新買進與加碼；出場機制照常）
   3. 帳戶級 size_mult（乘在 risk_pct 上）
 
@@ -31,7 +32,10 @@ OVERLAY_DEFAULTS = {
     "options_w":           0.10,  # 選擇權情緒分數(-1..1) × 權重
     "short_hi":            0.15,  # 短倉占流通 ≥ 此值 → 降評
     "short_damp":          -0.10,
-    "max_abs_delta":       0.25,  # delta 總量上限（資訊只微調，不翻案）
+    "max_abs_delta":       0.15,  # delta 總量上限。審查團實測 ±0.25 可把基礎分
+                                  # 0.25-0.49 推過 0.5 買進門檻；夾 ±0.15 後翻案區
+                                  # 縮到 0.35-0.49（權重未經校準前先限縮影響力，
+                                  # 待 roadmap 消融實驗有數據再議）
     "greed_size_mult":     0.5,   # 雙極度貪婪 → 新倉風險減半
     "fear_size_mult":      1.0,   # 雙極度恐懼 → 不縮倉（歷史上常近底部），僅提示
     "ttl_hours":           12,    # 個股資訊快取壽命
@@ -336,7 +340,7 @@ if __name__ == "__main__":
     # 1) 單檔 overlay：cluster buy + 選擇權偏多 → 正 delta；財報近 → veto
     ov = compute_symbol_overlay({"insider_score": 1.0, "cluster_buy": True,
                                  "opt_score": 0.5, "short_pct_float": 0.03})
-    assert abs(ov["delta"] - 0.25) < 1e-9 and not ov["no_entry"], ov   # 0.15+0.05+0.05=0.25
+    assert abs(ov["delta"] - 0.15) < 1e-9 and not ov["no_entry"], ov   # 0.25 原始→夾 0.15
     ov = compute_symbol_overlay({"days_to_earnings": 2})
     assert ov["no_entry"] and ov["delta"] == 0, ov
     ov = compute_symbol_overlay({"days_to_earnings": 4})
@@ -348,8 +352,8 @@ if __name__ == "__main__":
     assert ov["delta"] == -0.10, ov
     ov = compute_symbol_overlay({"insider_score": -1.0, "opt_score": -1.0,
                                  "short_pct_float": 0.30})
-    assert ov["delta"] == -0.25, ov          # -0.15-0.10-0.10 → 夾在 -0.25
-    print("✅ 2 空單降評 + 夾制 ±0.25")
+    assert ov["delta"] == -0.15, ov          # -0.15-0.10-0.10 原始 -0.35 → 夾 -0.15
+    print("✅ 2 空單降評 + 夾制 ±0.15")
 
     # 3) 帳戶級：雙極貪 → 減半；雙極恐 → 維持 1.0；缺資料 → 1.0
     a = account_overlay(80, 82)
@@ -403,7 +407,7 @@ if __name__ == "__main__":
     nv = next(s for s in s2 if s["ticker"] == "NVDA")
     ap = next(s for s in s2 if s["ticker"] == "AAPL")
     assert nv.get("no_entry") is True, nv                       # 財報 2 天 → veto
-    assert abs(ap["score"] - 0.75) < 1e-9, ap                   # 0.55+0.20 cluster
+    assert abs(ap["score"] - 0.70) < 1e-9, ap                   # 0.55+0.20 cluster→夾 0.15
     assert mult == 0.5 and any("🎭" in n for n in notes), (mult, notes)
     assert scored[0].get("no_entry") is None and scored[1]["score"] == 0.55  # 原件不改
     print("✅ 5 enrich 端到端（veto/加分/縮倉/不改原件）")

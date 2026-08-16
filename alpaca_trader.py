@@ -33,29 +33,59 @@ JOURNAL_CAP = 500   # 交易日誌保留最近筆數
 # ── 交易日誌（純檔案 I/O，離線可測；bot 寫、網頁讀）─────────────────────────────
 
 def load_journal(path) -> list:
-    """讀取交易日誌（list of dict）。不存在或壞檔回 []。"""
+    """讀取交易日誌（list of dict）。不存在或壞檔回 []。
+    支援 STATE_ENC_KEY 加密檔（交易明細=持倉與策略資訊，公開 repo 不落明文）。"""
+    log, locked = _load_journal2(path)
+    return [] if locked else log
+
+
+def _load_journal2(path) -> tuple[list, bool]:
+    """(日誌, 是否為解不開的密文)。locked=True 時呼叫端絕不可覆寫檔案。"""
     import json
     from pathlib import Path
     p = Path(path)
     if not p.exists():
-        return []
+        return [], False
     try:
         data = json.loads(p.read_text(encoding="utf-8"))
-        return data if isinstance(data, list) else []
+        if isinstance(data, dict) and data.get("__enc__") == "v1":
+            try:
+                import state_crypto as sc
+                dec = sc.decrypt_block(data, sc.get_key())
+                if dec is None:
+                    print("journal: 加密檔無法解密（STATE_ENC_KEY 未設或錯誤）")
+                    return [], True
+                return (dec if isinstance(dec, list) else []), False
+            except ImportError:
+                return [], True
+        return (data if isinstance(data, list) else []), False
     except Exception:
-        return []
+        return [], False
 
 
 def append_journal(path, entries: list[dict], cap: int = JOURNAL_CAP) -> None:
-    """把新紀錄附加到日誌，保留最近 cap 筆後寫回。entries 為 dict list。"""
+    """把新紀錄附加到日誌，保留最近 cap 筆後寫回。entries 為 dict list。
+    設了 STATE_ENC_KEY 就整檔加密落地；檔案是解不開的密文時**拒寫**
+    （寧丟本輪紀錄，不洗掉加密歷史）。"""
     import json
     from pathlib import Path
-    log = load_journal(path)
+    log, locked = _load_journal2(path)
+    if locked:
+        print(f"journal: 檔案為無法解密的密文，跳過寫入（丟棄本輪 {len(entries)} 筆）")
+        return
     log.extend(entries)
     if len(log) > cap:
         log = log[-cap:]
+    payload = log
     try:
-        Path(path).write_text(json.dumps(log, ensure_ascii=False, indent=2), encoding="utf-8")
+        import state_crypto as sc
+        _key = sc.get_key()
+        if _key:
+            payload = sc.encrypt_block(log, _key)
+    except ImportError:
+        pass
+    try:
+        Path(path).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     except Exception as e:
         print(f"journal write error: {e}")
 

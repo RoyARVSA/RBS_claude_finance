@@ -114,6 +114,7 @@ streamlit run app.py
 | `FRED_API_KEY` | 總經數據 | 總經指標區塊不顯示 | [fred.stlouisfed.org](https://fred.stlouisfed.org/) |
 | `FINNHUB_API_KEY` | 基本面 + 內部人備援 | yfinance 限流時市值/P/E/ROE 顯示「—」；SEC 封鎖雲端 IP 時內部人資料缺席 | [finnhub.io](https://finnhub.io/) |
 | `ALPACA_KEY_ID` + `ALPACA_SECRET_KEY` | 模擬交易（**paper**）| 模擬交易不執行 | [alpaca.markets](https://alpaca.markets/) Trading API |
+| `STATE_ENC_KEY` | 敏感區塊加密（論點/淨值/簿記/參數以密文 commit）| 明文照舊 | 自訂長隨機字串；**GitHub 與 Streamlit Secrets 都要設、遺失即無法解密** |
 | `GITHUB_TOKEN` | 決策計分板持久化（委員會紀錄 commit 進 repo） | 紀錄只存本地，app 重啟即消失 | GitHub → Fine-grained PAT，**只授權本 repo 的 Contents 讀寫**（勿用全域 classic token） |
 
 > SEC 內部人交易（Form 4）走 EDGAR、選擇權情緒走 yfinance，兩者**皆免 key**。
@@ -170,6 +171,7 @@ market_weather.py       市場氣象台：廣度/信用/VIX期限/曲線/銅金�
 behavior_check.py       交易行為體檢：追高/頻率/出場品質/持有期
 shadow_book.py          Shadow 對照帳本：舊決策邏輯平行記帳 vs 新引擎
 attribution.py          機制歸因報告：各機制實測損益/勝率/賣後追蹤(FIFO)
+state_crypto.py         敏感區塊加密：論點/淨值/簿記/參數以密文 commit(STATE_ENC_KEY)
 alpaca_trader.py        Alpaca 紙上交易 REST client + bracket 單（decide_orders=legacy）
 stock_db.py             選股資料庫（5 市場、30+ 產業、200+ 標的，含 AI 供應鏈瓶頸主題）
 rbs_lib.py              風險計算函式庫（VaR/CVaR/共變異數/情境）

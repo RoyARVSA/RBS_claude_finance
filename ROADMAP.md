@@ -53,13 +53,16 @@
 - CI mock smoke test：觀望，等第二次「CI 綠但 cron 炸」再做（架構師）
 - 指令表指定 GITHUB_ACTIONS.md 為唯一正本（架構師；已載入 DoD 待執行）
 
-## 🗳 待使用者拍板（品味類，審查團不代決）
+## 🗳 拍板紀錄（2026-08-15 使用者裁決）
 
-1. **alpha「微調不翻案」語意**：delta ±0.25 實際可把基礎分 0.25-0.49 推過 0.5 門檻。
-   選項 A：夾更緊（±0.15，真正不翻案）／B：維持現狀但修文件宣稱／C：改 veto-only（資訊只擋不加）
-2. **state 檔公開範圍**：paper 淨值+策略參數+/thesis /falsify 個人論點文字都被 commit 到公開 repo。
-   選項 A：接受現狀（純模擬）／B：敏感區塊拆私有檔（gitignore + Actions artifact）／C：只把 theses/falsify 論點拆出
-3. **指令面收斂**：dispatch 已 39 個指令。要不要做一輪保留/合併/淘汰（產品體驗官角色本輪未跑，可補）
+1. **alpha 語意 → 已執行 A**：max_abs_delta 夾緊至 ±0.15（翻案區縮至 0.35-0.49 邊界），
+   文件宣稱如實化；權重放寬與否待 roadmap 消融實驗數據
+2. **state 隱私 → 已執行區塊加密**（使用者：「不公開那些東西、轉私有太麻煩、重要資訊不能 commit」）：
+   `state_crypto.py`——theses/shadow/engine/thresholds/plan_calib/reflections/calibration
+   ＋ trade_journal 整檔，STATE_ENC_KEY 加密後才落檔；無 key 完全透明、
+   無 key 輪絕不毀密文（e2e 測試覆蓋）。**待使用者設 STATE_ENC_KEY**
+   （GitHub＋Streamlit 兩處）後生效；防瀏覽級非審計級；已公開的 git 歷史明文仍在
+3. **指令面收斂**：未裁決，保留（產品體驗官可後補）
 
 ## 已驗證穩健（審查團明確蓋章，別浪費時間重查)
 
