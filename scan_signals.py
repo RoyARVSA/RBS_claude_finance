@@ -224,6 +224,9 @@ TELEGRAM_CHAT_ID = _clean_env(os.environ.get("TELEGRAM_CHAT_ID", ""))
 
 # ── State persistence ────────────────────────────────────────────────────────
 
+_ENC_ALERT_SENT = False   # 解密失敗 TG 告警每製程只發一次（daemon 防洗版）
+
+
 def _salvage_last_update_id(raw: str) -> int:
     """壞 state 檔搶救 last_update_id——歸零會讓 Telegram 24h 內全部指令重播
     （含 /closeall、/autotrade on；審查團 F3，紅隊實跑復現）。"""
@@ -251,6 +254,16 @@ def load_state() -> dict:
                     locked = state.setdefault("__enc_locked__", {})
                     for k in _enc_failed:
                         locked[k] = state.pop(k)
+                    # key 有設卻解不開＝錯 key/已輪替——這是要人處理的緊急事，
+                    # stdout 沒人看，發 TG 告警（每製程一次防洗版；對抗驗證 Med-2）
+                    global _ENC_ALERT_SENT
+                    if sc.get_key() and not _ENC_ALERT_SENT \
+                            and TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
+                        _tg_send(TELEGRAM_TOKEN, TELEGRAM_CHAT_ID,
+                                 f"🚨 STATE_ENC_KEY 已設定但 {len(_enc_failed)} 個"
+                                 "加密區塊解不開（key 錯誤或已輪替？）\n"
+                                 "密文已保留未毀損；換 key 前必須先用舊 key 解密取回")
+                        _ENC_ALERT_SENT = True
             except ImportError:
                 pass
             # 欄位級防護（審查團 F4）：setdefault 擋不住既有的 null——

@@ -18,6 +18,10 @@ paper 帳戶淨值、引擎簿記、全部策略參數攤在陽光下（審查�
   • **key 遺失＝加密區塊永久無法還原**——請把 key 抄在密碼管理器
   • 過去已 commit 的明文歷史仍在 git 裡；要抹除需改寫歷史（另行決定）
   • 未設 key 時一切照舊明文（opt-in，不會弄壞任何現有部署）
+  • **換 key＝舊密文鎖死**——輪替前務必先在舊 key 環境下解密取回；
+    key 設定後解密失敗會發 Telegram 告警（每製程一次）
+  • 隱含安全前提：autotrade_enabled 預設 False——無 key 輪 thresholds 降級
+    為預設值時 autotrade 自動關閉、該輪不下單。**勿把此預設改 True**
 
 用法：save 端 encrypt_state()、load 端 decrypt_state()；journal 整檔走
 encrypt_block/decrypt_block。app/bot/cron 統一經 read_state() 讀。
@@ -63,7 +67,9 @@ def encrypt_block(obj, key: str) -> dict:
     nonce = os.urandom(16)
     pt = json.dumps(obj, ensure_ascii=False).encode("utf-8")
     ct = bytes(a ^ b for a, b in zip(pt, _keystream(kb, nonce, len(pt))))
-    tag = hmac.new(kb, nonce + ct, hashlib.sha256).hexdigest()
+    # b"tag" 前綴＝域分隔：tag 與 keystream 同 key，不加前綴在極端邊角
+    # （len(ct)=8 且恰等於 counter bytes）會洩 keystream 塊（對抗驗證 Low-2）
+    tag = hmac.new(kb, b"tag" + nonce + ct, hashlib.sha256).hexdigest()
     return {_MAGIC: "v1",
             "nonce": base64.b64encode(nonce).decode(),
             "data": base64.b64encode(ct).decode(),
@@ -82,7 +88,7 @@ def decrypt_block(blob: dict, key: str):
         kb = hashlib.sha256(key.encode("utf-8")).digest()
         nonce = base64.b64decode(blob["nonce"])
         ct = base64.b64decode(blob["data"])
-        want = hmac.new(kb, nonce + ct, hashlib.sha256).hexdigest()
+        want = hmac.new(kb, b"tag" + nonce + ct, hashlib.sha256).hexdigest()
         if not hmac.compare_digest(want, str(blob.get("tag", ""))):
             return None
         pt = bytes(a ^ b for a, b in zip(ct, _keystream(kb, nonce, len(ct))))
@@ -97,7 +103,9 @@ def encrypt_state(state: dict, key: str) -> dict:
         return state
     out = dict(state)
     for k in SENSITIVE_KEYS:
-        if k in out and not is_enc(out[k]):
+        # None 不加密：encrypt(None)→decrypt 回 None 與「tag 失敗」無法區分，
+        # 會被誤判 locked 永久鎖死（對抗驗證 Low-1）
+        if k in out and out[k] is not None and not is_enc(out[k]):
             out[k] = encrypt_block(out[k], key)
     return out
 

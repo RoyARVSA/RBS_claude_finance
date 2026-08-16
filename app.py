@@ -5369,6 +5369,10 @@ def page_alerts():
                 import state_crypto as _sc_th
                 _ths = (_sc_th.read_state("watchlist_state.json")
                         .get("theses") or {})
+                if _sc_th.is_enc(_ths):
+                    # bot 已加密但 Streamlit Secrets 未設 key 的過渡期（對抗驗證 Med-1）
+                    st.info("論點已加密——請在 Streamlit Secrets 設 STATE_ENC_KEY（與 GitHub 同值）")
+                    _ths = {}
             except Exception:
                 _ths = {}
             if not _ths:

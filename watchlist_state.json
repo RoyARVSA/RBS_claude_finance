@@ -43,7 +43,11 @@
     "at_buy_threshold": 0.5,
     "at_exit_threshold": -0.2,
     "at_max_positions": 10.0,
-    "at_max_position_pct": 0.15
+    "at_max_position_pct": 0.15,
+    "corr_hi": 0.85,
+    "corr_mid": 0.75,
+    "weekly_enabled": true,
+    "plan_autocal_enabled": true
   },
   "last_update_id": 280895080,
   "last_scan_time": "2026-08-14 19:35 UTC",
