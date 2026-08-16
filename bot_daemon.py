@@ -60,6 +60,16 @@ def _auto_scan(state: dict) -> None:
         print(f"[{now}] 市場關閉（{ms['reason']}），跳過自動掃描")
         return
 
+    # 長製程熔斷重置：cron 每輪新製程自動歸零，daemon 得手動——
+    # 否則一次熔斷讓該資料源死到重啟為止
+    try:
+        import net_guard
+        net_guard.reset()
+        import sec_insider
+        sec_insider.reset_breaker()
+    except Exception:
+        pass
+
     print(f"[{now}] 執行自動掃描 {len(state['watchlist'])} 支…")
     # 與 main() 共用的掃描+防護流程（校準/大盤濾網/冷卻去重）
     msg, results = ss.scan_and_report(state, now)

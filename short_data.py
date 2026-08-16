@@ -16,6 +16,14 @@ import io
 import os
 import zipfile
 
+try:                                     # 慢源熔斷（B10 家族防護；缺模組時無害退化）
+    from net_guard import guarded as _guarded
+except ImportError:
+    def _guarded(key, budget_s=20.0, fallback=None):
+        def deco(fn):
+            return fn
+        return deco
+
 FINRA_DAILY = "https://cdn.finra.org/equity/regsho/daily/CNMSshvol{ymd}.txt"
 SEC_FTD = "https://www.sec.gov/files/data/fails-deliver-data/cnsfails{ym}{half}.zip"
 
@@ -142,6 +150,7 @@ def _ua() -> dict:
     return {"User-Agent": ua}
 
 
+@_guarded("finra_short_vol", budget_s=25.0, fallback={})
 def fetch_short_volume(tickers: list, lookback_days: int = 6) -> dict:
     """抓最近一個交易日的 FINRA 做空量（從今天往回試最多 lookback_days 天）。"""
     import datetime as _dt
@@ -165,6 +174,7 @@ def fetch_short_volume(tickers: list, lookback_days: int = 6) -> dict:
     return {}
 
 
+@_guarded("sec_ftd", budget_s=25.0, fallback={})
 def fetch_ftd(tickers: list, months_back: int = 2) -> dict:
     """抓最近可得的 SEC 失券檔（半月一檔，發布延遲 2-4 週 → 從上月開始往回試）。"""
     import datetime as _dt

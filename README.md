@@ -172,6 +172,7 @@ behavior_check.py       交易行為體檢：追高/頻率/出場品質/持有�
 shadow_book.py          Shadow 對照帳本：舊決策邏輯平行記帳 vs 新引擎
 attribution.py          機制歸因報告：各機制實測損益/勝率/賣後追蹤(FIFO)
 state_crypto.py         敏感區塊加密：論點/淨值/簿記/參數以密文 commit(STATE_ENC_KEY)
+net_guard.py            慢源熔斷 decorator：慢且空→本輪跳過該源(掛 options/short)
 alpaca_trader.py        Alpaca 紙上交易 REST client + bracket 單（decide_orders=legacy）
 stock_db.py             選股資料庫（5 市場、30+ 產業、200+ 標的，含 AI 供應鏈瓶頸主題）
 rbs_lib.py              風險計算函式庫（VaR/CVaR/共變異數/情境）

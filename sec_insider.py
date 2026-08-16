@@ -232,6 +232,14 @@ _SEC_DOWN = False
 _TIMEOUT = 8
 
 
+def reset_breaker() -> None:
+    """常駐版（bot_daemon）每輪掃描前呼叫——長製程不重置的話，
+    一次熔斷會讓內部人資料死到重啟為止。cron 每輪新製程不需要。"""
+    global _SEC_DOWN, _MAP_TRIED
+    _SEC_DOWN = False
+    _MAP_TRIED = False
+
+
 def _trip(reason: str) -> None:
     global _SEC_DOWN
     if not _SEC_DOWN:

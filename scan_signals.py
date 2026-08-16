@@ -67,6 +67,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 from datetime import datetime, date, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -2528,6 +2529,9 @@ def daily_briefing(state: dict, force: bool = False) -> str | None:
 
     if not state["watchlist"]:
         lines.append("_觀察清單為空，用 /add 新增標的_")
+    _hl = _health_line(state)
+    if _hl:
+        lines.append(_hl)
     # 最高頻的輸出反而漏了揭露（審查團 F24）
     lines.append("_每日晨報 · 分析教育用途非投資建議 · /set briefing_enabled off 可關閉_")
     return "\n".join(lines)
@@ -2648,6 +2652,39 @@ def _should_send_weekly(state: dict) -> bool:
         return False
     week_id = f"{now_et.isocalendar().year}-W{now_et.isocalendar().week}"
     return state.get("last_weekly") != week_id
+
+
+def _update_health(state: dict, dur_s: float, now: datetime | None = None) -> None:
+    """每日 cron 健康度累計（審查團維運提案）：runs / 最慢一輪 / 最大間隔。
+    跨日時昨天轉存 prev 供晨報顯示。純邏輯（now 可注入）、明文（不敏感）。"""
+    now = now or datetime.now(timezone.utc)
+    today = now.astimezone(ET).strftime("%Y-%m-%d")
+    h = state.get("health") or {}
+    if h.get("date") != today:
+        h = {"date": today, "runs": 0, "max_run_s": 0.0, "max_gap_min": 0.0,
+             "prev": {k: h.get(k) for k in ("date", "runs", "max_run_s", "max_gap_min")}}
+    h["runs"] = int(h.get("runs", 0)) + 1
+    h["max_run_s"] = round(max(float(h.get("max_run_s", 0)), dur_s), 1)
+    last = state.get("last_run_ts")
+    if last:
+        try:
+            gap = (now - datetime.fromisoformat(last)).total_seconds() / 60
+            if gap >= 0:
+                h["max_gap_min"] = round(max(float(h.get("max_gap_min", 0)), gap), 1)
+        except Exception:
+            pass
+    state["last_run_ts"] = now.isoformat()
+    state["health"] = h
+
+
+def _health_line(state: dict) -> str | None:
+    """晨報尾的健康度一行（昨日資料；cron 卡頓/停擺從此看得見）。"""
+    h = (state.get("health") or {}).get("prev") or {}
+    if not h.get("date") or not h.get("runs"):
+        return None
+    warn = " ⚠️ 間隔異常" if (h.get("max_gap_min") or 0) > 45 else ""
+    return (f"🩺 昨日 cron：{h['runs']} 輪 · 最慢 {h.get('max_run_s', 0):.0f}s · "
+            f"最大間隔 {h.get('max_gap_min', 0):.0f} 分{warn}")
 
 
 def _should_send_briefing(state: dict) -> bool:
@@ -3135,6 +3172,7 @@ def run_autotrade(state: dict, results: list[dict]) -> str | None:
 # ── Entrypoint ───────────────────────────────────────────────────────────────
 
 def main() -> int:
+    _t0 = time.monotonic()
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     print(f"=== RBS Signal Scanner  {now} ===\n")
 
@@ -3234,6 +3272,12 @@ def main() -> int:
         _at_mig.migrate_journal_encryption(JOURNAL_FILE)
     except Exception:
         pass
+
+    # Step 4.95: 健康度累計（runs/最慢/最大間隔——晨報尾顯示昨日）
+    try:
+        _update_health(state, time.monotonic() - _t0)
+    except Exception as e:
+        print(f"health 累計失敗（不影響運作）: {e}")
 
     # Step 5: Save state
     save_state(state)
