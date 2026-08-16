@@ -3228,6 +3228,13 @@ def main() -> int:
     if at_msg and TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
         _tg_send(TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, at_msg)
 
+    # Step 4.9: journal 加密遷移（設了 key 但檔案還是明文時就地轉，冪等）
+    try:
+        import alpaca_trader as _at_mig
+        _at_mig.migrate_journal_encryption(JOURNAL_FILE)
+    except Exception:
+        pass
+
     # Step 5: Save state
     save_state(state)
     return 0
