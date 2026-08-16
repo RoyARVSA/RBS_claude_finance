@@ -60,16 +60,6 @@ def _auto_scan(state: dict) -> None:
         print(f"[{now}] 市場關閉（{ms['reason']}），跳過自動掃描")
         return
 
-    # 長製程熔斷重置：cron 每輪新製程自動歸零，daemon 得手動——
-    # 否則一次熔斷讓該資料源死到重啟為止
-    try:
-        import net_guard
-        net_guard.reset()
-        import sec_insider
-        sec_insider.reset_breaker()
-    except Exception:
-        pass
-
     print(f"[{now}] 執行自動掃描 {len(state['watchlist'])} 支…")
     # 與 main() 共用的掃描+防護流程（校準/大盤濾網/冷卻去重）
     msg, results = ss.scan_and_report(state, now)
@@ -112,6 +102,7 @@ def main() -> int:
     last_scan = 0.0
     tick = 0
     _reload_at = 0.0
+    _guard_reset_at = 0.0
     while True:
         try:
             # 0. 週期重讀磁碟 state（審查團 F5）：若外部（cron/人工）改了檔案，
@@ -120,6 +111,19 @@ def main() -> int:
             if nowt - _reload_at >= 60:
                 state = ss.load_state()
                 _reload_at = nowt
+
+            # 0.5 熔斷重置：每 15 分鐘（=cron 節奏）。放主迴圈而非 _auto_scan——
+            #     收盤時段 _auto_scan 早退，晚間一次熔斷會讓 /opt /short 等指令
+            #     死到隔天開盤（對抗驗證 M1）
+            if nowt - _guard_reset_at >= 900:
+                try:
+                    import net_guard
+                    net_guard.reset()
+                    import sec_insider
+                    sec_insider.reset_breaker()
+                except Exception:
+                    pass
+                _guard_reset_at = nowt
 
             # 1. 即時處理 Telegram 指令
             try:

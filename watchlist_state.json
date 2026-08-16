@@ -241,75 +241,75 @@
   "last_briefing_date": "2026-08-14",
   "earnings_cache": {
     "AAPL": {
-      "checked": "2026-08-14",
-      "earnings": "2026-10-29"
+      "checked": "2026-08-16",
+      "earnings": null
     },
     "MSFT": {
-      "checked": "2026-08-14",
-      "earnings": "2026-10-28"
+      "checked": "2026-08-16",
+      "earnings": null
     },
     "NVDA": {
-      "checked": "2026-08-14",
-      "earnings": "2026-08-26"
+      "checked": "2026-08-16",
+      "earnings": null
     },
     "GOOGL": {
-      "checked": "2026-08-14",
-      "earnings": "2026-10-28"
+      "checked": "2026-08-16",
+      "earnings": null
     },
     "AMZN": {
-      "checked": "2026-08-14",
-      "earnings": "2026-10-29"
+      "checked": "2026-08-16",
+      "earnings": null
     },
     "TSLA": {
-      "checked": "2026-08-14",
-      "earnings": "2026-10-21"
+      "checked": "2026-08-16",
+      "earnings": null
     },
     "META": {
-      "checked": "2026-08-14",
-      "earnings": "2026-10-28"
+      "checked": "2026-08-16",
+      "earnings": null
     },
     "AMD": {
-      "checked": "2026-08-14",
-      "earnings": "2026-11-03"
+      "checked": "2026-08-16",
+      "earnings": null
     },
     "JPM": {
-      "checked": "2026-08-14",
-      "earnings": "2026-10-13"
+      "checked": "2026-08-16",
+      "earnings": null
     },
     "SPY": {
-      "checked": "2026-08-14",
+      "checked": "2026-08-16",
       "earnings": null
     },
     "QQQ": {
-      "checked": "2026-08-14",
+      "checked": "2026-08-16",
       "earnings": null
     },
     "PLTR": {
-      "checked": "2026-08-14",
-      "earnings": "2026-11-02"
+      "checked": "2026-08-16",
+      "earnings": null
     },
     "COIN": {
-      "checked": "2026-08-14",
-      "earnings": "2026-10-29"
+      "checked": "2026-08-16",
+      "earnings": null
     },
     "TSM": {
-      "checked": "2026-08-14",
-      "earnings": "2026-10-15"
+      "checked": "2026-08-16",
+      "earnings": null
     },
     "ARKK": {
-      "checked": "2026-08-14",
+      "checked": "2026-08-16",
       "earnings": null
     },
     "VRT": {
-      "checked": "2026-08-14",
-      "earnings": "2026-10-21"
+      "checked": "2026-08-16",
+      "earnings": null
     },
     "GLD": {
-      "checked": "2026-08-14",
+      "checked": "2026-08-16",
       "earnings": null
     },
     "DRAM": {
-      "checked": "2026-08-14",
+      "checked": "2026-08-16",
       "earnings": null
     }
   },
@@ -1092,7 +1092,7 @@
     "_auto_checked": "2026-08-13",
     "auto": true
   },
-  "last_weekly": "2026-W32",
+  "last_weekly": "2026-W33",
   "theses": {},
   "weather": {
     "ts": "2026-08-14T19:36:05.411114+00:00",
@@ -1418,6 +1418,19 @@
       "date": "2026-08-14",
       "equity": 98037.94,
       "real_equity": 98299.57
+    }
+  },
+  "last_run_ts": "2026-08-16T23:05:46.928338+00:00",
+  "health": {
+    "date": "2026-08-16",
+    "runs": 1,
+    "max_run_s": 28.0,
+    "max_gap_min": 0.0,
+    "prev": {
+      "date": null,
+      "runs": null,
+      "max_run_s": null,
+      "max_gap_min": null
     }
   }
 }

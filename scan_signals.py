@@ -588,6 +588,13 @@ def _cmd_options(ticker: str) -> str:
     except Exception as e:
         return f"❌ {ticker} 選擇權查詢失敗：{e}"
     if not summ:
+        # 熔斷中要說實話——「查無」與「資料源暫時掛了」是兩回事（對抗驗證 L1）
+        try:
+            import net_guard
+            if net_guard.is_tripped("yahoo_options"):
+                return f"⚠️ {ticker}：選擇權資料源熔斷中（本輪跳過），約 15 分鐘後再試"
+        except ImportError:
+            pass
         return f"⚠️ {ticker}：查無選擇權資料（非選擇權標的/外股/無報價）"
     sent = ops.sentiment(summ)
     return f"🎭 *選擇權情緒* {ticker}\n" + ops.format_options_text(summ, sent) \
@@ -2678,12 +2685,14 @@ def _update_health(state: dict, dur_s: float, now: datetime | None = None) -> No
 
 
 def _health_line(state: dict) -> str | None:
-    """晨報尾的健康度一行（昨日資料；cron 卡頓/停擺從此看得見）。"""
+    """晨報尾的健康度一行（cron 卡頓/停擺從此看得見）。
+    帶實際日期而非「昨日」——cron 停擺時 prev 停在舊日期，寫死「昨日」
+    反而掩蓋停擺（對抗驗證 M2）。"""
     h = (state.get("health") or {}).get("prev") or {}
     if not h.get("date") or not h.get("runs"):
         return None
     warn = " ⚠️ 間隔異常" if (h.get("max_gap_min") or 0) > 45 else ""
-    return (f"🩺 昨日 cron：{h['runs']} 輪 · 最慢 {h.get('max_run_s', 0):.0f}s · "
+    return (f"🩺 cron {h['date']}：{h['runs']} 輪 · 最慢 {h.get('max_run_s', 0):.0f}s · "
             f"最大間隔 {h.get('max_gap_min', 0):.0f} 分{warn}")
 
 
@@ -3225,15 +3234,19 @@ def main() -> int:
         save_state(state)
 
     # Step 2: Check mute & market hours
+    # 早退路徑也必須計入 health（對抗驗證 H1）：閉市輪不計的話，每天開盤
+    # 第一輪的 gap = 整個隔夜 ≈ 1050 分 → 「間隔異常」警示天天誤報、恆真即失效
     if _is_muted(state):
         mu = datetime.fromisoformat(state["mute_until"])
         mins = int((mu - datetime.now(timezone.utc)).total_seconds() / 60)
         print(f"Muted for {mins} more minutes. Skipping scan.")
+        _update_health(state, time.monotonic() - _t0)
         save_state(state)
         return 0
 
     if thresholds.get("scan_market_only", True) and not ms["open"]:
         print(f"Market closed ({ms['reason']}). Skipping scan.")
+        _update_health(state, time.monotonic() - _t0)
         save_state(state)
         return 0
 
