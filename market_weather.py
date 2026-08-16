@@ -103,8 +103,10 @@ def composite(components: dict, weights: dict | None = None,
     valid = {k: v for k, v in components.items() if not _bad(v) and k in w}
     if len(valid) < min_components:
         return None
-    tot_w = sum(w[k] for k in valid)
-    score = sum(w[k] * v for k, v in valid.items()) / tot_w
+    # 審查團 F8：缺席成分「補 50 中性值」而非重新配權——重配權會讓悲觀成分
+    # 缺席時同樣的資訊翻多（模擬實證 52.5→66.4），跨期分數失去可比性
+    score = sum(w[k] * (valid[k] if k in valid else 50.0) for k in w) \
+        / sum(w.values())
     return {"score": round(score, 1), "components": components,
             "missing": sorted(k for k in w if _bad(components.get(k)))}
 
@@ -156,7 +158,7 @@ def weather_text(weather: dict, regime: dict | None = None) -> str:
         # （PITFALLS D12）——一律轉中文短名
         miss = "、".join(COMP_LABELS.get(m, m).split("（")[0]
                          for m in weather["missing"])
-        lines.append(f"（缺席成分已重新配權：{miss}）")
+        lines.append(f"（缺席成分以中性 50 分計：{miss}）")
     lines.append("_≥60 偏多／≤40 偏空；廣度與信用是領先權重最大的兩項_")
     return "\n".join(lines)
 
@@ -236,7 +238,10 @@ def fetch_inputs() -> dict:
                 out["vix"] = (vix, vix3m)
             tnx, irx = last("^TNX"), last("^IRX")
             if tnx is not None and irx is not None:
-                out["curve"] = (tnx - irx) / 10.0    # ×10 標度 → 百分點
+                # 審查團 F23：Yahoo 對 ^TNX/^IRX 以「百分比」報價（4.64=4.64%），
+                # 不是 CBOE 原始 ×10 標度——先前錯除 10 讓此成分永遠卡 21~28 分
+                # （valuation.py 用 ^TNX/100 取 rf 可互證）。直接相減即為百分點。
+                out["curve"] = tnx - irx
             try:
                 cu_au = (px["HG=F"] / px["GC=F"]).dropna()
                 if len(cu_au) >= 21:
@@ -311,17 +316,26 @@ if __name__ == "__main__":
     assert c_nan and c_nan["score"] == c_nan["score"] and "credit" in c_nan["missing"]
     print("✅ 1 子分數映射 + NaN 防護")
 
-    # 2) composite：缺席重新配權、成分不足回 None
+    # 2) composite：缺席補 50 中性值（F8——重配權會讓悲觀成分缺席時分數翻多）、
+    #    成分不足回 None
     c = composite({"breadth": 100, "credit": 100, "vix_ts": 100,
                    "yield_curve": None, "copper_gold": None})
-    assert c and c["score"] == 100.0 and c["missing"] == ["copper_gold", "yield_curve"]
+    # 100×(.3+.25+.2) + 50×(.15+.10) = 87.5（不再是重配權的 100）
+    assert c and abs(c["score"] - 87.5) < 0.05 and \
+        c["missing"] == ["copper_gold", "yield_curve"], c
     c = composite({"breadth": 80, "credit": 40, "vix_ts": 60,
                    "yield_curve": 50, "copper_gold": 50})
     # 0.3*80+0.25*40+0.2*60+0.15*50+0.1*50 = 24+10+12+7.5+5 = 58.5
     assert c and abs(c["score"] - 58.5) < 0.05, c
     assert composite({"breadth": 90, "credit": 90, "vix_ts": None,
                       "yield_curve": None, "copper_gold": None}) is None
-    print("✅ 2 composite 配權/缺席")
+    # F8 核心迴歸：悲觀成分（credit 40、vix 30）缺席時分數不得高於在場時
+    full = composite({"breadth": 80, "credit": 40, "vix_ts": 30,
+                      "yield_curve": 50, "copper_gold": 50})
+    part = composite({"breadth": 80, "credit": None, "vix_ts": None,
+                      "yield_curve": 50, "copper_gold": 50})
+    assert part["score"] - full["score"] < 12, (full, part)   # 中性填充：溫和收斂非翻多
+    print("✅ 2 composite 缺席補中性值")
 
     # 3) regime 門檻與遲滯
     assert to_regime(65)["regime"] == "risk_on"

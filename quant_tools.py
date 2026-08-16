@@ -147,10 +147,14 @@ def corr_guard(closes, held: list[str], cands: list[str],
     """
     Portfolio 層分散約束：進場候選 vs 現有持倉的日報酬平均相關性。
 
-    closes: 日收盤 DataFrame（欄=代碼）。回 {cand: {"avg_corr", "scale"}}：
-      平均相關 ≥ hi → scale 0（跳過進場）；≥ mid → 0.5（部位縮半）；否則 1.0。
+    closes: 日收盤 DataFrame（欄=代碼）。回 {cand: {"avg_corr", "max_corr", "scale"}}：
+      以 max(平均相關, 最大相關−0.05) 為有效相關——審查團 F7 實錘：純平均會被
+      其他低相關持倉稀釋（與某持倉 ρ=0.98 的攣生股被 4 檔平均成 0.28 全額放行，
+      而攣生股正是分散控制要擋的東西）。最大相關讓 0.05 是容忍單一巧合配對。
+      有效相關 ≥ hi → scale 0（跳過進場）；≥ mid → 0.5（縮半）；否則 1.0。
     資料不足（有效配對 < 1 或觀測 < min_obs）→ 不約束（scale 1.0, avg None）——
-    寧可放行也不因缺資料誤殺；「10 檔高相關 megacap ≈ 貼著大盤」正是本函數要擋的。
+    寧可放行也不因缺資料誤殺。注意 n=60 下門檻邊界的統計功效有限（約五成），
+    此為粗篩非精密儀器。
     """
     rets = closes.pct_change(fill_method=None)
     out = {}
@@ -165,11 +169,14 @@ def corr_guard(closes, held: list[str], cands: list[str],
                 if v == v:                      # NaN guard（常數序列）
                     cors.append(v)
         if not cors:
-            out[c] = {"avg_corr": None, "scale": 1.0}
+            out[c] = {"avg_corr": None, "max_corr": None, "scale": 1.0}
             continue
         avg = sum(cors) / len(cors)
-        scale = 0.0 if avg >= hi else (0.5 if avg >= mid else 1.0)
-        out[c] = {"avg_corr": round(avg, 3), "scale": scale}
+        mx = max(cors)
+        eff = max(avg, mx - 0.05)
+        scale = 0.0 if eff >= hi else (0.5 if eff >= mid else 1.0)
+        out[c] = {"avg_corr": round(avg, 3), "max_corr": round(mx, 3),
+                  "scale": scale}
     return out
 
 
@@ -216,6 +223,15 @@ if __name__ == "__main__":
     })
     g = corr_guard(df, held=["HELD1", "HELD2"], cands=["TWIN", "MIDC", "INDEP", "SHORTH"])
     assert g["TWIN"]["scale"] == 0.0 and g["TWIN"]["avg_corr"] > 0.9, g["TWIN"]
+    # F7 迴歸：攣生股不得被低相關持倉「平均稀釋」放行——加 3 檔獨立持倉後
+    # avg 被拉低，但 max-0.05 仍必須攔下 TWIN
+    df2 = df.copy()
+    for i in range(3):
+        df2[f"IND{i}"] = 100 * np.cumprod(1 + rng.normal(0, 0.01, 80))
+    g_dilute = corr_guard(df2, held=["HELD1", "HELD2", "IND0", "IND1", "IND2"],
+                          cands=["TWIN"])
+    assert g_dilute["TWIN"]["avg_corr"] < 0.6, g_dilute      # 平均確實被稀釋
+    assert g_dilute["TWIN"]["scale"] == 0.0, g_dilute        # 但 max 制照樣攔下
     assert g["MIDC"]["scale"] in (0.5, 1.0), g["MIDC"]        # 中相關 → 縮半或放行（種子相依）
     assert g["INDEP"]["scale"] == 1.0 and abs(g["INDEP"]["avg_corr"]) < 0.5, g["INDEP"]
     assert g["SHORTH"]["scale"] == 1.0 and g["SHORTH"]["avg_corr"] is None, g["SHORTH"]

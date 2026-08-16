@@ -7,6 +7,7 @@ Colab:  see RBS_Finance_Colab.ipynb (Cell 1-3: Drive, sync, launch)
 from __future__ import annotations
 
 import io
+import os
 import sys
 import zipfile
 from pathlib import Path
@@ -50,7 +51,8 @@ st.set_page_config(
 # 把 Streamlit Secrets 複製到環境變數，讓各模組用 os.environ 統一讀取
 import os as _os_boot
 for _k in ("FINNHUB_API_KEY", "FRED_API_KEY", "LLM_API_KEY", "LLM_BASE_URL",
-           "LLM_MODEL", "ALPACA_KEY_ID", "ALPACA_SECRET_KEY", "SEC_USER_AGENT"):
+           "LLM_MODEL", "ALPACA_KEY_ID", "ALPACA_SECRET_KEY", "SEC_USER_AGENT",
+           "STATE_ENC_KEY"):
     if not _os_boot.environ.get(_k):
         try:
             _v = st.secrets.get(_k)
@@ -1658,7 +1660,7 @@ def _assistant_fetch(tickers, intents, fred_key):
     if "macro" in intents and fred_key:
         try:
             import macro as _m
-            md = _m.fetch_macro(fred_key)
+            md = _cached_macro(fred_key)
             if md:
                 macro_data = {"summary": _m.macro_summary_text(md),
                               "signals": _m.macro_regime(md)["signals"]}
@@ -2056,7 +2058,7 @@ def page_ai_assistant():
                     if fred_key:
                         try:
                             import macro as _m
-                            _md = _m.fetch_macro(fred_key)
+                            _md = _cached_macro(fred_key)
                             if _md:
                                 macro_dom = _m.macro_summary_text(_md)
                             _rel = _m.fetch_release_calendar(fred_key, 7)
@@ -2125,9 +2127,10 @@ def page_ai_assistant():
                     # ③ 硬風控（確定性規則，LLM 不可推翻）
                     gfacts = {"regime_label": (regime_c or {}).get("label")}
                     try:
+                        import state_crypto as _sc2
                         _sf2 = Path("watchlist_state.json")
                         if _sf2.exists():
-                            _hh = [h for h in _json.loads(_sf2.read_text(encoding="utf-8"))
+                            _hh = [h for h in _sc2.read_state(_sf2)
                                    .get("reflections", {}).get("history", [])
                                    if h.get("hit") is not None][-20:]
                             if _hh:
@@ -2340,9 +2343,10 @@ def page_ai_assistant():
                         _save_cmt_log(log)
                 hist_all = list(log.get("reflections", {}).get("history", []))
                 try:
+                    import state_crypto as _sc3
                     _sf3 = Path("watchlist_state.json")
                     if _sf3.exists():
-                        hist_all += (_json2.loads(_sf3.read_text(encoding="utf-8"))
+                        hist_all += (_sc3.read_state(_sf3)
                                      .get("reflections", {}).get("history", []))
                 except Exception:
                     pass
@@ -2453,9 +2457,10 @@ def page_ai_assistant():
                         import json as _json
 
                         import reflection as _rfl
+                        import state_crypto as _sc
                         _sf = Path("watchlist_state.json")
                         if _sf.exists():
-                            _s_ref = _rfl.summary_text(_json.loads(_sf.read_text(encoding="utf-8")))
+                            _s_ref = _rfl.summary_text(_sc.read_state(_sf))
                             if _s_ref:
                                 context += f"\n\n【AI 判斷回顧】{_s_ref}"
                     except Exception:
@@ -2584,6 +2589,14 @@ def _cached_intraday(ticker: str, period: str, interval: str):
     import yfinance as yf
     return yf.download(ticker, period=period, interval=interval,
                        auto_adjust=True, progress=False)
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def _cached_macro(fred_key: str):
+    """FRED 總經（快取 15 分）。審查團 F18：先前唯一無快取的網路呼叫，
+    且在市場總覽主流程——設了 FRED key 後每次 rerun 都重打 ~6 支序列。"""
+    import macro as _m
+    return _m.fetch_macro(fred_key)
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
@@ -2845,7 +2858,10 @@ def page_market_overview():
     # ── Major indices ──────────────────────────────────────────────
     section("主要指數")
     index_items = [(n, v) for n, v in snapshot.items() if v["cat"] in ("index", "fear")]
-    cols_idx = st.columns(len(index_items))
+    if not index_items:
+        st.info("指數資料暫時無法取得")   # st.columns(0) 會 raise（審查團 F21）
+        index_items = []
+    cols_idx = st.columns(len(index_items)) if index_items else []
     for i, (name, data) in enumerate(index_items):
         with cols_idx[i]:
             chg = data["chg"]
@@ -2864,7 +2880,9 @@ def page_market_overview():
     # ── Macro: rates / commodities / FX ───────────────────────────
     section("宏觀指標")
     macro_items = [(n, v) for n, v in snapshot.items() if v["cat"] in ("rate", "commodity", "fx")]
-    cols_mac = st.columns(len(macro_items))
+    if not macro_items:
+        st.info("宏觀報價暫時無法取得")
+    cols_mac = st.columns(len(macro_items)) if macro_items else []
     for i, (name, data) in enumerate(macro_items):
         with cols_mac[i]:
             chg = data["chg"]
@@ -2924,7 +2942,7 @@ def page_market_overview():
         try:
             import macro as _macro
             with st.spinner("載入總經數據…"):
-                md = _macro.fetch_macro(fred_key)
+                md = _cached_macro(fred_key)
             st.session_state["macro_data"] = md
             order = ["fed_funds", "y10", "y2", "curve", "cpi", "unemploy"]
             items = ([(k, md[k]) for k in order if k in md and md[k].get("value") is not None]
@@ -3097,7 +3115,24 @@ def page_risk_management():
             st.error(f"資料載入失敗：{e}")
             return
 
-    w = pd.Series(ws, index=px_df.columns)
+    # 部分代碼抓取失敗時欄位數 < 權重數 → Series 建構 ValueError 整頁紅屏（審查團 F19）
+    if px_df is None or px_df.empty:
+        st.error("價格資料為空，請稍後重試或更換標的")
+        return
+    names = list(tickers)
+    if len(px_df.columns) != len(ws):
+        missing = [t for t in tickers if t not in px_df.columns]
+        st.warning(f"部分標的無資料已剔除：{', '.join(missing) or '?'}（改以等權重計算）")
+        kept = [t for t in tickers if t in px_df.columns]
+        if not kept:
+            st.error("所有標的皆無資料")
+            return
+        ws = np.repeat(1 / len(kept), len(kept))
+        px_df = px_df[kept]
+        names = kept
+
+    # 按名稱對齊（欄序可能與輸入序不同——位置對齊會錯配權重）
+    w = pd.Series(dict(zip(names, ws))).reindex(px_df.columns)
 
     tab1, tab2, tab3, tab4 = st.tabs([
         "📊 VaR / CVaR", "🔁 Kupiec 回測", "💥 壓力測試", "🔗 相關性分析",
@@ -4577,7 +4612,9 @@ def _cached_whale(cik: str, name: str):
 # 本地檔案活不久 → 有 GITHUB_TOKEN 時直接 commit 進 repo，跨重啟持久。
 _CMT_LOG_PATH = "committee_log.json"
 _GH_REPO = "RoyARVSA/RBS_claude_finance"
-_GH_BRANCH = "claude/optimize-analysis-dashboard-NZUKB"
+# 審查團 F20：先前寫死開發分支——委員會決策紀錄永遠 commit 到舊分支、
+# 讀取 404 靜默回空。改由 secrets/env 覆蓋，預設 main。
+_GH_BRANCH = os.environ.get("GH_STATE_BRANCH", "main")
 
 
 def _gh_token() -> str:
@@ -5329,9 +5366,13 @@ def page_alerts():
         # 投資論點檢視（Bot /thesis 管理；此處唯讀——state 由 bot workflow commit）
         with st.expander("📖 投資論點追蹤（Telegram `/thesis` 管理）", expanded=False):
             try:
-                import json as _json_th
-                _ths = (_json_th.load(open("watchlist_state.json"))
+                import state_crypto as _sc_th
+                _ths = (_sc_th.read_state("watchlist_state.json")
                         .get("theses") or {})
+                if _sc_th.is_enc(_ths):
+                    # bot 已加密但 Streamlit Secrets 未設 key 的過渡期（對抗驗證 Med-1）
+                    st.info("論點已加密——請在 Streamlit Secrets 設 STATE_ENC_KEY（與 GitHub 同值）")
+                    _ths = {}
             except Exception:
                 _ths = {}
             if not _ths:
@@ -5647,8 +5688,8 @@ def page_alerts():
             # Bot 用 /plantest apply 套用的校準會 commit 進 watchlist_state.json——網頁共用
             _tp_cal = None
             try:
-                import json as _json
-                _tp_cal = _json.load(open("watchlist_state.json")).get("plan_calib")
+                import state_crypto as _sc_tp
+                _tp_cal = _sc_tp.read_state("watchlist_state.json").get("plan_calib")
             except Exception:
                 pass
             with st.spinner(f"抓取 {min(len(tp_tickers), 10)} 檔盤中數據並計算…"):

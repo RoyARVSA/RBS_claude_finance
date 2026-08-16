@@ -205,11 +205,12 @@ def mc_portfolio_pnl(
         cov = ret.cov().values
     L = np.linalg.cholesky(cov + 1e-12 * np.eye(cov.shape[0]))
     z = rng.standard_normal((n, cov.shape[0]))
-    draws = (z @ L.T) + mu
-    d_ret = draws * np.sqrt(days)
+    # 審查團 F25：漂移按 days 線性放大、擴散按 √days——舊寫法 (shock+mu)×√days
+    # 讓 μ 錯按 √days 標度（days=1 無害、多日 VaR 有偏）；且算術報酬不再套 exp
+    d_ret = (z @ L.T) * np.sqrt(days) + mu * days
     port = d_ret @ weights.values
     current_value = float((px.iloc[-1] * weights).sum())
-    return current_value * (np.exp(port) - 1.0)
+    return current_value * port
 
 
 # ─────────────────── Backtesting ─────────────────────────────

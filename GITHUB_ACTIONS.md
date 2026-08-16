@@ -42,6 +42,7 @@
 | `SEC_USER_AGENT` | **建議** | SEC 內部人交易（Form 4）的 User-Agent。SEC 公平使用政策要求「`名字 email`」格式，**GitHub Actions 的雲端 IP 配預設 UA 容易被 SEC WAF 拒（403）→ 內部人資料靜默缺席**。設成如 `你的名字 your-email@example.com`（用你真實信箱）可解；免申請、只是自我識別 |
 | `ALPACA_KEY_ID` | 選填 | Alpaca **paper** trading key（模擬自動交易；**不設則不下單**） |
 | `ALPACA_SECRET_KEY` | 選填 | Alpaca paper secret |
+| `STATE_ENC_KEY` | **建議** | 敏感區塊加密金鑰（自訂任意長隨機字串）。設了之後，投資論點/帳戶淨值/引擎簿記/策略參數在 commit 前加密，公開 repo 只見密文。**須同步設進 Streamlit Secrets**（網頁端才能解讀）。⚠️ **key 遺失＝加密資料永久無法還原**；**換 key＝舊密文鎖死，輪替前務必先在舊 key 環境解密取回**（key 設定後解不開會發 TG 告警）。防瀏覽級保護（HMAC-SHA256 keystream），過去已 commit 的明文歷史仍在 git 內 |
 
 > 🤖 **Alpaca 模擬交易**：預設**關閉**，須 Telegram 傳 `/autotrade on` 才會下單，
 > 且僅在美股開盤時、由**分層交易引擎**（`trade_engine.py`，重製自 freqtrade / Lean /
