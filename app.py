@@ -1924,7 +1924,8 @@ def page_ai_assistant():
                         quant_c = None
                         if _ss is not None:
                             try:
-                                quant_c = _ss._composite_score(
+                                import indicators as _ind_c   # 公開面（審查團 F27）
+                                quant_c = _ind_c.composite_score(
                                     hist_c["Close"], hist_c.get("High"),
                                     hist_c.get("Low"), hist_c.get("Volume"))
                             except Exception:
@@ -5291,8 +5292,8 @@ def page_company_analysis():
                                   f"距52週高 {_rv(t9m.get('pct_from_52w_high'), 1)}　"
                                   f"vs MA200 {_rv(t9m.get('vs_ma200'), 1)}")
                         try:
-                            import scan_signals as _ss9
-                            q9 = _ss9._composite_score(hist9["Close"], hist9.get("High"),
+                            import indicators as _ind9        # 公開面（審查團 F27）
+                            q9 = _ind9.composite_score(hist9["Close"], hist9.get("High"),
                                                        hist9.get("Low"), hist9.get("Volume"))
                             if q9:
                                 _R.append(f"## 量化綜合評分\n- **{q9['score']:+.2f}**（{q9.get('rating', '')}）")

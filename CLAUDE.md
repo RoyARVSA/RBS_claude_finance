@@ -33,6 +33,7 @@ Streamlit 金融儀表板（`app.py`，13 頁）+ Telegram 訊號 Bot（`scan_si
 |---|---|
 | 網頁頁面/UI | `app.py`（~4300 行、會持續漂移，以 `wc -l` 為準；**不要整檔讀**。導航：Grep `def page_` 找頁面、`PAGES = {` 看路由、`def _cached_` 找快取層、`def _run_.*_tool` 找 AI 助理工具執行器）|
 | Bot 訊號/指令/晨報 | `scan_signals.py`（排程進入點；指令 dispatch 搜 `elif cmd ==`）；`bot_daemon.py` 重用其全部邏輯 |
+| 技術指標 / 綜合評分 | `indicators.py`（RSI/MACD/布林/ATR/評分 `composite_score`/部位提示/回測校準/掃描 `scan`——外部一律走公開名，scan_signals 內的底線名是 re-export 向後相容）|
 | 回測引擎 | `backtest.py`（triple-barrier / walk-forward / 參數最佳化）|
 | 部位與風險數學 | `quant_tools.py`（ATR/Kelly/風險平價）、`rbs_lib.py`（VaR/CVaR）|
 | 公司基本面 | `fundamentals.py`（主）+ `finnhub_data.py`（限流備援）|
