@@ -48,7 +48,8 @@ jobs:
                    tw_flows committee alpaca_trader stock_db trade_plan rebalance \
                    plan_backtest valuation sentiment_fg taifex thesis \
                    falsifier fund_eval trade_engine alpha_overlay market_weather \
-                   shadow_book behavior_check attribution state_crypto \
+                   shadow_book behavior_check attribution state_crypto net_guard \
+                   indicators \
                    earnings_review; do
             echo "── $m ──"
             python3 "$m.py"

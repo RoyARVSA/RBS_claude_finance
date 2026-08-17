@@ -204,6 +204,18 @@
 - **修法**：bot 文字一律**單星號**；網頁端要粗體再 `.replace("*","**")`（falsifier 的做法）。
   含底線的字串（罕見 ticker、URL）進 bot 訊息前先想一下。
 
+### D13. 開發分支別 commit state 檔——PR 必與 main 的 cron 寫入衝突
+- **症狀**：2026-08 使用者合併 PR 時 watchlist_state.json 滿版衝突標記
+  （分支帶舊明文 state、main 已是 cron 持續更新的加密 state）——紅隊
+  High-3 預言的「衝突標記進 state」場景，幸卡在 PR 介面未進 main。
+- **原因**：開發分支的 `git add -A` 習慣把測試副作用/同步殘留的 state 檔
+  掃進 commit；main 的 state 每 15 分鐘在動，PR 掛越久衝突越必然。
+- **修法**：(1) 開發分支 commit 前檢查 `git status` 裡的
+  watchlist_state.json / trade_journal.json，非刻意變更一律
+  `git checkout -- <檔>` 排除；(2) 已發生衝突時**一律取 main 版本**
+  （線上 cron 寫的才是真相，分支那份必是殘渣）：
+  `git checkout --theirs watchlist_state.json`（在分支 merge main 時）。
+
 ---
 
 ## E. 統計 / 回測

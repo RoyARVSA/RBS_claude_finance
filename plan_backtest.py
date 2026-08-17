@@ -284,27 +284,42 @@ _BASELINE = {"orb_minutes": ORB_MINUTES, "stop_atr_mult": STOP_ATR_MULT,
              "target_rr": TARGET_RR}
 
 
+VAL_MIN_TRADES = 10       # 挑選門檻：驗證段至少 N 筆（審查團：原 2 筆形同虛設）
+HOLDOUT_MIN_TRADES = 5    # 把關門檻：holdout 至少 N 筆才有資格推薦
+
+
 def _split_stats(trades: list[dict]) -> dict | None:
-    """依日期切 walk-forward（TRAIN_FRAC），回 train/val 統計；天數 <10 回 None。"""
+    """
+    依日期切三段：50% train（排序）/ 25% val（挑選）/ 25% holdout（最終把關）。
+    審查團演算法場次：舊兩段式用 val 同時「挑 best + 把關推薦」＝驗證段被
+    選擇污染——27 組網格下把關形同虛設。holdout 只在最後看一次。
+    天數 <20 回 None（三段各需最起碼樣本）。
+    """
     dated = sorted([t for t in trades if t.get("date")], key=lambda t: t["date"])
     days = sorted({t["date"] for t in dated})
-    if len(days) < 10:
+    if len(days) < 20:
         return None
-    split = days[max(1, int(len(days) * TRAIN_FRAC)) - 1]
-    return {"split": split, "sessions": len(days),
-            "train": _agg([t for t in dated if t["date"] <= split]),
-            "val": _agg([t for t in dated if t["date"] > split])}
+    i1 = max(1, int(len(days) * 0.5)) - 1
+    i2 = max(i1 + 1, int(len(days) * 0.75) - 1)
+    s1, s2 = days[i1], days[i2]
+    return {"split": s1, "split2": s2, "sessions": len(days),
+            "train": _agg([t for t in dated if t["date"] <= s1]),
+            "val": _agg([t for t in dated if s1 < t["date"] <= s2]),
+            "holdout": _agg([t for t in dated if t["date"] > s2])}
 
 
 def optimize(tickers: list[str], grid: dict | None = None,
              max_tickers: int = 8, data: dict | None = None) -> dict:
     """
     網格掃參數（ORB 分鐘 × 停損 ATR 倍數 × 目標 R:R），每組完整重放。
-    穩健挑選：訓練段 avg_R 排序（樣本 ≥ MIN_TRADES）→ 取第一個「驗證段也正期望」
-    的組合為 best；再與現行預設比驗證段——**沒有明確勝過預設就不推薦**
-    （recommend=None＝維持預設，避免為調而調的過擬合）。
+    三段式穩健挑選：train avg_R 排序 → 取第一個 val 合格者（n≥VAL_MIN_TRADES
+    且正期望）為 best → **holdout 只看一次做最終把關**（best 與 baseline 皆
+    n≥HOLDOUT_MIN_TRADES 時比 +0.05R，否則 best holdout 須為正）——沒過就
+    recommend=None＝維持預設（把關與挑選分離，切斷驗證段選擇污染）。
     回 {"results", "best", "baseline", "recommend", "n_tickers"}；
-    results 各項含 params/train/val/trades。
+    results 各項含 params/train/val/holdout/split/split2/trades。
+    注意：opt_text 顯示的 val 數字是 27 選 1 的優勝者統計，天然偏樂觀；
+    可信的是 holdout 欄。
     """
     from itertools import product
     grid = grid or GRID
@@ -334,35 +349,47 @@ def optimize(tickers: list[str], grid: dict | None = None,
     out["baseline"] = baseline
     eligible = [r for r in results if r["train"]["n"] >= MIN_TRADES]
     eligible.sort(key=lambda r: r["train"]["avg_r"], reverse=True)
+    # 挑選：train 排序 → val 篩（n ≥ VAL_MIN_TRADES 且正期望）。val 只做挑選。
     best = next((r for r in eligible
-                 if r["val"]["n"] >= max(2, MIN_TRADES // 2)
+                 if r["val"]["n"] >= VAL_MIN_TRADES
+                 and r["val"]["avg_r"] is not None
                  and r["val"]["avg_r"] > 0), None)
     out["best"] = best
     if best and best["params"] != (baseline or {}).get("params"):
-        base_val = (baseline or {}).get("val") or {}
-        # 推薦門檻：驗證段 avg_R 至少比預設好 0.05R（預設無資料時只要驗證為正）
-        if base_val.get("avg_r") is None or \
-           best["val"]["avg_r"] >= base_val["avg_r"] + 0.05:
-            out["recommend"] = best
+        # 把關：holdout 只在此看這一次（best 與 baseline 各一眼），
+        # 不參與挑選——選擇污染就是這樣切斷的
+        b_h = best.get("holdout") or {}
+        base_h = (baseline or {}).get("holdout") or {}
+        if b_h.get("n", 0) >= HOLDOUT_MIN_TRADES and b_h.get("avg_r") is not None:
+            # baseline 自己也要有足夠 holdout 樣本才配當 +0.05R 的比較基準——
+            # 1-4 筆的噪音基準雙向誤判（驗證回饋：爛運氣放水、好運氣誤擋）
+            if base_h.get("avg_r") is None or base_h.get("n", 0) < HOLDOUT_MIN_TRADES:
+                ok = b_h["avg_r"] > 0
+            else:
+                ok = b_h["avg_r"] >= base_h["avg_r"] + 0.05
+            if ok:
+                out["recommend"] = best
     return out
 
 
 def opt_text(opt: dict, top_n: int = 5) -> str:
     """尋優結果 → 文字（bot / 下載共用）。"""
     lines = [f"🔧 當日計畫參數尋優（{opt['n_tickers']} 檔、{len(opt['results'])} 組參數、"
-             "walk-forward 前 60% 訓練/後 40% 驗證）"]
+             "三段 walk-forward：50% 訓練/25% 驗證挑選/25% holdout 把關）"]
     if not opt["results"]:
-        lines.append("資料不足（需 ≥10 個交易日），未產生結果。")
+        lines.append("資料不足（三段切分需 ≥20 個交易日），未產生結果。")
         return "\n".join(lines)
 
     def _fmt(r):
         p = r["params"]
-        tr, va = r["train"], r["val"]
+        tr, va, ho = r["train"], r["val"], r.get("holdout") or {}
         return (f"ORB{p.get('orb_minutes', '?')}分/停損{p.get('stop_atr_mult', '?')}×ATR/"
                 f"目標{p.get('target_rr', '?')}R → 訓練 {tr['n']} 筆 "
                 f"{(tr['avg_r'] if tr['avg_r'] is not None else 0):+.2f}R｜"
                 f"驗證 {va['n']} 筆 "
-                f"{(va['avg_r'] if va['avg_r'] is not None else 0):+.2f}R")
+                f"{(va['avg_r'] if va['avg_r'] is not None else 0):+.2f}R｜"
+                f"holdout {ho.get('n', 0)} 筆 "
+                f"{(ho.get('avg_r') if ho.get('avg_r') is not None else 0):+.2f}R")
 
     if opt["baseline"]:
         lines.append(f"基準（現行預設）：{_fmt(opt['baseline'])}")
@@ -373,10 +400,10 @@ def opt_text(opt: dict, top_n: int = 5) -> str:
     if opt["recommend"]:
         p = {**_BASELINE, **opt["recommend"]["params"]}   # partial grid 用預設補齊
         lines.append(f"\n✅ 推薦：ORB {p['orb_minutes']} 分、停損 {p['stop_atr_mult']}×ATR、"
-                     f"目標 {p['target_rr']}R（驗證段明確勝過預設）")
+                     f"目標 {p['target_rr']}R（holdout 段明確勝過預設——把關與挑選分離）")
     else:
-        lines.append("\n➖ 無組合在驗證段明確勝過現行預設——維持預設（不為調而調）")
-    lines.append("\n⚠️ 歷史尋優極易過擬合；只信「訓練與驗證都好」的組合。非投資建議。")
+        lines.append("\n➖ 無組合通過 holdout 把關——維持預設（不為調而調）")
+    lines.append("\n⚠️ 歷史尋優極易過擬合；挑選用驗證段、把關用只看一次的 holdout。非投資建議。")
     return "\n".join(lines)
 
 
@@ -472,9 +499,10 @@ if __name__ == "__main__":
                              params={"target_rr": 0.5})
     assert rec1b and rec1b["exit_kind"] == "target" and rec1b["r"] > 0, rec1b
 
-    # 參數尋優（注入 12 個合成上漲日；離線）
+    # 參數尋優（注入 44 個合成上漲日；離線）——三段切分需 ≥20 天，
+    # 且 val 挑選門檻 n≥10（50/25/25 切 44 天 → val ~11 筆）
     sessions = []
-    for k in range(12):
+    for k in range(44):
         dk = str((daily.index[-1] + pd.Timedelta(days=k + 1)).date())
         sessions.append(_sess(dk, path))
     data_syn = {"SYN": {"bars": pd.concat(sessions), "daily": daily}}
@@ -482,11 +510,18 @@ if __name__ == "__main__":
     assert len(opt["results"]) == 2 and opt["best"] is not None, opt["results"]
     assert opt["baseline"] is not None            # 預設 2.0R 不在 grid → 另行計算
     assert opt["baseline"]["params"]["target_rr"] == 2.0
+    # 三段結構齊備且 val 通過新門檻
+    assert opt["best"]["holdout"]["n"] >= HOLDOUT_MIN_TRADES
+    assert opt["best"]["val"]["n"] >= VAL_MIN_TRADES
     ot = opt_text(opt)
-    assert ("推薦" in ot or "維持預設" in ot) and "過擬合" in ot
+    assert ("推薦" in ot or "維持預設" in ot) and "過擬合" in ot and "holdout" in ot
+    # 三段污染防護迴歸：val 樣本不足（12 天 < 20 天門檻）→ 無結果不硬推
+    short_syn = {"SYN": {"bars": pd.concat(sessions[:12]), "daily": daily}}
+    opt_s = optimize(["SYN"], grid={"target_rr": (0.5, 8.0)}, data=short_syn)
+    assert opt_s["results"] == [] and opt_s["recommend"] is None
     # run() 可注入 data + params（免網路）
     agg_i, cal_i, tr_i = run(["SYN"], data=data_syn, params={"target_rr": 0.5})
-    assert agg_i["overall"]["n"] == 12 and agg_i["overall"]["win_rate"] == 1.0, agg_i
+    assert agg_i["overall"]["n"] == 44 and agg_i["overall"]["win_rate"] == 1.0, agg_i
 
     print("✅ plan_backtest 離線自我測試通過"
           f"（情境1 {rec1['exit_kind']} {rec1['r']:+.2f}R、情境2 {rec2['r']:+.2f}R）")

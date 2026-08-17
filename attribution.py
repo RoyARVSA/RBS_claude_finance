@@ -92,11 +92,54 @@ def _group(rows: list[dict], key: str) -> dict:
     return out
 
 
+def benchmark_stats(rows: list[dict], bench) -> dict | None:
+    """
+    已實現配對 vs 基準（同持有期 SPY 報酬）——回答「賺的是 α 還是 β」
+    （財金審查缺失 #2）。bench: pd.Series（日收盤）。
+      excess = 配對報酬 − 基準同期報酬
+      β = cov(配對, 基準同期)/var(基準同期)；α = 每筆平均超額（β 調整後截距）
+      IR = mean(excess)/std(excess)——**per-trade 口徑，非年化**（不定期樣本，
+           年化會假精確）
+    樣本 < 5 回 None。
+    """
+    try:
+        bench = bench.dropna()          # NaN 會穿過 not b0 檢查毒化 avg_excess
+    except Exception:
+        pass
+    pts = []
+    for r in rows:
+        if not r.get("buy_day") or not r.get("sell_day"):
+            continue                    # _px_on(s, None) 的 loc[:NaT] 會回整條序列
+        b0 = _px_on(bench, r["buy_day"])
+        b1 = _px_on(bench, r["sell_day"])
+        if not b0 or not b1 or b0 <= 0 or b0 != b0 or (b1 is not None and b1 != b1):
+            continue
+        pts.append((r["ret"], b1 / b0 - 1))
+    if len(pts) < 5:
+        return None
+    rets = [p[0] for p in pts]
+    brets = [p[1] for p in pts]
+    n = len(pts)
+    exc = [a - b for a, b in zip(rets, brets)]
+    mr, mb = sum(rets) / n, sum(brets) / n
+    var_b = sum((b - mb) ** 2 for b in brets) / n
+    beta = (sum((r - mr) * (b - mb) for r, b in pts) / n / var_b) \
+        if var_b > 1e-12 else None
+    alpha = (mr - beta * mb) if beta is not None else None
+    me = sum(exc) / n
+    sd = (sum((e - me) ** 2 for e in exc) / n) ** 0.5
+    ir = me / sd if sd > 1e-12 else None
+    return {"n": n, "avg_excess": me,
+            "beat_rate": sum(1 for e in exc if e > 0) / n,
+            "beta": beta, "alpha_per_trade": alpha, "ir": ir}
+
+
 def attribution(journal: list, closes: dict,
-                broker_qty: dict | None = None) -> dict | None:
+                broker_qty: dict | None = None, bench=None) -> dict | None:
     """
     總入口（純函數）。回 {realized_by_exit, realized_by_entry, open_by_entry,
-    totals, n_pairs, n_approx} 或 None（無可計算配對）。
+    totals, n_pairs, n_approx, bench} 或 None（無可計算配對）。
+    bench：基準日收盤 Series（如 SPY）→ 附相對基準歸因（α/β/IR）。
     """
     closes = _normalize_tz(closes)     # 防護放純函數入口——呼叫端繞不過（451e51b 同坑）
     pairs, open_lots = _fifo_state(journal)
@@ -132,6 +175,7 @@ def attribution(journal: list, closes: dict,
                    "n_open_lots": len(open_rows)},
         "n_pairs": len(rows),
         "n_approx": sum(1 for r in rows if r["approx"]) + open_approx,
+        "bench": benchmark_stats(rows, bench) if bench is not None else None,
     }
 
 
@@ -172,6 +216,22 @@ def attrib_text(r: dict | None, fwd: dict | None = None) -> str:
                          f"｜{g['n']} 筆{small}｜勝率 {g['win_rate']:.0%}"
                          f"｜均 {g['avg_ret']:+.1%}")
 
+    b = r.get("bench")
+    if b:
+        lines.append("")
+        lines.append("*相對基準*（SPY 同持有期——賺的是 α 還是 β）：")
+        lines.append(f"・超額報酬 均 {b['avg_excess']:+.1%}"
+                     f"｜勝過大盤 {b['beat_rate']:.0%}（n={b['n']}）")
+        seg = []
+        if b.get("beta") is not None:
+            seg.append(f"β {b['beta']:.2f}")
+        if b.get("alpha_per_trade") is not None:
+            seg.append(f"每筆 α {b['alpha_per_trade']:+.1%}")
+        if b.get("ir") is not None:
+            seg.append(f"IR {b['ir']:.2f}")
+        if seg:
+            lines.append("・" + "｜".join(seg) + "（per-trade 口徑，非年化）")
+
     if r["open_by_entry"]:
         lines.append("")
         lines.append("*持有中*（未實現，最新收盤 mark）：")
@@ -195,7 +255,8 @@ def run_attrib(journal_path) -> str:
     if not subs:
         return "🧾 交易日誌是空的——開 /autotrade on 累積紀錄後再來"
     syms = sorted({e.get("symbol") for e in subs if e.get("symbol")})
-    closes = _normalize_tz(fetch_closes(syms))    # exit_quality 也吃這份，必須先正規化
+    # 連 SPY 一起抓（相對基準歸因用；SPY 本身也可能是持倉標的，留在 closes 內）
+    closes = _normalize_tz(fetch_closes(sorted(set(syms) | {"SPY"})))
     if not closes:
         return "❌ 行情抓取失敗，稍後再試"
 
@@ -216,7 +277,7 @@ def run_attrib(journal_path) -> str:
     except Exception:
         pass
 
-    r = attribution(journal, closes, broker_qty)
+    r = attribution(journal, closes, broker_qty, bench=closes.get("SPY"))
     fwd = exit_quality(journal, closes)
     return attrib_text(r, fwd)
 
@@ -299,6 +360,22 @@ if __name__ == "__main__":
     r6b = attribution(j6, closes, broker_qty={"UP": None})
     assert r6b and r6b["totals"]["n_open_lots"] == 1, r6b   # 不對帳 → 保留
     print("✅ 6 負價防護 + broker None fail-open")
+
+    # 7) 相對基準歸因：UP 跑贏慢漲基準 → 超額為正、β 有值、IR 有值；樣本<5 → None
+    bench = pd.Series(np.linspace(100, 112, 100), index=idx)     # 慢漲 12%
+    jb = [J(d[10 + i * 8], "UP", "buy", 10, "entry", None) for i in range(6)] + \
+         [J(d[14 + i * 8], "UP", "sell", 10, "signal_exit", None) for i in range(6)]
+    rb = attribution(jb, {"UP": up}, bench=bench)
+    bs = rb["bench"]
+    assert bs and bs["n"] == 6, bs
+    assert bs["avg_excess"] > 0 and bs["beat_rate"] == 1.0, bs   # UP 斜率遠勝基準
+    assert bs["beta"] is not None and bs["ir"] is not None and bs["ir"] > 0, bs
+    assert benchmark_stats([], bench) is None                     # 樣本不足
+    txt_b = attrib_text(rb)
+    assert "相對基準" in txt_b and "α" in txt_b and "_" not in txt_b, txt_b
+    r_nb = attribution(jb, {"UP": up})                            # 無基準 → 無此段
+    assert r_nb["bench"] is None and "相對基準" not in attrib_text(r_nb)
+    print("✅ 7 相對基準歸因（α/β/IR + 無基準降級）")
     print()
     print(txt)
     print("\nattribution selftest OK ✅")

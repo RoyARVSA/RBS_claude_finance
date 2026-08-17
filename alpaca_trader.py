@@ -63,6 +63,31 @@ def _load_journal2(path) -> tuple[list, bool]:
         return [], False
 
 
+def migrate_journal_encryption(path) -> bool:
+    """明文 journal + 已設 STATE_ENC_KEY → 就地轉密文（每輪呼叫，冪等）。
+    沒這個的話，加密只在下一筆交易的 append 才發生——明文會一直躺到那時。"""
+    import json
+    from pathlib import Path
+    p = Path(path)
+    if not p.exists():
+        return False
+    try:
+        import state_crypto as sc
+        key = sc.get_key()
+        if not key:
+            return False
+        data = json.loads(p.read_text(encoding="utf-8"))
+        if not isinstance(data, list):
+            return False                      # 已加密或壞檔——不動
+        p.write_text(json.dumps(sc.encrypt_block(data, key),
+                                ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"journal: 已就地加密（{len(data)} 筆）")
+        return True
+    except Exception as e:
+        print(f"journal 加密遷移失敗（不影響運作）: {e}")
+        return False
+
+
 def append_journal(path, entries: list[dict], cap: int = JOURNAL_CAP) -> None:
     """把新紀錄附加到日誌，保留最近 cap 筆後寫回。entries 為 dict list。
     設了 STATE_ENC_KEY 就整檔加密落地；檔案是解不開的密文時**拒寫**

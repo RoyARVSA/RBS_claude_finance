@@ -12,6 +12,14 @@ from __future__ import annotations
 
 import numpy as np
 
+try:                                     # 慢源熔斷（B10 家族防護；缺模組時無害退化）
+    from net_guard import guarded as _guarded
+except ImportError:
+    def _guarded(key, budget_s=20.0, fallback=None):
+        def deco(fn):
+            return fn
+        return deco
+
 
 def _clamp(x, lo=-1.0, hi=1.0):
     return max(lo, min(hi, x))
@@ -250,6 +258,7 @@ def _fetch_cboe(ticker: str) -> dict | None:
 
 # ── 抓取層（需網路；此環境代理擋 yfinance，部署後實測）────────────────────────
 
+@_guarded("yahoo_options", budget_s=25.0, fallback=None)
 def fetch_options(ticker: str, max_expiries: int = 3, within_days: int = 45) -> dict | None:
     """
     抓 yfinance 選擇權鏈：取 within_days 內最多 max_expiries 個到期日。

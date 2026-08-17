@@ -29,11 +29,11 @@
 
 ## 📋 第二層：短期 backlog（1-4 週內，依價值排序）
 
-1. **plan_backtest.optimize 加第三段 hold-out**（演算法：驗證段被選擇污染；val n≥10 才准推薦）
-2. **健康度回報**：state 加 health 區塊、晨報尾附「🩺 昨日 N 輪·最慢 Xs·最大間隔 Ym」（維運，~40 行）
-3. **熔斷器 decorator 化**，掛 options_sentiment、short_data（維運：各有最壞 ~4 分鐘拖速面）
+1. ~~plan_backtest.optimize 加第三段 hold-out~~ ✅ 2026-08-17（50/25/25，val n≥10 挑選、holdout 只看一次把關）
+2. ~~健康度回報~~ ✅ 2026-08-17（晨報 🩺 行；含對抗驗證修復的隔夜誤報防護）
+3. ~~熔斷器 decorator 化~~ ✅ 2026-08-17（net_guard 掛 options/short；daemon 15 分重置）
 4. **indicators.py 抽取 + scan_signals --offline 自測**（架構師：評分心臟 3120 行零斷言、app.py 偷用私有函數——同一個 PR 解決）
-5. **attribution 加 β/資訊比率歸因**（財金：回答「α 還是 β」——Shadow 月底覆盤前做好最有價值）
+5. ~~attribution 加 β/資訊比率歸因~~ ✅ 2026-08-17（SPY 同持有期超額/β/per-trade IR，/attrib 新段）
 6. **信用利差改 FRED OAS**（BAMLH0A0HYM2）：HYG/LQD 有 duration 混淆，2022 式升息會誤報（財金）
 7. WACC 權重改總債務；終端年 CapEx 收斂至 D&A；comps 改 football field 區間（財金三項慣例修正）
 8. 低頻資料 persist="disk"（網頁：bot push 每 15 分重啟 Streamlit，記憶體快取形同虛設）

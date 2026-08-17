@@ -1922,9 +1922,10 @@ def page_ai_assistant():
                         if tech_c.get("ann_vol") is not None:
                             vol_worst = max(vol_worst or 0, tech_c["ann_vol"])
                         quant_c = None
-                        if _ss is not None:
+                        if True:   # 評分已走 indicators，不再受 _ss 存活與否牽連
                             try:
-                                quant_c = _ss._composite_score(
+                                import indicators as _ind_c   # 公開面（審查團 F27）
+                                quant_c = _ind_c.composite_score(
                                     hist_c["Close"], hist_c.get("High"),
                                     hist_c.get("Low"), hist_c.get("Volume"))
                             except Exception:
@@ -5291,8 +5292,8 @@ def page_company_analysis():
                                   f"距52週高 {_rv(t9m.get('pct_from_52w_high'), 1)}　"
                                   f"vs MA200 {_rv(t9m.get('vs_ma200'), 1)}")
                         try:
-                            import scan_signals as _ss9
-                            q9 = _ss9._composite_score(hist9["Close"], hist9.get("High"),
+                            import indicators as _ind9        # 公開面（審查團 F27）
+                            q9 = _ind9.composite_score(hist9["Close"], hist9.get("High"),
                                                        hist9.get("Low"), hist9.get("Volume"))
                             if q9:
                                 _R.append(f"## 量化綜合評分\n- **{q9['score']:+.2f}**（{q9.get('rating', '')}）")
@@ -5798,7 +5799,7 @@ def page_alerts():
                            f"{p_['stop_atr_mult']}×ATR、目標 {p_['target_rr']}R——"
                            "Telegram 傳 `/plantest opt apply` 套用")
             else:
-                st.info("➖ 無組合在驗證段明確勝過現行預設——維持預設（不為調而調）")
+                st.info("➖ 無組合通過 holdout 把關——維持預設（不為調而調）")
             with st.expander("完整尋優報告", expanded=False):
                 st.text(pbt_o2.opt_text(_opt, top_n=8))
 
