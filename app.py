@@ -1922,7 +1922,7 @@ def page_ai_assistant():
                         if tech_c.get("ann_vol") is not None:
                             vol_worst = max(vol_worst or 0, tech_c["ann_vol"])
                         quant_c = None
-                        if _ss is not None:
+                        if True:   # 評分已走 indicators，不再受 _ss 存活與否牽連
                             try:
                                 import indicators as _ind_c   # 公開面（審查團 F27）
                                 quant_c = _ind_c.composite_score(

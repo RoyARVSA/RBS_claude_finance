@@ -618,11 +618,16 @@ if __name__ == "__main__":
     assert _position_hint(s_up, hi_u, lo_u, 0.0, {}) is None
     print("✅ 5 部位提示")
 
-    # 6) 回測校準：合成資料出勝率結構、鍵齊全
+    # 6) 回測校準：鍵名與乘數範圍契約（不只「非空」）
     df = pd.DataFrame({"Close": s_up, "High": hi_u, "Low": lo_u, "Volume": v_up})
     cal = calibrate_ticker(df)
     assert isinstance(cal, dict) and cal, cal
-    print("✅ 6 calibrate_ticker 契約")
+    for _k, _v in cal.items():
+        assert isinstance(_k, str), cal
+        _m = _v.get("mult") if isinstance(_v, dict) else _v
+        if isinstance(_m, (int, float)):
+            assert 0 <= _m <= 5, (_k, _m)     # 校準乘數不得出現負值/爆表
+    print("✅ 6 calibrate_ticker 契約（鍵名+乘數範圍）")
 
     # 7) 短序列/垃圾輸入不炸
     tiny, tv = _mk([100, 101, 99, 102, 98])
