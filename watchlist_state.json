@@ -20,34 +20,10 @@
     "DRAM"
   ],
   "thresholds": {
-    "rsi_oversold": 35.0,
-    "rsi_overbought": 68.0,
-    "price_change_pct": 3.0,
-    "macd_enabled": true,
-    "bb_enabled": true,
-    "atr_enabled": true,
-    "vol_spike_ratio": 2.0,
-    "scan_market_only": true,
-    "cooldown_enabled": true,
-    "cooldown_hours": 6.0,
-    "regime_filter_enabled": true,
-    "position_sizing_enabled": true,
-    "account_size": 100000.0,
-    "risk_pct": 0.01,
-    "atr_mult": 1.5,
-    "briefing_enabled": true,
-    "briefing_hour_et": 8.5,
-    "mtf_enabled": true,
-    "earnings_alert_days": 5.0,
-    "autotrade_enabled": true,
-    "at_buy_threshold": 0.5,
-    "at_exit_threshold": -0.2,
-    "at_max_positions": 10.0,
-    "at_max_position_pct": 0.15,
-    "corr_hi": 0.85,
-    "corr_mid": 0.75,
-    "weekly_enabled": true,
-    "plan_autocal_enabled": true
+    "__enc__": "v1",
+    "nonce": "BzfVpxfDO0CnYMBBGFP8/Q==",
+    "data": "lp7+0x360LO8hNulEHO3XXUooJChuHuSXd4/lUzfqqHt8PUMMRO/hPZSziDlllHogtzb2oVmeGqeKuRMwJ6xRbq9q6rSecRAmYSbJv5cTj5DyBU2pd2XooST9DPe8jizhs/Kn0cn1hlGKAufytHBpO9L4VtiJUX/r7z7Nk6cnDKKloamlpzIB4rrE2FqNL+H/srXpLrJuvgEA1eaibpG8m2cU7f8iLB1gxw04+WsJrMAWgvIr53dNhHy/XMVFtzcMtcYbsJVmkTMy0SVWWgGeFCtCQX+rnsBGTJtYIbVwSafljVCK0hTw2/Zg0o/zNv9w4DKWWvYk51GiIEgbLIapL+W2UGxjEe28lL8mYduAtNfoaPrtrtdqRiWOvIYTzhVRMgcWpq29Cy/Pnp95CfNrGR+wY6B8MY9yQDB9Gb4cG/sX0oDKwM9IHgkNUH0qsWfFkGwUNOb350ctLlZ8w6Yw5XXMvY53xPbaQDAR9qAkolsypJxLmb2oRRXjyugJPlIVMPf+bACOjVfwkgsxJlq/Qno8H0NhhsbFWasgF2XDrQfpUOFJ+qNj/gNzHcZnF9MMAnZUuZuN0XyA8MyP0IzcUCS5t/+0ftFVmBsXCogLO0Ee40Y61lTsWEunRZbnxRRkhaLiyBgNtV7b0pY6w38psJaXuZRfu5wkhLP8Tsa75nrOIcyAZZzOFsiK1fcMg3oEYacwRBPVj2NUjh2303rWyA4/Mrf69Zxkt+yB3FK09EefF0GjHsXpJgyaOw3DZZQI59p7tjvx6ob0TtJt1+aFOBCGWXy0BQ7a9K4DQLp9915PMtbksp8oDGlktpdpFfk81h2LpuLnKRmDSH8foHHeMaA0Nc9k7kgv+hNCu4R7QxJArFd+i+9UMXk4rOmGKPiPFc1lcEgcq7d",
+    "tag": "62f95f9f370d451dc098cca9deb30c728c911363253bbd390f0cbd0df0c4b2ff"
   },
   "last_update_id": 280895080,
   "last_scan_time": "2026-08-14 19:35 UTC",
@@ -127,154 +103,49 @@
     }
   },
   "calibration": {
-    "AAPL": {
-      "rsi": 1.059,
-      "bollinger": 1.044,
-      "trend": 1.012,
-      "macd": 0.99
-    },
-    "MSFT": {
-      "rsi": 1.098,
-      "trend": 0.975,
-      "bollinger": 0.987,
-      "macd": 0.976
-    },
-    "NVDA": {
-      "bollinger": 1.058,
-      "macd": 1.0,
-      "rsi": 0.978,
-      "trend": 0.964
-    },
-    "GOOGL": {
-      "rsi": 1.001,
-      "bollinger": 1.057,
-      "macd": 1.035,
-      "trend": 0.991
-    },
-    "AMZN": {
-      "trend": 1.087,
-      "rsi": 1.104,
-      "macd": 1.076,
-      "bollinger": 1.004
-    },
-    "TSLA": {
-      "macd": 1.07,
-      "rsi": 1.0,
-      "bollinger": 0.99,
-      "trend": 0.992
-    },
-    "META": {
-      "macd": 1.067,
-      "bollinger": 1.021,
-      "rsi": 1.0,
-      "trend": 0.989
-    },
-    "AMD": {
-      "bollinger": 1.048,
-      "macd": 0.987,
-      "rsi": 0.973,
-      "trend": 0.988
-    },
-    "JPM": {
-      "bollinger": 1.409,
-      "trend": 1.1,
-      "macd": 1.171,
-      "rsi": 1.037
-    },
-    "SPY": {
-      "bollinger": 1.278,
-      "macd": 0.954,
-      "rsi": 0.991,
-      "trend": 1.0
-    },
-    "QQQ": {
-      "bollinger": 1.048,
-      "macd": 0.971,
-      "rsi": 1.0,
-      "trend": 0.998
-    },
-    "PLTR": {
-      "bollinger": 1.25,
-      "macd": 1.031,
-      "trend": 0.988,
-      "rsi": 0.991
-    },
-    "COIN": {
-      "macd": 1.05,
-      "rsi": 0.999,
-      "bollinger": 0.985,
-      "trend": 1.0
-    },
-    "TSM": {
-      "macd": 1.0,
-      "bollinger": 0.971,
-      "rsi": 1.0,
-      "trend": 1.0
-    },
-    "ARKK": {
-      "rsi": 1.083,
-      "macd": 0.977,
-      "bollinger": 0.977,
-      "trend": 0.99
-    },
-    "VRT": {
-      "bollinger": 1.196,
-      "macd": 0.977,
-      "trend": 0.992,
-      "rsi": 0.965
-    },
-    "GLD": {
-      "macd": 1.079,
-      "bollinger": 1.239,
-      "trend": 1.007,
-      "rsi": 1.0
-    },
-    "DRAM": {
-      "rsi": 1.0,
-      "macd": 1.0,
-      "trend": 1.0,
-      "bollinger": 1.0
-    },
-    "_updated": "2026-08-11T15:40:20.574764+00:00"
+    "__enc__": "v1",
+    "nonce": "xCTf21qZQbxpwllS/VM7Qg==",
+    "data": "8jOheZUy2un4sMsKiOr9xVBOCuvg/1SqheaEYFLS06c8thlfbAzN0iguYOomZEwruZtHVFKTXzanfti+FyWUWO+YToWPUPyisdoFvoNNeHexZe2ymp/6YFheTKLFNbNCuIHY2//kLgo+xWd0YrVBFWqxQV/tEK/lLCDLI7HGBj3CyUYhSO+E/dKzvD14vK53mK+1YTMYap4TsGCnUImTw7yMevYJyIwKgGVVP/0bUlwxNuy7rMzJHZZA8JHOJsxf7qo2PvBi4gw1tIASW6ypjmjjmLxFUVEXrGBiaZ1KUJ4ZV3JyW074epX2xRLEQn+SsVS2tu5/NOw1l6FVv+RVG7ezTEnsSizT4BHMf2d0HSfln1fgR0unmdz4ouTjGVgl/19OL3cob8UJ+FLsRhojRrvBGVyDC+Ilxt58kSav9MWOtMxNqVqpVW1btHO7vZW9gTS6vbEWFf4HM6RaNSyjeys1ush7mrAWEQTPgAk7VNFSMEllOcsyFFkJHY2KsFoUOxUcmDKFqq9NH9bIDC9qN6VFDSd2mHvJ4LjoYAQPFqqYuMDXJCiO1p5HMd/9Bs4ReNUQ6CuvtKY/WiyEJtLXJ2KvplrnYZHbk6YgCIEMxWcBjKN7MahrEBoz2JHFsqqgFnxJXmqh8WjUz2oM7tH54k2FS8LD1IMN2qL9d6HLWNczuo8PDBKrWs23YZlxUoK46uYlFIUC9flv4+sFVUz6Ht0Wvj1GEOlJOl3yo0kCpnD/Uah9eELjLlzCXfIVS2CeYW7EuTV8epvcMN6Y9IniKOcZ3uA2jPivUQGHW186Ro1QHRXRlcCSM7wQPlwuLlUHmYtYyxTGPPPjkD8Ew0Mx013bYawr+Nb+ZGHr58LZIB4jnNNhS4J0OpdvNEr4Lgs5ncTGEGPM33EaOYpktgRIIqSfWEEebaE+8il+XxjitWYFIPgrZTBNsisHMBCQW2bGeX2BQhRHP2wJgV0J9TahT3oK/vDZ7rCE+xjoZVram8U3FvcmYCEZGDITS6Q57WnTlJG1xW0JYbDl81qpiZ7R4CrKT0JCq2ymynTEh4q9SWKW6jZlsBEHxexAF53z2iUlb3bkkoA0tTv6+SciHZQCO5JIFAQi6u+pmc4aherJ8Z9Dlb/5mAGoTZcWrrX2EN+oxNoqsZs51QGt2TZdyA5Hno+/+TcJKXLuJx5NWx7CzX+XEGH4YmKb8H+/mNVEENydRCI7OhhPp6LMrURlAupFPXVhq0QEElSy/IPaAbqN8kbOlUC0plAPEPsAAIwJ0E+8+0294wZk2iDiAEPbs/I95RgN6BRqA8Mddy4834B4oT/4pYfJQYtZlyhINbJUqThS/HdtzEHu8um+eQlf9fpFeDTiz0xgNbqM5hpKIEVlKxpnUWkIBbOP2ulqRUeR/aWGHzq9Nwwmu6dsLBCAj5dwKGpEi4vTQ5//n5iYyiRcyOtC4wXxconlRbb7AwmrhZPQASdhcF7vI4iEaETxsOn8jgmene6LEEmoAdFY7cdUMr/AKiCrvhvibeF2946D9MAqxG6PZnnTVOB4ITSnwu/zg4Hx0e2WysPqIQ6ij6OAZ0al7aP6DCJmtKpIVDur9T+8KnOnDYM9gfdpiwVCCsJ9a4Vcp3/gNYs7g7C01ycV5yvIaGu1ImkhE7AQU8tQ3GlKPY//7UMzwFxdcVKXxjWVcrxH3awE5ZW7+sbuAw0QrXwBSl/l3A6f1k0XAiSJU6s1SaLBzS0us6+LdXX2x+Uivo9NR/kS/BpWzTjtqBcHnV/3expJIdUD46HbYueHIGI59CxZ9eHcmclcubsI",
+    "tag": "87ccea56d7a4d9f1b4ef360e6d20ec8ae08581531006b30c92bbbb3890924976"
   },
   "fund_cache": {},
   "last_briefing_date": "2026-08-14",
   "earnings_cache": {
     "AAPL": {
       "checked": "2026-08-16",
-      "earnings": null
+      "earnings": "2026-10-29"
     },
     "MSFT": {
       "checked": "2026-08-16",
-      "earnings": null
+      "earnings": "2026-10-28"
     },
     "NVDA": {
       "checked": "2026-08-16",
-      "earnings": null
+      "earnings": "2026-08-26"
     },
     "GOOGL": {
       "checked": "2026-08-16",
-      "earnings": null
+      "earnings": "2026-10-28"
     },
     "AMZN": {
       "checked": "2026-08-16",
-      "earnings": null
+      "earnings": "2026-10-29"
     },
     "TSLA": {
       "checked": "2026-08-16",
-      "earnings": null
+      "earnings": "2026-10-21"
     },
     "META": {
       "checked": "2026-08-16",
-      "earnings": null
+      "earnings": "2026-10-28"
     },
     "AMD": {
       "checked": "2026-08-16",
-      "earnings": null
+      "earnings": "2026-11-03"
     },
     "JPM": {
       "checked": "2026-08-16",
-      "earnings": null
+      "earnings": "2026-10-13"
     },
     "SPY": {
       "checked": "2026-08-16",
@@ -286,15 +157,15 @@
     },
     "PLTR": {
       "checked": "2026-08-16",
-      "earnings": null
+      "earnings": "2026-11-02"
     },
     "COIN": {
       "checked": "2026-08-16",
-      "earnings": null
+      "earnings": "2026-10-29"
     },
     "TSM": {
       "checked": "2026-08-16",
-      "earnings": null
+      "earnings": "2026-10-15"
     },
     "ARKK": {
       "checked": "2026-08-16",
@@ -302,7 +173,7 @@
     },
     "VRT": {
       "checked": "2026-08-16",
-      "earnings": null
+      "earnings": "2026-10-21"
     },
     "GLD": {
       "checked": "2026-08-16",
@@ -314,786 +185,24 @@
     }
   },
   "reflections": {
-    "pending": [
-      {
-        "ticker": "AMZN",
-        "score": 0.89,
-        "price": 275.7,
-        "date": "2026-08-10",
-        "source": "quant"
-      },
-      {
-        "ticker": "MSFT",
-        "score": 0.76,
-        "price": 504.74,
-        "date": "2026-08-10",
-        "source": "quant"
-      },
-      {
-        "ticker": "PLTR",
-        "score": 0.71,
-        "price": 174.7,
-        "date": "2026-08-10",
-        "source": "quant"
-      },
-      {
-        "ticker": "NVDA",
-        "score": 0.73,
-        "price": 220.4,
-        "date": "2026-08-10",
-        "source": "quant"
-      },
-      {
-        "ticker": "AMZN",
-        "score": 0.87,
-        "price": 274.94,
-        "date": "2026-08-11",
-        "source": "quant"
-      },
-      {
-        "ticker": "NVDA",
-        "score": 0.8,
-        "price": 220.8,
-        "date": "2026-08-11",
-        "source": "quant"
-      },
-      {
-        "ticker": "MSFT",
-        "score": 0.8,
-        "price": 503.01,
-        "date": "2026-08-11",
-        "source": "quant"
-      },
-      {
-        "ticker": "MSFT",
-        "score": 0.84,
-        "price": 493.23,
-        "date": "2026-08-12",
-        "source": "quant"
-      },
-      {
-        "ticker": "PLTR",
-        "score": 0.83,
-        "price": 170.63,
-        "date": "2026-08-12",
-        "source": "quant"
-      },
-      {
-        "ticker": "AMZN",
-        "score": 0.82,
-        "price": 269.66,
-        "date": "2026-08-12",
-        "source": "quant"
-      },
-      {
-        "ticker": "META",
-        "score": -0.79,
-        "price": 579.82,
-        "date": "2026-08-12",
-        "source": "quant"
-      },
-      {
-        "ticker": "MSFT",
-        "score": 0.83,
-        "price": 499.17,
-        "date": "2026-08-13",
-        "source": "quant"
-      },
-      {
-        "ticker": "PLTR",
-        "score": 0.82,
-        "price": 175.15,
-        "date": "2026-08-13",
-        "source": "quant"
-      },
-      {
-        "ticker": "AMZN",
-        "score": 0.77,
-        "price": 268.92,
-        "date": "2026-08-13",
-        "source": "quant"
-      },
-      {
-        "ticker": "COIN",
-        "score": -0.77,
-        "price": 150.34,
-        "date": "2026-08-13",
-        "source": "quant"
-      },
-      {
-        "ticker": "MSFT",
-        "score": 0.84,
-        "price": 496.76,
-        "date": "2026-08-14",
-        "source": "quant"
-      },
-      {
-        "ticker": "PLTR",
-        "score": 0.82,
-        "price": 178.66,
-        "date": "2026-08-14",
-        "source": "quant"
-      },
-      {
-        "ticker": "NVDA",
-        "score": 0.81,
-        "price": 225.73,
-        "date": "2026-08-14",
-        "source": "quant"
-      }
-    ],
-    "history": [
-      {
-        "ticker": "NVDA",
-        "score": 0.64,
-        "price": 211.47,
-        "date": "2026-07-14",
-        "source": "quant",
-        "fwd_ret": -0.0264,
-        "hit": false,
-        "settled": "2026-07-20"
-      },
-      {
-        "ticker": "META",
-        "score": 0.82,
-        "price": 668.89,
-        "date": "2026-07-15",
-        "source": "quant",
-        "fwd_ret": -0.0314,
-        "hit": false,
-        "settled": "2026-07-20"
-      },
-      {
-        "ticker": "AAPL",
-        "score": 0.74,
-        "price": 324.5,
-        "date": "2026-07-15",
-        "source": "quant",
-        "fwd_ret": 0.001,
-        "hit": true,
-        "settled": "2026-07-20"
-      },
-      {
-        "ticker": "DRAM",
-        "score": -0.69,
-        "price": 57.34,
-        "date": "2026-07-15",
-        "source": "quant",
-        "fwd_ret": -0.0632,
-        "hit": true,
-        "settled": "2026-07-20"
-      },
-      {
-        "ticker": "META",
-        "score": 0.83,
-        "price": 679.04,
-        "date": "2026-07-16",
-        "source": "quant",
-        "fwd_ret": -0.0462,
-        "hit": false,
-        "settled": "2026-07-21"
-      },
-      {
-        "ticker": "AAPL",
-        "score": 0.77,
-        "price": 330.51,
-        "date": "2026-07-16",
-        "source": "quant",
-        "fwd_ret": -0.0082,
-        "hit": false,
-        "settled": "2026-07-21"
-      },
-      {
-        "ticker": "TSLA",
-        "score": -0.67,
-        "price": 392.84,
-        "date": "2026-07-16",
-        "source": "quant",
-        "fwd_ret": -0.0277,
-        "hit": true,
-        "settled": "2026-07-21"
-      },
-      {
-        "ticker": "AAPL",
-        "score": 0.79,
-        "price": 332.87,
-        "date": "2026-07-17",
-        "source": "quant",
-        "fwd_ret": -0.0221,
-        "hit": false,
-        "settled": "2026-07-22"
-      },
-      {
-        "ticker": "TSLA",
-        "score": -0.78,
-        "price": 380.87,
-        "date": "2026-07-17",
-        "source": "quant",
-        "fwd_ret": -0.0087,
-        "hit": true,
-        "settled": "2026-07-22"
-      },
-      {
-        "ticker": "DRAM",
-        "score": -0.67,
-        "price": 52.54,
-        "date": "2026-07-17",
-        "source": "quant",
-        "fwd_ret": 0.1064,
-        "hit": false,
-        "settled": "2026-07-22"
-      },
-      {
-        "ticker": "META",
-        "score": 0.81,
-        "price": 651.35,
-        "date": "2026-07-17",
-        "source": "quant",
-        "fwd_ret": -0.0341,
-        "hit": false,
-        "settled": "2026-07-22"
-      },
-      {
-        "ticker": "META",
-        "score": 0.88,
-        "price": 647.66,
-        "date": "2026-07-20",
-        "source": "quant",
-        "fwd_ret": -0.0711,
-        "hit": false,
-        "settled": "2026-07-27"
-      },
-      {
-        "ticker": "AAPL",
-        "score": 0.83,
-        "price": 324.79,
-        "date": "2026-07-20",
-        "source": "quant",
-        "fwd_ret": 0.0389,
-        "hit": true,
-        "settled": "2026-07-27"
-      },
-      {
-        "ticker": "DRAM",
-        "score": -0.78,
-        "price": 53.69,
-        "date": "2026-07-20",
-        "source": "quant",
-        "fwd_ret": -0.0433,
-        "hit": true,
-        "settled": "2026-07-27"
-      },
-      {
-        "ticker": "META",
-        "score": 0.88,
-        "price": 647.68,
-        "date": "2026-07-21",
-        "source": "quant",
-        "fwd_ret": -0.0711,
-        "hit": false,
-        "settled": "2026-07-27"
-      },
-      {
-        "ticker": "AAPL",
-        "score": 0.83,
-        "price": 327.81,
-        "date": "2026-07-21",
-        "source": "quant",
-        "fwd_ret": 0.0294,
-        "hit": true,
-        "settled": "2026-07-27"
-      },
-      {
-        "ticker": "TSLA",
-        "score": -0.75,
-        "price": 381.94,
-        "date": "2026-07-21",
-        "source": "quant",
-        "fwd_ret": -0.1919,
-        "hit": true,
-        "settled": "2026-07-27"
-      },
-      {
-        "ticker": "AAPL",
-        "score": 0.82,
-        "price": 325.53,
-        "date": "2026-07-22",
-        "source": "quant",
-        "fwd_ret": 0.0366,
-        "hit": true,
-        "settled": "2026-07-27"
-      },
-      {
-        "ticker": "TSLA",
-        "score": -0.79,
-        "price": 377.6,
-        "date": "2026-07-22",
-        "source": "quant",
-        "fwd_ret": -0.1826,
-        "hit": true,
-        "settled": "2026-07-27"
-      },
-      {
-        "ticker": "DRAM",
-        "score": -0.71,
-        "price": 58.14,
-        "date": "2026-07-22",
-        "source": "quant",
-        "fwd_ret": -0.1165,
-        "hit": true,
-        "settled": "2026-07-27"
-      },
-      {
-        "ticker": "AAPL",
-        "score": 0.78,
-        "price": 320.28,
-        "date": "2026-07-23",
-        "source": "quant",
-        "fwd_ret": 0.0595,
-        "hit": true,
-        "settled": "2026-07-28"
-      },
-      {
-        "ticker": "TSLA",
-        "score": -0.77,
-        "price": 332.8,
-        "date": "2026-07-23",
-        "source": "quant",
-        "fwd_ret": -0.0791,
-        "hit": true,
-        "settled": "2026-07-28"
-      },
-      {
-        "ticker": "DRAM",
-        "score": -0.71,
-        "price": 58.92,
-        "date": "2026-07-23",
-        "source": "quant",
-        "fwd_ret": -0.1856,
-        "hit": true,
-        "settled": "2026-07-28"
-      },
-      {
-        "ticker": "DRAM",
-        "score": -0.78,
-        "price": 53.85,
-        "date": "2026-07-24",
-        "source": "quant",
-        "fwd_ret": -0.1449,
-        "hit": true,
-        "settled": "2026-07-29"
-      },
-      {
-        "ticker": "AAPL",
-        "score": 0.78,
-        "price": 327.47,
-        "date": "2026-07-24",
-        "source": "quant",
-        "fwd_ret": 0.0424,
-        "hit": true,
-        "settled": "2026-07-29"
-      },
-      {
-        "ticker": "TSLA",
-        "score": -0.75,
-        "price": 313.29,
-        "date": "2026-07-24",
-        "source": "quant",
-        "fwd_ret": -0.0308,
-        "hit": true,
-        "settled": "2026-07-29"
-      },
-      {
-        "ticker": "AAPL",
-        "score": 0.86,
-        "price": 337.45,
-        "date": "2026-07-27",
-        "source": "quant",
-        "fwd_ret": -0.0941,
-        "hit": false,
-        "settled": "2026-08-03"
-      },
-      {
-        "ticker": "DRAM",
-        "score": -0.78,
-        "price": 51.37,
-        "date": "2026-07-27",
-        "source": "quant",
-        "fwd_ret": -0.0364,
-        "hit": true,
-        "settled": "2026-08-03"
-      },
-      {
-        "ticker": "TSLA",
-        "score": -0.75,
-        "price": 308.68,
-        "date": "2026-07-27",
-        "source": "quant",
-        "fwd_ret": 0.0314,
-        "hit": false,
-        "settled": "2026-08-03"
-      },
-      {
-        "ticker": "AAPL",
-        "score": 0.86,
-        "price": 339.34,
-        "date": "2026-07-28",
-        "source": "quant",
-        "fwd_ret": -0.0991,
-        "hit": false,
-        "settled": "2026-08-03"
-      },
-      {
-        "ticker": "TSLA",
-        "score": -0.77,
-        "price": 306.47,
-        "date": "2026-07-28",
-        "source": "quant",
-        "fwd_ret": 0.0389,
-        "hit": false,
-        "settled": "2026-08-03"
-      },
-      {
-        "ticker": "ARKK",
-        "score": -0.76,
-        "price": 72.41,
-        "date": "2026-07-28",
-        "source": "quant",
-        "fwd_ret": 0.0029,
-        "hit": false,
-        "settled": "2026-08-03"
-      },
-      {
-        "ticker": "AAPL",
-        "score": 0.83,
-        "price": 341.3,
-        "date": "2026-07-29",
-        "source": "quant",
-        "fwd_ret": -0.1043,
-        "hit": false,
-        "settled": "2026-08-03"
-      },
-      {
-        "ticker": "ARKK",
-        "score": -0.81,
-        "price": 71.21,
-        "date": "2026-07-29",
-        "source": "quant",
-        "fwd_ret": 0.0198,
-        "hit": false,
-        "settled": "2026-08-03"
-      },
-      {
-        "ticker": "TSLA",
-        "score": -0.8,
-        "price": 303.65,
-        "date": "2026-07-29",
-        "source": "quant",
-        "fwd_ret": 0.0485,
-        "hit": false,
-        "settled": "2026-08-03"
-      },
-      {
-        "ticker": "VRT",
-        "score": -0.79,
-        "price": 224.61,
-        "date": "2026-07-29",
-        "source": "quant",
-        "fwd_ret": 0.129,
-        "hit": false,
-        "settled": "2026-08-03"
-      },
-      {
-        "ticker": "TSLA",
-        "score": -0.85,
-        "price": 305.4,
-        "date": "2026-07-30",
-        "source": "quant",
-        "fwd_ret": 0.0614,
-        "hit": false,
-        "settled": "2026-08-04"
-      },
-      {
-        "ticker": "ARKK",
-        "score": -0.84,
-        "price": 72.17,
-        "date": "2026-07-30",
-        "source": "quant",
-        "fwd_ret": 0.0465,
-        "hit": false,
-        "settled": "2026-08-04"
-      },
-      {
-        "ticker": "AAPL",
-        "score": 0.79,
-        "price": 332.14,
-        "date": "2026-07-30",
-        "source": "quant",
-        "fwd_ret": -0.0784,
-        "hit": false,
-        "settled": "2026-08-04"
-      },
-      {
-        "ticker": "MSFT",
-        "score": 0.83,
-        "price": 454.77,
-        "date": "2026-07-30",
-        "source": "quant",
-        "fwd_ret": 0.094,
-        "hit": true,
-        "settled": "2026-08-04"
-      },
-      {
-        "ticker": "TSLA",
-        "score": -0.87,
-        "price": 307.34,
-        "date": "2026-07-31",
-        "source": "quant",
-        "fwd_ret": 0.0491,
-        "hit": false,
-        "settled": "2026-08-05"
-      },
-      {
-        "ticker": "ARKK",
-        "score": -0.87,
-        "price": 70.79,
-        "date": "2026-07-31",
-        "source": "quant",
-        "fwd_ret": 0.0844,
-        "hit": false,
-        "settled": "2026-08-05"
-      },
-      {
-        "ticker": "VRT",
-        "score": -0.81,
-        "price": 243.6,
-        "date": "2026-07-31",
-        "source": "quant",
-        "fwd_ret": 0.1482,
-        "hit": false,
-        "settled": "2026-08-05"
-      },
-      {
-        "ticker": "TSLA",
-        "score": -0.89,
-        "price": 318.33,
-        "date": "2026-08-03",
-        "source": "quant",
-        "fwd_ret": 0.0297,
-        "hit": false,
-        "settled": "2026-08-10"
-      },
-      {
-        "ticker": "ARKK",
-        "score": -0.84,
-        "price": 72.61,
-        "date": "2026-08-03",
-        "source": "quant",
-        "fwd_ret": 0.099,
-        "hit": false,
-        "settled": "2026-08-10"
-      },
-      {
-        "ticker": "DRAM",
-        "score": -0.78,
-        "price": 49.48,
-        "date": "2026-08-03",
-        "source": "quant",
-        "fwd_ret": 0.001,
-        "hit": false,
-        "settled": "2026-08-10"
-      },
-      {
-        "ticker": "TSLA",
-        "score": -0.88,
-        "price": 324.17,
-        "date": "2026-08-04",
-        "source": "quant",
-        "fwd_ret": 0.0111,
-        "hit": false,
-        "settled": "2026-08-10"
-      },
-      {
-        "ticker": "DRAM",
-        "score": -0.78,
-        "price": 54.17,
-        "date": "2026-08-04",
-        "source": "quant",
-        "fwd_ret": -0.0857,
-        "hit": true,
-        "settled": "2026-08-10"
-      },
-      {
-        "ticker": "AMZN",
-        "score": 0.78,
-        "price": 277.53,
-        "date": "2026-08-04",
-        "source": "quant",
-        "fwd_ret": -0.0066,
-        "hit": false,
-        "settled": "2026-08-10"
-      },
-      {
-        "ticker": "PLTR",
-        "score": 0.82,
-        "price": 162.62,
-        "date": "2026-08-04",
-        "source": "quant",
-        "fwd_ret": 0.0743,
-        "hit": true,
-        "settled": "2026-08-10"
-      },
-      {
-        "ticker": "COIN",
-        "score": -0.78,
-        "price": 150.4,
-        "date": "2026-08-04",
-        "source": "quant",
-        "fwd_ret": 0.0036,
-        "hit": false,
-        "settled": "2026-08-10"
-      },
-      {
-        "ticker": "TSLA",
-        "score": -0.88,
-        "price": 322.41,
-        "date": "2026-08-05",
-        "source": "quant",
-        "fwd_ret": 0.0166,
-        "hit": false,
-        "settled": "2026-08-10"
-      },
-      {
-        "ticker": "AMZN",
-        "score": 0.84,
-        "price": 276.01,
-        "date": "2026-08-05",
-        "source": "quant",
-        "fwd_ret": -0.0011,
-        "hit": false,
-        "settled": "2026-08-10"
-      },
-      {
-        "ticker": "NVDA",
-        "score": 0.75,
-        "price": 219.03,
-        "date": "2026-08-05",
-        "source": "quant",
-        "fwd_ret": 0.0175,
-        "hit": true,
-        "settled": "2026-08-10"
-      },
-      {
-        "ticker": "AMZN",
-        "score": 0.88,
-        "price": 273.1,
-        "date": "2026-08-06",
-        "source": "quant",
-        "fwd_ret": 0.0066,
-        "hit": true,
-        "settled": "2026-08-11"
-      },
-      {
-        "ticker": "PLTR",
-        "score": 0.75,
-        "price": 157.08,
-        "date": "2026-08-06",
-        "source": "quant",
-        "fwd_ret": 0.1236,
-        "hit": true,
-        "settled": "2026-08-11"
-      },
-      {
-        "ticker": "TSLA",
-        "score": -0.73,
-        "price": 319.45,
-        "date": "2026-08-06",
-        "source": "quant",
-        "fwd_ret": 0.0375,
-        "hit": false,
-        "settled": "2026-08-11"
-      },
-      {
-        "ticker": "AMZN",
-        "score": 0.88,
-        "price": 277.3,
-        "date": "2026-08-07",
-        "source": "quant",
-        "fwd_ret": -0.0275,
-        "hit": false,
-        "settled": "2026-08-12"
-      },
-      {
-        "ticker": "NVDA",
-        "score": 0.74,
-        "price": 222.17,
-        "date": "2026-08-07",
-        "source": "quant",
-        "fwd_ret": 0.0037,
-        "hit": true,
-        "settled": "2026-08-12"
-      },
-      {
-        "ticker": "MSFT",
-        "score": 0.73,
-        "price": 504.85,
-        "date": "2026-08-07",
-        "source": "quant",
-        "fwd_ret": -0.0231,
-        "hit": false,
-        "settled": "2026-08-12"
-      }
-    ]
+    "__enc__": "v1",
+    "nonce": "GcriBM4scQ9xgdH9Bs6png==",
+    "data": "zTk5fqxyjZzucp67TzDqr0G6gYlcdGZMxIn16UWcdR41mTL5gurcjMbnIPv1CQSDbqeWH8NXcPHrPvv0W7K3JSfhcWj9/n0zgvZg1HoUWiq/rguJNjB1LqC8mKLeGzydTRiWtaWsor6j62z2CjofUqbwDQSIsvAiNxYL6q7E4K8QkAkCwzp4beyrJiXvKGc8OSPvq2ctCWHN0SM9qsiM50l4eVe6BzNXTCqKSg7nqQcBYdtDqjEckeqJM9Cj+9FXTFUFHxY3EPFPHodkTQb6v92qUSCpCWjXXQdZT3Vn8mruW4OhNyvZKRigoNF9m2h4oYisD3Li+hDK83GK7QdUzl1AqlcJ0PInU0K4n77S0r3Fz7QCpLIFy+KEZ0lBLv7AznVeD/DzxX9fAAH/vGpen1y7uDGMuo5ugmhzKzHmSRMzRm/sKvfvI5nzyT3s+VYCC4qWCYdCiKJRj2UCZKliMl0rN74BWtxE7UQURJW+6uuEA/SM2EN5QbnVRp2z5/OfqpynadpO2Zxpx5zl4LadqdVrvD54qg9T/fTnlO2bJ5bhalZPDZum9Nhyi2qk4LQoEAZzPRMOjG6FRq8QbhMF4iaulaYgiXm0LCCIgMDz4fYVmD4+amVUFAj8BKTQHbMz4U/nVCQsEwrOgFJKDNxZ8VPfFQZ48C3mPU6x/X+S3kq8EtOdKgampgGJwBuNig7JydV9wNTD0v4HXuSwUmqUk+FEwFPSRN7Drw0Eaq4Ze+pI1nfXfTYQheuXOcce4YnmltTxu85ul+mnKEu9YrCL007Qo416ZPPMFAX7UFUbVGo2V37j/IWlhY37sg2oVmjzqsVnoJWotFxRlNKT9fGk6s8zFyUT1Cx4bTUEGPLdR0iC7FVapTlJ91Po5iHQJJLABjIAnDBjbiXn+OPavlK3wLTGhv78WwREAyyLL63Mty9Opu1+M+D+ENNcwSJYQT15PF7qxIsuBkuJmLUBAfnkOVsd22cgzGr9+W2VyiIcjsezau22OVzurSb87N9E4NJLWCvUmio17SIbKBItHPtyw5V3G6vMCohhDM49MfYDSAGPFXgXS67RCUkPghpgrBgBNBKzBVONCsiXhmEVzk4ZSjyLx0D2jOpJZ0T/rhwJzKidz2QJgSvm5pwq8FDLJcHkt2U2FNHIY9Wx3LOPY/TKCIl7rrKo0ccxcuEwUvrG2IVefo3oSQsisP3qBAddbtJpzpOvF9YZWvNRpF5nC77PRB8e51qe1tm5Ci4XX67zDSGjczR8Dc9Nuone152b4pngFP14HvMDTJGS8aZGHgi9N8Q9S547AcN2nLz9OUHK0FivWP0iLgQOSPIyfESJp2k0TAQZ8gwdv07El/BbBgOXWV2j1/86Nx9H0SvldFzafefgQVqDw5KzoloIzIvIiuv3OxNt5Y6YWSvOWQjmJfoZ7uPFqvySCOrRvlZ6v+Ie5LblgcWooLBnxXcI5x2/aMKR8fPbEMm/lixvAxMS7uL4X3K0tW42pzvX+IqfxXuawkncnRw/pi3V1sLvYJ612S9q+zlOwJ1gndesToGeZMmqW1KLTh2lFzbw1s/EynaX5LkAVgMZdTFonBLRzwcd9A8564qKKGVf39hKmqcWUqkJKhn2iuBFV1nTXeruRPd2FiwHlPSbVT0PewmTkh0wv0zJTJtw/6LwOzRL7Nb9cmmk1WMg9wgEIfF6devfrxr+RjJGqNIDtzqfByzM7i9SBWKXLcH1K6KPo9wUBrsxWMoiiBZfOtWP9ybn+9HSfQh1JobrrL7pdLIt+Pg3NV8Tei8k6jzxdJL4GqvMwAZ1YwzdyvOS+uTleR/vSy13/I9izPHKf28WNuRxkzzdtbAJr3SvCPBQnAxII9UCHmKpuZuSPcQweWM9lxkBRu66OklqJNuUv8m7/QsVP7tRfWA8fR0KBbeX9IwAwMgaeG4zvFokDxdKMhJDeSMArd3BNEdgOpZWUizg6jtV5SJ+d4NBhxzYF0ioF2ny5JbolWArxoXJyPfIL6xxUu1DCshv2mkmTZ4xcClaN7wA9xz0HIfVoGdbjpOatcYUMj/xYsUg2o39AVh7odIidwuhdmJ4ElMyafi0vHNsG6AJXd8wb3/iob8Qk5dBF3QWLArmHhDZT5mlnjAlIioe8L+lYitLSXeGb2ESzRXT5PA5J7SNk7dy9+A46x9FSP0/JZ/0AXL3EvsDi/sbMfR4Pz2N43HO8041UgGJF9H9c3imgZud6kCpBAfk6R8xODW7SeLDzO/90h+f8It6QRq0+qyi81m3Z9Hm1E1lNIz+fDjURGVrH5ZkheAhQFJ5WPBpOBKCfjhl3vpTSoKdiWhWPCKtpocFWBgU1FKkWd7aS74/E7IVfsz5fJxqHsM5owjusDXcz1l3Xi0s8oSVS0ZapUsRhCXURgvSzdeWuKL7uu1nYf03dKWcyzsp3CalrDwjcZVsJ4jMwI1ZYd4c8CldJ6rK6Xux9CamMSGBnhflDqeg6WSJAeu3ET03DZp+siRhrPUUDF2lsTRq4I9IWOoBC7Yh/86kB7YHajfu+CSRDO6aT7RHw4TUdj1GKHKVvzivPV539kotaEsYOn2zOuGvRxHwQUFnVYhhlUzXiLFoopsCQJIQDPIZNTuZw7qhGWgUBli5E/iiScIeVKaxgbd/XkYEs5toP/9DLwzJW+kOmb1G7TnvXVHdSrcXeT+HvgGBCeAKhdzPhcoVba0K71uNqc69aQnN+unpt5JyYwIwusy3Qa+a3rdYGoBzV+P92UMbIsyoG8w1cHeLRUBQao1GOVktXNBWLvnAtmmX0XcRIm/ruk7HFGqmY7OrlmJVvPjrEF2HrXhNIXjveLemk3onVMa+5ZS6vaRPWua69e/eZxHd9fwpIUniW+iwz47lGJv+OKcLef5RjQuRrF6dxirsNEh6rjgvrPk+hO9iBMRa8LNqya9fLpNw+ug2i/poC1NOJ1ANl0q8yes+kLa01uaA7mD8B78XubqNIQSnIow4lGdU6PVoGuaf3RzgRidD760wi0D+sFPXULTqX/EYh2GJMve8a7qNwLq2sTltTHdq783sxyPijLUUpQGnvcK2thR3d1geZ41QVfYwuE/r128sV0+dUE3VLWzN9vvPwMKtvtGotKAGKiCvPaKJvjIUXjsWxu+YoMCTMjg8rjA8Djb0mpxDNaO0NS2JMANjj2V44xwqLXSuYIpXykxl3Gw2Sbr72nUrM1lwlmsE9FzTvOl+0kTLMq1QWdYD1xT8xP5gudkzj6T7Q3s6AgMDnopZa/fzHINK87VyK7AHYHlmzJ6E3VYk+flxv1X/yAIYXaGuhgkd5bVHBcyzMkcidhMWyTP/TIDrPW12A9h7Ropa1QY6/VdZiWajf9D2ilKJhhrhygdAmsIhi7p6gF1p5grJlA2/Ur5WSEVRSR8qFBFFz8HaLhDmfcwl8X3DVGvxMsUL/KjUySKFJLHRG7C19zgw6uVjLvDS72ve8d7A0KvqBZzfXJJ/8tf01CGzarbIQGiOd2k1ab+D5q/fevJ1aoBOILzf5zCUEejMCZgRLGJFXWrjCae/kk8QqsFa8TtDL8OiP4KvFhViwuGkmi7OSt6WdvlB9RY6ek9cE2pYwGUT7BHFajzqMoVwJ+QdjR5aamsTBv9vrf2wNMSL+i66IrENVtYpZ4Me2lxcmoos0YGHQctrGQnEmLMvdP+7VZQboNtrtlEr6ry8lP85U+oM9SMbLF9buc1dZXU/uKjUMQAw9YltAJAajZKSwNSr9zeioA/4Ad7XeIlhSJJBBnLvOdAFndRFnWGBwfeIN6U+wuDXBhRMmzruWzXfVOamvd9/weX8ZbdexyqxkdTgWveP5qeJdmrDZ6gLGtAJ47mQI2k+Jl+a6+oDyCsx9Veiam4scRu/6uCPXBO3m/ZXI/kAinQPnk6h4Imy/VcF2EBfFDjmcJjpjgbEt9UG6qfrFnG4dlp95bg/li1Hn9CDsEq5DrXdDPXtSIA/z66M80YQo5SMTtOyj92nXzL1eGVQ7xADqHLJNi62ha4U8UZyukfb1YjgOx+SjOID2L6btLUCINNOi33PvCubciYg+fo14uMlvrv4mDhuJCtZ8o1wbNvPE2OgIGkqq3GFPhoh3vFaLRA2wljFdygv6D3K0/Q6v1GE3XsHRAUJv0la121LbZ7/0h2XDnPWdLE3amrglgfN5pOngL0m+r2jSkJvwffB+t6+frBKUyM7hlvv4scDqk1sPZ0w36z7hzm5v7AV4HUx/48jfmwUJIr9xp4VN6/hfFznzMI0JEJF1gglTKlVuCtb3u434tLzsP8DPEUi0iB18RbIEGyalSvWPfR1EqCH7usWqRXgDVHtmgMooq1vcjBEVtDxfFVN42TUSBVmT9BGK66OTiFDoxK68G9EPpPCo3Kz6nmTphsBy/1g7NwZSWwBXcIBuWK19CRl5qrmRpLhmXR+1tihYgPBOOOcLnUKcMLnubFpOr77EhDY4VnDKXgDgzQ11cOJlBbyAS8e6HchbpZ1GAXv6ahkAo1e6jNoWxNuxcNAt6Wf0Vf4hbJRQX4EU7EphjNn3RMScuGg6L1l+GWGd7+F8REf4+W9bWB4gP0TzMwOgj7+THkuA5xyz/xwNQIjwZAAU7Nf4Ux34weYKa84y8hfUJyUkT81ljU0WZL/kX64cBWBLQ95zE7J+yJXeZY6XV0C7xN506SbpKvynySzxK6KjiM/kSHAdTadhoRqIKtunhgqF5mlPHJFrZunox2LfPqfrXFKN8EUUIdtA9FgzO2Dv/Jwg9AfRfcj1bW7OgOoxle1C/GGcUbTZPN2ViFLNKsih3CeKuGsRAt9loyDIH9rsbsxSZzgP2s3NpdYbz/8OAoncb/kdinduyyzD0+yj5a+EaH0OFwhtntuLWnwxiY0EVSW0lp3XN9WVwwbHiXswDZXuTQFYm1z2nXO8GJFFGjLpM6TKSzKaUX4zr9QPWqs6qzWyixYSkMqiBlaOHQOYsYuf/mDMZjU8o6Khsg4paSCQL7j8xzyMXYOqCvIHfs7d3raqmlI5uOBCJBBOKIkLAKemo6CY5SmG1tJf1B7d6yuTmoGrUfMMsI/XBF3119+zrlmWdeoQ4Ro9LD99MBYgoag1GLZG2gBUKjHbEnp7ilzeYngEWXhIFM3N1VwA4qy/KUp5sP6/hEQe+9495jUTg349/FLVfy4hYO98mqW/kEzq8lzCJ0W/TmHhgXdp9I74dEzxhxHLFXTR4RkaoW+2SdnFQH7y4PJ9iKFWp8yI1KgN6KK10CoMtnKMyW8JSCLh0HYin0O7xEv/3Ali2iKFRrhTaSlLLYfoKDYY4DCmbfwfN9+PV2TGk7scOhMBl2gdZT0cJ3CQyHvPtieKX+fQee8PwyxUYKSK0QYkEaoxXZ24rTpSwvRJQaUQmAXgh6oXPSnLsjbGIw7u1V+bgn+sa/g8FXT1eCQ9W+MNGTIT6hE55+Vxu1LZr5pj0tTbNneTC4Vj70yWQ47kC4HKSu9tuLu2jcKOeaIguXHwI5NWOC4CmeU76vAr8pWZjxZpFo0QijURt6uByUxomWCaOgzG8ldDJQWba3aEhPdYG8TSg8KyX5e6OawrwwdQC4gUzifRdZIoDRm3t6dqKs8fawsPYW3g18X9CzWWjsOydJqbWgtzbgmltxm4g7IZ/FTVFo7nuUKDo0bHdnAcF2c8QP/qRDbAKad4rCEi2zrAG0ng7bxDm6O0mZg7RiEOWrM2taN8O+wgp7LSCgs7R/uMky2DB0idMfVX5Zlvasibt6Xpjs42wGEKcK7jGwsA3hG4gHoiXOyb8hWer7OqKH9S1Jf1yO+Da9VjGomBimSuWWfVJ9kNErW67Dd6SI6QxkrpS2ivjvhLWNDPK1+WEPmKhKIgHdqEGmnZzjh4y9jVBlnKYJkyXCQ1FubqS725sTagsDYB/RdQydkOuPOmomFBrKjUSQ8nbVAU61JXgJvB01hKiwL5FFT44Gl4+aMVWItvVKMdBSVfgxKDOLj9CroI+cHhQ5+kLxYl2sDiZ336TT6CEwnCx7z5fwjmvww1fKlyCt0oZ3xP+z9/Lv6T/UKgWoeaJoEef1Y3TReitPKj9smQ7RdhwSD6fTBj08OASlr5LT0eustfaVT18d/WWNpKtyhYHcw+zmdm6sEI8q2MjNAdJ6IoBemoutXnlyz9PXwiJj0NzCbizIsNM93ak/XogPSWw4EMG8HrJUhnWt8RGCKpBHt8nsh4VszxIuxRNEM6aEM1NZg+dYed4/RSysVT9AGO7J3jfq7touT4Gu6Zg9vdKc0rcsf/tdXPu/IldaFtOyNpppJDCuzcswEcn34/Vct3gbwutBUPKg5muXh1ij2Ym1x7t2JtRNFCi6Wll6DQzTSdUd60jb7obh8WfYvqH6eIA4Fa+1KmcJyDgkGx6d7XHbfM727st3My2iKWfES41KZpyYKkwiCuemWz3KErsFrkbUga/BizjVfuvxbGDBxavJyvGVjawX55Mr8ZzQ0XGBVpAn82EFChnzs6sUQ1/CyGtY8rLTQ3NRUz/5e0swchUkYwVczKHbkiRZiAJ0VoFC5hjkSH4dAMHUyAqkRtA1oLGneONpnKEJDLtmNdlki1UYCFCNX266+y2DuGG8qjta4GkqsPg7IzLBAu8x8OwHA8wc6E/69WKPvUsGvMuuaSykAjqDB/3NHddw9XGq6Lm7kyhdhwPhzS0p9SeggFgaBW3tPofCPBpEXej6/Cm/H1rI4dPcdb4uNa3/LCq3lmiPskOKf7y3JX1JeIr/sIHMl4PtrRNEp2hcAIJOtu8BIMsv8WdxW+rCRsVh2aWY4ZRjFdbQ6gJimNmzcUAtmztWi+UFI/B+LVOPRMHCTFqueSnu3HmttviLnEdnvF+qOyeCXkegj9CzXE/6ZG8py3LrMvalh3iHHxIJPeIHbV/TykfhhGlFJHHojGNPBbK+Akdi5pDn+KFo9LlAn4pJUamuyGpPkAIHepQCWvOy7GVZUgYq4TGrDiwD8oYcvOla0Rvo6g0swwi8QkAWA9JIkJMXIGNot/9z9Gpf6x7m4tw4G1lbcqmRl6LoOEFoWjRclzE4hO3oyE6VE8uIzmCs3Or5ewdpCHtOgNz8DbdHq2YskA83osGZXhba3qVb0miVtc4fv+sSdtynTmIlOhugSWp6QgD5CycsFDukRQX9fsJhQ2h2Uw6V4yyHpzEkPRYi0+wdsm0VlmwMQh+x02KgO2nGLHmPdCVTu8RbGanOKQF6rZtiretVED2+/4ufE6E22VFntzKDwrce0HFeLiDX8wqrcfru+66Q+V8Jomp+JY7CVjZNfoHoBcLVQv4B8wFN6FNeL1Z3demJ5MX7vO5uXTqxOFzDmqKKp7o/CJ7spBQJT1LEcmWnMUT/SSXQrm0MD6estgODnutrt8vLd4wtg+Mduj08gWED+FTdYoTDpjI8gKg9SIK+d6MSXrM+OUapf0eEadKJxWYiqtbudq2UESCAQ6YLgDpxLZa0CX3OmMDYeq/5cqm//zM3OBIEFxXGRt/agC6Z340l2q+Ivma8XD8CRDG4jO6V8EjGy4LJTE73zZs2hekF8CPNSiGmyWlToJWKTEkfTOOalgIXUrnZLmz8MKBu8E+gLQ8NBeA4AGLJcoaLGu7lh/FvYva8UkOejgUUpxQB2ZrrjZQchENlpJQqWcWqV9prlyMTDEAAF/g+8+56qk4ufL/FxeIcxZuogOltvyJKX/q3I1O1Vkn7lftf7frm5bvBbBCo1YuP+FNxA0g4vCy4SsLS8pQiMD24laa73lM0c2VRezwHOlgpYl1yrJNw6hBaRSf/ND9xkq1NDdmYjX1UTtv6puiTE2UwZdanbRZDGmucmc9ij+EufEzMW73ZLeRNYgzicTJ3hOTKwwNHmvvOJkXsKV3QZrJH6uaMo6HjXscFRvDMHtJUhWMHHHTQR/Z33wUpHOKnsnTjvT23iSx0swn+og18fe1g0TYSVzVWZGG3/WvZ4mMuqyk2WRAB0R9FRzcNcFvetGXZ5QVKB/q/eBje+7I+Q3KpMcdrxIcKf5HigcOb0eJpx5VTk1X3mRRp1Gm74i3YWh/ScyJaHmzLOBhv/91sBs9w9K9yN10b0InYPQk8x7fLDnGrHdXnYtY2zX/oH83AV+yRnI0yRU12LnJ2bPNu9Kf2fA8zJ/CW/OxepfKm8daPNPqWiYwgYds6NjdzbvaTxOnpz1Ce1oIk4/CF7NzcR8rDD8gNChcV21QFkxyT9WChuL6Ofwxou1ZJavC45p0I2bYB4SEm+w6GFxYIHaIoBTRT9O/FkhbeGgTeYgJs8ywH2Iq/top9p23fHeWtzStH4AjA6OWNihXE0mPzkfNUqBwCBE07ecoK5XUGZ3ZxDJ/D/dsjxgQQXuB8EmXpA/I0nc+qtDXLz0R/DvFVV/WcVnWZE/iwcwcSQv7uIFq+aY9CUfr1KfgjM+aHmzQMFOtDyjnAJYsCjL1H9hDvjkUG6cxRCigSAe0EThuEoAWyONuHXz0rgV3i3ZpwUTli4TiJgy0bRRV5y0jQzzT6siu2x9yJz4ynZfIVmSsDbVi3y/niKW+J8rQ2d8eFXP3Hx43inJwCnspHD12JNTtJbCPg/xNUOORmYTwH1HZ0M4gIRe3sgWmIKOPmXf8395THN0QMM3OGH92V8YeYGTBws2ZXPL28c+W3hAvlCfSsFKp3+2X5ph0AC7SwafStQt3/5LLL0TPQcHEHDdFbo/jQCSTgt2M3Zuv/9X23O2HoVigOXE2/3zy0tk/irVJPCJgOFlkCs4OpC/iwB6ukWpZPjhzbpyi9xtlwYUFPuytH4SGho+Dx2HEosrQKAMbffnGlU2ebppdI+FT2P9rWA53M31QEh+Fcqbmc3PqWmHGde+/gFlaeZsBiUmSeY1MrUMemWSULO6SqBwyNk1byvoryoRyI+bTw9KLog844GgUlqTNizZhiihS0AJlerkNMFkcAGHkXBzU5OxODNwioJ26VOLp3SouoK9n9mC+G1A7kutHifR55n+6gEkIhNwOXcE3Jhz1pLEAGPgbh+ll3oXZVrWwCkMJED158CikM42BpQ0rPzs3WhB21nVsPhwyfpadkrYz+hTTY/fmu1IwoQxwxNcbrw3EOTgeblOyAf9WmWHNF5YaI973wJEnVeVr2XvX1wjTfhD8EYnizzTM9RRFRGGSFh/FNF169SHfQVlOZIfsMIcxa5uIhiWIgDOp/ZN7uRzO3Frw4klsYxQrqSNI7q8gAkMbxehZ9KO/v2N77vl3NY9/vE43UFqE3485S8CpdSe47YR+xLwbB34ACpUL7bfqZ3P2cSKXL9OcY8pHT2627odD318G5H+K9ugUKyBhE1v8VcucxdNQRXELV9E90UNOKrzZCGFrpIUlHPFpd7X5y4G0XL3VaBZp394ApZOIomBj0zXpAEbHL6SYWD2Hc+b3gQPMb7PI0wZhEcQpfh4hakBAeq4Q2ZgMd4OyxBTSAf4wgvjQZGXhrjGOmjbpBBlBSdvrONayGhz8hwR/8E/8j7cXJ4UW6RnnrKXg3MNj1oDdMmRLB6yHv0uRcvIbGrQXAdpPkIWmt8L6kQ0940VufMVTElUGN6GR+zWB92ftvDA2GTcR+/M6EC1Jgi4geKlgeQCCSbKxMB6X5uVZwiCBNAoA0wj5LEr34a4ltBTkzoN6PvnS5HGy7kN42bUOs0FzNWFYpU28XwAW7bxr2tK+mSvgD+VdPERvUtvlAqx93DhNpMRyiWD+3Xtj8QO5jZLrPh69LgAJxgy1qVn8Pq6AKTm4xErXAC8KHEsViHP4C0J4cfNFP+gLo609Y9dFn+lMHNs4cv+CLFYP1n+3ibuUSTSmNd9DusjfXRPxTQ4MTXq5puCxG6W+a55bn809yNF/bVvTq3LOCsTa3WpO7xs/nn5Kq2iWLKL6gKVcfT+IOpkFfA06Ku7kBq1u31p6xZJnnj7M63SKJQ3B5xoLHciICgIlySu05WiFpKfePcmgJSNzLoreokHGsuEoNPwcU3GlrKFEzSrednVtwUHBw2B6IyBM9uFJOzSOYugDdRmwH4ywKUkM8wIoK3n0Q9hrVN7yiL+GtfRSaUZ5qOi3CabZYnOkQlDve5Atu/nbSp3OSWWRjz5XYMfnzHT5Bctt5mKxNhFMMU1qMUaPakjkyam6ztsfmS2uqBFqFqg5vU/CvWjK7nsw502XThBOfIZBEOhnT+mMeBl0N1Lr/Z0zXX10snusr8Sc0Q2i0p668HCn9exWmVMHCYKdcSXDTxLXvL3Y7cMPdBzLT3NJa+C2yzMtecPT8i7czp7NEDCamymCjcG3NYj3bVk5fy0CER2iDEEwobY/Fnl/fSMaEBlCHVnq/IUBkb5hu6ncqg5Ws6YtqlHUoV4u0x2p1TkiGqE6CyuBiOpusE4Uxx9Z3okpAnomv5gcRhIVvheffXE3VJb1zVCv2UbTEtos+gYff/9/ptrR/wwHwR9Py+pnnxlf25XavXC0lMH1K4oJTmC5pNfv23YQ0VBbfxArOkqHlxFIzASzt28e7YPa0YAUFyVOOPD6gZElDy6051XgZpXhR2Haj8wQuAANxUXL9PMQw6bJLfdh5pWedMegRt4FSpS63M/xKvTPDbgjkmBdr9Gwu+6PqTgY4mkGthCh5yJAVghfLYkUym3qg132uRNSKCqGC3NebQVNZr2/h8Wet7LrOi7zF1zYu7O+5YYdVTP4IHMfbSBr+y/CYC4i220P3eKoxcapG7nA/ozOF/fDfd2EmYaROqV1whloFGaz+mxD2hq1Y+GyiRQ9nFQ2u8KVb31ySCku7juG+UHMjf10qKtAU4cZ5iy6q97iWlau4fahvCyAqVmJPc2GolfjXtQJOTz/kepLQDLakK7ufPhKUnUISgT5XTkYyzKJk5JvW30TrjEEKVXXf0Bt2P5OadbbwPYdFGT6+zdBdAw2RzJSzc5aAOoMbj/iPfDJ1v6pvZ91j4gdTrLLjpZPS8gEcqRun1TsssjEu3Lk/JzUOQRfDbdT7SQbHPYT4UtIwHS8O7WrR1gopa0uSHaADQRWjDAxbyoZhIM5f6F/rej84G+9eaHlGEeyqQEEK+PGTqqoLg+lCd1gqxc9RSZUzkr+rnMU7k7zGcIgB+meElkwPjqf/78asvjlV3EfpB6uADIbd8E+rw/bFjXKTwBrnhmemEmFHoJkFbwattsTynV+UiX3YGSsHWq2rOI14PXYZsjAdPFzG8nJGNgun37qEDkrN9mJM4W7juh4viwUPGyVhA4g7Kus+W1VeMDw0+drXLbB6nD3jBIh2NwUUz+L7SzvelLZDzCxAaKHITqHCxwBq5Q71RnmFjmN0cGCrhkVjzS4dj6SYrmqBHQqEbUM3reinJoSultPpZlagBU3z0AKV1a3Tx7hH2cuUyu7APcwZfxagX5YETqPURCNasCjo+8DgvWXxoqatBDJ4TFlt/B0qqCj3o6Dv3/9NX8fhmjWFVW5O+W+ahf2+eZASaefd91KRJfeURcBNaMbwctndg5KZzmNU92dfafL/HFjHMot2EB0QAizQsI33csopEdzVdnAU35JlGXosuCYG3tPsn7J1HuRvDVuqoP3/kyHaqxjFmFaBMcsPsI6Xd7qsxUKcHe88ze6hkD3tkOobK42YDAlZ6Q+xQmCOLunXA+4iG9EvxupMgKQ3FmKGY66PbE2OiHNzrcTejFwiZnJzdKUiVGb3kbRoIfO02/90m/hb8wlYXQYL9lATd79XQmudlKCioMTLwjqQTcWnA4IZuejeatFUnzHM4NY2h8u2D91f21MaZt/xm4/J9wnflUh80+UcyKize+OAJ8q5eRRPBnZ1Q4/EA6YjvH7wZE5HxwENw+NFrKLjVGjUS4+NIjIJrNuIKrp6sFkn2ebm6ryVOUVv/770AxxFrOw7FXo82bmncu0lXdypH1F2twGli2MioOVar7IjCjsDqsb2i5ZdYIM0Qe3Vg/lBamfRo3q8V9sAKN44NjZiKPxA2nSp7MYRDHYDyxG3HM+83sO7qwO0GdQBR5CfjcaVcZqc7+VmjM6aEHg4bQ4eLiXUe6ay3WaRp9tNWdbthOx2iyPi3JlCTEL2IeN1MCCXCYkLHV74zJytuyOMClXpz4Szj2miOhV47u1E+LdEGVP0ljAW+ivkC4/cBSFBucMDOTniDbBv8t4nl/Rs9K/aDSW+uyI8IG4O8KNcf4HY4Ji7wge6XVcwLUhM1Dpb61PtWApD59ZrIIdvexnT/0jZQ4KioPQU0+0Qjig3M8kAGS5ELN4d0KRcmM6X66Rv48u3xTIpFxKMvMlQ8b8tLHPKGEFHeUJdLq/4ZcyE7+W7RTofmo5VmtkTwhsXiFZmqxiLbrBn5lGGrEAoxwCFSLmX/03nP71hMJhf8zSdUSKK7OELxfq8ww8qUHsBhWlNDvfXG7+Br+gs7qtcUOU3+Qg0rVrSmQ/9hsNibzC24HOiXTnaGE4W+mdbLfjWf+jTRYiTYfcV9tJFkijV5cBdCiRxm0dBPCuK1NnA8PIgj4zeO6lcAjb+5z2lM/uuAgYJKE1ghp3Bzx8r98Mz7bOTnnsOhfFgoqezdEQm8RrT8Meb2mUEsl8H5fh9giioIdZkzZ7v1M829t7bqcsn9tNWivjuDTyKKxXmsuBHLYhdRP8WKChOc0YCak3viMbHPEq2HD4b1swRdI1P7KRcCxNzXFefzX7zmIk5vM4Q9OLsJ+yNFk7uUWBs5Rsbqs5wT1FbG25+7ZeEpa4k8e9AZ5wCsLCN5gsK6LDX1M7N2YwkppLqrkD6CAZqFbbbLtOBrDCPZhIAYzaChdEEDvP+6yVXGhgVr9y5PL65jSy3w285TkUK1TEIOmnRqH43sxCuv3AoMjStduvC42v0SwF/rtRpWSEHtvQwiFeOLLBPu9bfWykQulL6VRXzerOkCmOh9y/jGx9UaSH72vrT3EaqmD1PSHB5Tgn9rtO77rh/kYMsmoUSILx1l4fD636QC6E2Ao1D+tWo9o/piHI4CXu/XjPzmI5lpoo6X+rm8JtX6kMF3Lev/ovqCaZ72MSnSefWDHBW4MRU18vElg5tlsym01orETFnamY7Z9YsK96PkihuH3GX4ZFpkNQrfCY4Q6FNeJ3biej39ER39yRQ2ovso9IjEe5Pzp31KAK63774+sYDRIh6dsuXgfy3g10s1yEr6MPeIt1VkOiegW4DhHcrn41JJxvhQt3F3xoAwWwOy25oMnRWx41QNE+zUuIk4029ub0LOU/4CE3q9mW5/qUyC1VxfTvJPFZcvJaJqlWdtKD49FuOinQkjtAEsXyFY5ND8RbFp0fiJg7E+//L5nt3GCkgFyKJ8bfB7H5lTFQPcjiXwGTuOtN1wav2fAMwS8xiNdhDDlX5PzySMYJD4BguTIAsL5WQ7WrezO/pxBdk9BU92bUF0pVo9TAempR8f+GKr1ATOJjqv/q5Hiz0e2nqqZthqghBR7eklb19asBQix3/tGzz5OkjbOpYrN+ERYQZW3exvupcmDGAKSFGpXngLdVBhNxMt1ASRNFN5R5C9TsRLa0BzrGV+ytgRuxzYXIUohEA0foxyH7YK7V7AgxLEGsrFiRYimtNA7rnkx32roCB4cMsA/8gu9U00bLQEaRyr1oLpJ0XwFxohtnXDUt7BOTg+9k4YbXNrQMMBh6EokgKZsq9J8x2liDGGI6GVSd3M79QO9wLiCNz27CIPdJkdbdXp+SSC6OqvvzakCdLljrR+pE1fLDtZ/BOPbhF1Rr9ZWA1b+eWj71ZJQrQMxVhB4RqqDM9olx9w6lrO8QZMIuIGE2bJbZ70PP4LvqsuNlGul27Uy+HwTgSuqkFFUDO70tzysK4aH8WcFDxn1UgYnRCcuLi7Eug9r/ujEPgL6fW8ewpzhZAFv0+xo4w0kRID85qmJuonuR2hZ3D2djcCYiIuKqz41x9g5bI0XzC7n3lLhuty0wo4l1p4+P2MBzEU0adJei6TZk+mkX4Dd4JHFRZ5hlbWcNWd2vc0wh2IqYu91LYLxaGBmMyMBxFJ4qbsxeURAmez9R/NjrqvBKDzoVQ0J2/Pc89I1XRoSFYF1dzT9bqFFFj1cef0t0HSKbGEN4REd8LuK5fzJnAIm/EB1aWp03+reka1PUYqNJaMG0z6kf/WaD9GdI4CsdnNmBIONhad9laTuxUL22iv+0FWbN6E5LV131eWfbqrXE5YUdX9sBJyX1aqoD9apf+XtJ/IfEsaEkRkkiWh96fl1XgiVtGhQ1ctm1xq4H1Q0wR/aukvEJu3Emne9lpyvsbfeiWZzAOEtQEIzK5brwIa/yeUqGEISBOfPjsHaZ97xliEBnYuAdxk/czCpmg9wd8rfVe2pUVGpbT5m55s",
+    "tag": "01cb17fc4e2b33d19398bbec54b8926645894f52bac39e27fccb881b5c0b9ff7"
   },
   "plan_calib": {
-    "sessions": 58,
-    "split_date": "2026-07-08",
-    "setups": {
-      "ORB 突破": {
-        "enabled": true,
-        "conf_delta": 0,
-        "why": "樣本不足或表現可接受，維持原狀",
-        "train": {
-          "n": 21,
-          "signals": 21,
-          "win_rate": 0.429,
-          "avg_r": -0.254,
-          "total_r": -5.335
-        },
-        "val": {
-          "n": 28,
-          "signals": 28,
-          "win_rate": 0.5,
-          "avg_r": 0.157,
-          "total_r": 4.39
-        }
-      },
-      "VWAP 回踩": {
-        "enabled": false,
-        "conf_delta": 0,
-        "why": "訓練與驗證段皆負期望——停用",
-        "train": {
-          "n": 114,
-          "signals": 114,
-          "win_rate": 0.421,
-          "avg_r": -0.053,
-          "total_r": -5.997
-        },
-        "val": {
-          "n": 86,
-          "signals": 87,
-          "win_rate": 0.442,
-          "avg_r": -0.02,
-          "total_r": -1.733
-        }
-      }
-    },
-    "as_of": "2026-08-13",
-    "_auto_checked": "2026-08-13",
-    "auto": true
+    "__enc__": "v1",
+    "nonce": "zndMetgx9hJXeDP9uZMLuw==",
+    "data": "pSy8nsGvSOoSYm29knNzXuBVrDCvX8rg/vNYddLe+JjcUd4eBOAXRd8L8SX5keI+LhXaH3iKVax4ENGaFHN/1GlbAZrM5/QmO05fpl99OHcXIXPCtJyN+3jLqsWBNZmGjcBbGgCeVYefQC7BAeyB1I0rBgFHSPgr11HlE5KNaFUy2Vz9QYeip9xhQjZKtM/oFsPbsI4jRen2Ky/liqxFKi5wXvEzpWpIrPPEAR/VBGBr7GNAPGybJUaa4G1DCvdm7tOaCBhv2x+yaz4NduOU7z+hQwKN9RQknTYsI1DVc+6vdxAMV1cdQAKXmWofivfd0EuESGQ98z3bKbDQ1fzFLzxjq/1/oB4MguC7SWaIvPo9rMpkr5RkDxQnYRz2IjIolWKDvKROwXhwBk4vEyee0Cx14X+f5iRY4fjL4ZaONqdQXBbhtnqpdebgbJA4eKAc4o2vFN543kmR/k/sGRMQgl/O4hueeEB6d7uWmF+kjKuNA9n5dTRxUlE2ijPRbqMo6n7qhQEZj/ZRa9+SCwSFcP51aRSjEqkwZ/B/hZ+z3sHFS6g2j6eiq71ffSZRYeMrEqOPNUA3YCg/magVUf8I/TjdTFYJ/hHZNMTdfij9McUqMZfzjhQJuQ5GjTEKP+g9W3L8qwXfAkXZ85g4gtR/iFovoR1U2CNTii/qRz6Bf1O475DZUFMG4rt48/5VGh+XBVJ6+b5WBI8CvJPh/dB/pVhDn39pIOxt4M2UNLnsNwKpAfWVhDtZCN14CAX3MIVPN1doslEj/h/K2ydh9DWBObH3Kf9NR9Auj3RUqJBD9zicOuQU9mlLhoMudOFJlLrrAksd/+PVaIO007fsrFchQJ6Bk9PLyqlMpyu1x+yiTZ0WyQ74lMaj0bOXlKv/PORSETVLu39STloVdMCc/ObZ",
+    "tag": "fbd6aa53451e35a58a579865b8099387b4d93acf12d6747a4b105a6ac9c289f4"
   },
   "last_weekly": "2026-W33",
-  "theses": {},
+  "theses": {
+    "__enc__": "v1",
+    "nonce": "JQJNMuJsy7xKQ/NDYOxIcw==",
+    "data": "c2o=",
+    "tag": "e2f2e5260d943d8d0ad6725a7c2a8c70c99196f0d23eef95d5f700bbc7de53a0"
+  },
   "weather": {
     "ts": "2026-08-14T19:36:05.411114+00:00",
     "score": 77.0,
@@ -1271,166 +380,15 @@
     "crypto": 29.0
   },
   "engine": {
-    "pos": {
-      "JPM": {
-        "entry": 333.31,
-        "rps": 16.6655,
-        "peak": 365.74,
-        "opened": "2026-07-20",
-        "init_qty": 45.0,
-        "adds": 0,
-        "scaled_out": true
-      },
-      "SPY": {
-        "entry": 752.5245,
-        "rps": 37.626225,
-        "peak": 777.93,
-        "opened": "2026-07-20",
-        "init_qty": 20.0,
-        "adds": 0,
-        "scaled_out": false
-      },
-      "MSFT": {
-        "entry": 444.92,
-        "rps": 23.120000000000005,
-        "peak": 511.1,
-        "opened": "2026-07-30",
-        "init_qty": 31,
-        "adds": 0,
-        "scaled_out": true
-      },
-      "PLTR": {
-        "entry": 157.79,
-        "rps": 12.169999999999987,
-        "peak": 179.35,
-        "opened": "2026-08-04",
-        "init_qty": 79,
-        "adds": 0,
-        "scaled_out": true
-      },
-      "NVDA": {
-        "entry": 209.98,
-        "rps": 11.530000000000001,
-        "peak": 225.73,
-        "opened": "2026-08-04",
-        "init_qty": 69,
-        "adds": 0,
-        "scaled_out": false
-      },
-      "QQQ": {
-        "entry": 722.19,
-        "rps": 23.020000000000095,
-        "peak": 733.22,
-        "opened": "2026-08-05",
-        "init_qty": 20,
-        "adds": 0,
-        "scaled_out": false
-      },
-      "ARKK": {
-        "entry": 79.8,
-        "rps": 3.75,
-        "peak": 82.62,
-        "opened": "2026-08-10",
-        "init_qty": 184,
-        "adds": 0,
-        "scaled_out": false
-      },
-      "TSM": {
-        "entry": 430.99,
-        "rps": 23.160000000000025,
-        "peak": 434.58,
-        "opened": "2026-08-12",
-        "init_qty": 34,
-        "adds": 0,
-        "scaled_out": false
-      },
-      "GLD": {
-        "entry": 401.27,
-        "rps": 10.71999999999997,
-        "peak": 403.0,
-        "opened": "2026-08-13",
-        "init_qty": 36,
-        "adds": 0,
-        "scaled_out": false
-      }
-    },
-    "stop_events": [
-      "2026-07-31|AAPL",
-      "2026-08-11|GOOGL",
-      "2026-08-12|AMZN"
-    ],
-    "cooldown": {
-      "GOOGL": "2026-08-16",
-      "AMZN": "2026-08-17"
-    },
-    "halted_until": null,
-    "equity_peak": 98994.36
+    "__enc__": "v1",
+    "nonce": "8h3f/JRKSsJL6m1ItYAY+Q==",
+    "data": "jjoKj2FYE3fm4USJ34EyH2F59r2r/b+8bHBfpppMUiLbw0E6bhMUu69fd4j7PRkjlXeInBlyuy/8gDdHDzq9Y1yMVlhqmpzDs3yQY4aQjYNqAMsbCfUTlq6Q8CQMq3bzeHaUnQ7CNVqUKqK3s59BFreHWWXsH0T58WN8ZX9Z3jGlwUIBivB8CPUu7Djosd9umnbubrfPtkIelaE14u7ZLxl9zNa8+GFbcM63P9Z3Kp3o/NrqhRDVtuBnm2wKpDKMcoflHA80GwzcfDLLMJhkriEEC5ITbIkfRYZyk5ux0FmSbyUJ3GfCm9QvnrMuSaAGi38fmyDk8jJ0eMXQLO8+jiIfofOBzcPJpXqGtIK0zt3mQy3m4IWcWfO1D7EoaectXpXKlYFadQevNw/7fINcGO2mX+l/ipAQMhOdVs0HqTURBBMbe5oxYSNg9bXUwxQ7vwwopWl06koTkw6jUhiQtVC6TCTettLDB5ZdRk4PsSgjl/YOw8s6fFmM/Yc+QhZ9RTegUK06fp/sevKVJIAmy7aH79xuWRsLnDAOU9Ehi+r6chzoHP1T/UyBDTY4AXc63LwpxXTuxHwHy4BOBZ5j4kZEwYWavWUSfZCqCvi2cdxO0W+HpLfpoL5Pqb3RIijqNIpiaAYRCr8ysgtRxvguWx1Q4cju3sAm3zVBjZbrbsfM7qJdeTjWNGvcwMG98vbA5vXTY2xFM5h1tm8D9FTqTQzVNlzHA7TuOn5h6kHxL8n2IdcALzzQb5Nrv8JPcAh5gvFhez4Bgwy0yCv7BlNQWhtgaxt0Rz3dh36qPprr1GVMTD+Iy4W84pJOlts570Z8UDPoEGVlUOUAM9pV6sGYbtYVcXi4bqHnfiwE4ZFo7XLzXZlhU1t6hJNOyYFGHz+xtkdqGAiUvJ3KKWb9Dzp7hONZmZh9dKMb+61FBiDmzshFoJXIoVVnLs6z7gYVycAfNhnmerKQLjUaaDzIZTL7hjlH4yr9zQP3vgKYXjYd5h01SXxhTFa+gkwOIBFHrAYW9AUzHKQm0q5X+t9l8Q8Z4BFpqxFFoG0a7PlLaB5HCsfuOAaqfGd33OhK+v2N7wu9ifEWYEbDGI09dzcad6VwsI5GSkJWlETjhKpLkq9XRgJ4ZIQx/FdgDO4Vg0I2b0q+02VmVI8YKC+shMFUHh8cJL8C1thpGYVem+WmQNRBvVzjCtlmkbKgtdzHs5jIbdbv0oRZFjpPNpQHykuJ32O710+Y9QFfBsKL/VzrEJFuM/62IxKSiie4hnG6vXOOY8kDzaH+peEYsZXN6DR3lT49YkyyMBsfXqhmyVtCdwqtPy6dSRpC+8yxv7SruI7rkGk8y2xf2KPqZQNdJYjE6ST6ZuRsJHz86Yv2Y8xIa8dMh6dn39c+WsLTJ1uTy6gxCmQMHb4Z1JsM6OYO0dA18/9NVMgM0tuY48E3dMCxOgLI3WKMEfSwkGYrvZchpjDfPv/y2kdbxwEy/BeNzQZJsWwy2LXdi9Ip3Pnrp3DnhJMwl+QpnbfYONFczWWycDriGLGthnj4VBX9q+TBhEo2Ku9mg6HVOcrqc+BkxxizIQ+k6X8Xxhj2NFJUtd9N3RV99r7AfOkck4mx1134fW/awkqtTZu6fkKC066WKTRLKGnYbd7Y+uCxahH6BY6VnUh/J0voVHOOVtrzvbASJTg/6flLeSNv/BgZ2uawzym2+ViwkkwvqTD0WKkf66vdBVI3nUJQsEAj+/YYOYmdNJdZo5E9lcbQCGXJfLZY0IwcEqk+ld6sTadZWGvrsOJjv/CtOYFMdP5PpEYM8q7bdoaf/d7FmrkiONn/jAU7RzEn/OScLNXMIrVIEjfmd0EEmGc/zyWwFlR5B4N6cIWvsKB4+16X0s9RTYgL3lzStPTC70E97XXcdGE=",
+    "tag": "b9f759a1ad9c9b019e1c7775d0c4d365fd2c1ff20b4a292a48d916c9b566b18c"
   },
   "shadow": {
-    "started": "2026-07-29",
-    "start_real_equity": 94493.02,
-    "cash": 35.75000000000364,
-    "positions": {
-      "JPM": {
-        "qty": 40.0,
-        "entry": 349.95
-      },
-      "MSFT": {
-        "qty": 35.0,
-        "entry": 398.88
-      },
-      "AMZN": {
-        "qty": 52.0,
-        "entry": 271.29
-      },
-      "PLTR": {
-        "qty": 80.0,
-        "entry": 157.79
-      },
-      "NVDA": {
-        "qty": 69.0,
-        "entry": 209.98
-      },
-      "QQQ": {
-        "qty": 13.0,
-        "entry": 716.74
-      },
-      "SPY": {
-        "qty": 17.0,
-        "entry": 777.81
-      },
-      "ARKK": {
-        "qty": 3.0,
-        "entry": 82.0
-      }
-    },
-    "last_px": {
-      "JPM": 362.64,
-      "MSFT": 495.48,
-      "AMZN": 263.57,
-      "PLTR": 174.74,
-      "NVDA": 225.22,
-      "QQQ": 730.09,
-      "SPY": 776.18,
-      "ARKK": 81.18
-    },
-    "last": {
-      "date": "2026-08-14",
-      "equity": 98037.94,
-      "real_equity": 98299.57
-    }
-  },
-  "last_run_ts": "2026-08-16T23:05:46.928338+00:00",
-  "health": {
-    "date": "2026-08-16",
-    "runs": 1,
-    "max_run_s": 28.0,
-    "max_gap_min": 0.0,
-    "prev": {
-      "date": null,
-      "runs": null,
-      "max_run_s": null,
-      "max_gap_min": null
-    }
+    "__enc__": "v1",
+    "nonce": "PgsiGK3MQIXP9D/7QBM36A==",
+    "data": "1IpJS7tG8Jd7vmdr+Rl7GNvndwwjUrloKHY/ViFVNfj9A1aWAqd7ltUwIfqtGkbUkrcrTxpUTdkWnGA2QQ43Hbjp/ZRWF7qCW/PEniplIiGhG77Lc94KwmGkcMQ09SiWcG50L/P2RZSu/UnUN53xkO6BgRtIyL6kN0BV4pl4rhkoLGsakOs8e+GkpKzLoKIC/6M29hsASGNAIovyXYWhAnpHL/XzkBXv806Z5D02c/qeuETk8cKgOaV58+Y2LqcX2PUYqRzLCVoCtMfDiJfiOAqwzl2XAbgYFe6e0eHwlIqmMfFcDkDeJhfhDYYvvkzu9GxYxZvg/irf3dVzavHx4tOqW1dDF5P57/IH3zS0UUJ8zfVTwKKA/pGOQ/2H4ShTSIci95B5AisROu0UoTOrYQ6uHKiUTPLxcg8GFv/ACG1KEa54SX2yvD7dRSWlI7uyjNSOdvYFroPccT7NT2BWMLP7wVu3kj8WUIlGGp79K8Z/AUODVVN/PbN/xpnS8SkjZcR3Sa9fLTKNMQki8IRi8mXrprviUsjDJbOUx2Y/E9Hd7+8xO7BMcmTs64/djL5YdUeWjT0/jExmEdvdkzjM3ZwiMX6NOYJZ9O7AS3eMVkilv1i6fwXe3M7gDOcMCqoqS45R2VTuAdyliOUqvgSPen9FWtBnBkW5GZz0hBl4ydQTTICszny0hcF3iFuzau2iyEfMzHA43MErbZE9kIqCUjhz6kL3Ci8D2HImAy7hA/2CJQr7uzRI80Pvvwd9sD8X+22WaT/NIfb9w/Oe9VoATsOLeFhF4bdEwzopToC78T9aOBdTAd1eHqjIhW6H1b2n818=",
+    "tag": "d286fd5d1c0801d1b61fd4fe9008ec016b33baf9435e6cbadd1220b2034e1c5a"
   }
 }
