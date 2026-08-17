@@ -407,7 +407,7 @@ def _cmd_help() -> str:
         "`/briefing` — 立即生成每日晨報\n"
         "`/today [帳戶 風險%]`（或 `/plan`）— 當日交易計畫：VWAP/ORB 進場票（進場/停損/停利/股數）\n"
         "`/plantest [apply|clear]` — 當日計畫 60 日回測；apply 套用校準（每週自動跑，`/set plan_autocal_enabled off` 關）\n"
-        "`/plantest opt [apply]` — 參數尋優：ORB×停損×R:R 掃 27 組，驗證段勝過預設才推薦\n"
+        "`/plantest opt [apply]` — 參數尋優：ORB×停損×R:R 掃 27 組，holdout 段把關通過才推薦\n"
         "`/weekly` — 立即生成每週深度週報（指數/強弱/計分板/RRG/下週行事曆）\n"
         "`/committee NVDA`（或 `/cmt`）— 開一場機構決策會議（需 LLM key，約 1-3 分）\n\n"
         "🤖 *模擬交易（Alpaca paper・分層引擎）*\n"

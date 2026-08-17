@@ -312,11 +312,14 @@ def optimize(tickers: list[str], grid: dict | None = None,
              max_tickers: int = 8, data: dict | None = None) -> dict:
     """
     網格掃參數（ORB 分鐘 × 停損 ATR 倍數 × 目標 R:R），每組完整重放。
-    穩健挑選：訓練段 avg_R 排序（樣本 ≥ MIN_TRADES）→ 取第一個「驗證段也正期望」
-    的組合為 best；再與現行預設比驗證段——**沒有明確勝過預設就不推薦**
-    （recommend=None＝維持預設，避免為調而調的過擬合）。
+    三段式穩健挑選：train avg_R 排序 → 取第一個 val 合格者（n≥VAL_MIN_TRADES
+    且正期望）為 best → **holdout 只看一次做最終把關**（best 與 baseline 皆
+    n≥HOLDOUT_MIN_TRADES 時比 +0.05R，否則 best holdout 須為正）——沒過就
+    recommend=None＝維持預設（把關與挑選分離，切斷驗證段選擇污染）。
     回 {"results", "best", "baseline", "recommend", "n_tickers"}；
-    results 各項含 params/train/val/trades。
+    results 各項含 params/train/val/holdout/split/split2/trades。
+    注意：opt_text 顯示的 val 數字是 27 選 1 的優勝者統計，天然偏樂觀；
+    可信的是 holdout 欄。
     """
     from itertools import product
     grid = grid or GRID
@@ -358,7 +361,9 @@ def optimize(tickers: list[str], grid: dict | None = None,
         b_h = best.get("holdout") or {}
         base_h = (baseline or {}).get("holdout") or {}
         if b_h.get("n", 0) >= HOLDOUT_MIN_TRADES and b_h.get("avg_r") is not None:
-            if base_h.get("avg_r") is None:
+            # baseline 自己也要有足夠 holdout 樣本才配當 +0.05R 的比較基準——
+            # 1-4 筆的噪音基準雙向誤判（驗證回饋：爛運氣放水、好運氣誤擋）
+            if base_h.get("avg_r") is None or base_h.get("n", 0) < HOLDOUT_MIN_TRADES:
                 ok = b_h["avg_r"] > 0
             else:
                 ok = b_h["avg_r"] >= base_h["avg_r"] + 0.05

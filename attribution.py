@@ -102,11 +102,17 @@ def benchmark_stats(rows: list[dict], bench) -> dict | None:
            年化會假精確）
     樣本 < 5 回 None。
     """
+    try:
+        bench = bench.dropna()          # NaN 會穿過 not b0 檢查毒化 avg_excess
+    except Exception:
+        pass
     pts = []
     for r in rows:
-        b0 = _px_on(bench, r.get("buy_day"))
-        b1 = _px_on(bench, r.get("sell_day"))
-        if not b0 or not b1 or b0 <= 0:
+        if not r.get("buy_day") or not r.get("sell_day"):
+            continue                    # _px_on(s, None) 的 loc[:NaT] 會回整條序列
+        b0 = _px_on(bench, r["buy_day"])
+        b1 = _px_on(bench, r["sell_day"])
+        if not b0 or not b1 or b0 <= 0 or b0 != b0 or (b1 is not None and b1 != b1):
             continue
         pts.append((r["ret"], b1 / b0 - 1))
     if len(pts) < 5:

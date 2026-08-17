@@ -5798,7 +5798,7 @@ def page_alerts():
                            f"{p_['stop_atr_mult']}×ATR、目標 {p_['target_rr']}R——"
                            "Telegram 傳 `/plantest opt apply` 套用")
             else:
-                st.info("➖ 無組合在驗證段明確勝過現行預設——維持預設（不為調而調）")
+                st.info("➖ 無組合通過 holdout 把關——維持預設（不為調而調）")
             with st.expander("完整尋優報告", expanded=False):
                 st.text(pbt_o2.opt_text(_opt, top_n=8))
 
