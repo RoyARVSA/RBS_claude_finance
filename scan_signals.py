@@ -1013,6 +1013,9 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
             elif key in float_keys or eng_ok:
                 try:
                     v = float(val)
+                    import math as _math
+                    if not _math.isfinite(v):
+                        raise ValueError("nan/inf")   # NaN 穿透 clamp（對抗驗證實案）
                     lo_hi = SET_CLAMPS.get(key)
                     if lo_hi:
                         clamped = min(max(v, lo_hi[0]), lo_hi[1])
