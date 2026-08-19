@@ -24,6 +24,7 @@ trade_engine.py – Lean 式分層自動交易引擎（純邏輯、離線可測�
 
 from __future__ import annotations
 
+import math
 from datetime import date, timedelta
 
 ENGINE_DEFAULTS = {
@@ -35,7 +36,10 @@ ENGINE_DEFAULTS = {
     "max_position_pct":   0.15,   # 每檔市值上限（占淨值）
     "risk_pct":           0.01,   # 單筆風險占淨值
     "pyramid_r":          1.0,    # 每獲利 +1R 可加碼一次
-    "pyramid_max_adds":   2,      # 最多加碼次數
+    "pyramid_max_adds":   2,      # 最多加碼次數。註：預設參數下實際最多 1 次——
+                                  # scale_out_r(1.5R) 先於第二次加碼門檻(2R) 觸發，
+                                  # 分批後 scaled_out 永久停用加碼（免費部位語意）。
+                                  # 要真 2 次需 eng_scale_out_r>2 或 eng_pyramid_r<0.75
     "pyramid_frac":       0.5,    # 加碼股數上限 = 初始股數 × 此比例
     "pyramid_min_score":  0.0,    # 加碼時評分至少要 ≥ 此值
     "pyramid_headroom":   1.3,    # 加碼可把單檔市值推到 max_position_pct × 此值
@@ -138,6 +142,12 @@ def decide(scored: list[dict], positions: dict, equity: float, buying_power: flo
     engine 就地更新後回傳（呼叫端持久化）。notes 為給使用者的機制說明行。
     """
     cfg = {**ENGINE_DEFAULTS, **(config or {})}
+    # NaN/inf 消毒（對抗驗證實案：NaN 穿透 min/max clamp——min(max(nan,1),2)=nan；
+    # /set eng_risk_pct nan 曾可炸掉整個 decide）：非有限數值一律退回預設
+    for _k, _dv in ENGINE_DEFAULTS.items():
+        _v = cfg.get(_k)
+        if isinstance(_v, float) and not math.isfinite(_v):
+            cfg[_k] = _dv
     # /set eng_* 不驗證值域 → 引擎端夾住，避免 trail_pct 5 或 guard_n 0 之類造成
     # 「保本價全平」「恆真保險絲→永久 HALTED」的靜默災難
     for k in ("trail_pct", "trail_tight_pct"):
@@ -579,6 +589,15 @@ if __name__ == "__main__":
     p3 = [o for o in orders3 if o["mechanism"] == "pyramid"]
     assert len(p3) == 1 and p3[0]["qty"] == 2, orders3        # bp 250/105 → 2 股
     print("✅ 11b 死鎖幾何修復（headroom 部分加碼 / 夾制重現死鎖 / 現金約束）")
+
+    # 11c) NaN/inf 消毒：nan 穿透 min/max clamp、eng_risk_pct nan 曾炸整個 decide
+    _nan_cfg = {"pyramid_headroom": float("nan"), "risk_pct": float("nan"),
+                "max_positions": float("inf")}
+    orders, _, _ = decide(
+        [{"ticker": "OK", "score": 0.8, "price": 100.0, "risk_per_share": 4.0}],
+        {}, 100000, 100000, new_engine_state(), "risk_on", _nan_cfg, T)
+    assert orders and orders[0]["qty"] == 150, orders   # 全部退回預設值照常運作
+    print("✅ 11c NaN/inf 退回預設不炸")
 
     # 12) 新進場：ACTIVE + 高分 → 買進且簿記建檔；上限約束仍在
     eng = new_engine_state()
