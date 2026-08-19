@@ -36,8 +36,13 @@ ENGINE_DEFAULTS = {
     "risk_pct":           0.01,   # 單筆風險占淨值
     "pyramid_r":          1.0,    # 每獲利 +1R 可加碼一次
     "pyramid_max_adds":   2,      # 最多加碼次數
-    "pyramid_frac":       0.5,    # 加碼股數 = 初始股數 × 此比例
+    "pyramid_frac":       0.5,    # 加碼股數上限 = 初始股數 × 此比例
     "pyramid_min_score":  0.0,    # 加碼時評分至少要 ≥ 此值
+    "pyramid_headroom":   1.3,    # 加碼可把單檔市值推到 max_position_pct × 此值
+                                  # （2026-08 實案：ATR sizing 天然把進場開到 15% 滿格，
+                                  #   加碼條件「市值+加碼 ≤ 15%」數學上恆 False——
+                                  #   贏家加碼上線一個月零觸發。headroom 只給已 +1R
+                                  #   的贏家用，初始進場仍受 15% 約束）
     # ── Risk 層（價格驅動出場）───────────────────────────────────────────
     "stop_mult":          1.0,    # 硬停損 = 進場價 − stop_mult × 每股風險
     "trail_activate_r":   1.0,    # 獲利 ≥ +1R 才啟動追蹤停損（同時墊高到保本）
@@ -142,6 +147,7 @@ def decide(scored: list[dict], positions: dict, equity: float, buying_power: flo
     # 風險預算雙保險（B9 原則：防護放純函數入口）——/set 端也夾，這裡再夾一次
     cfg["risk_pct"] = min(max(float(cfg["risk_pct"]), 0.0005), 0.05)
     cfg["max_position_pct"] = min(max(float(cfg["max_position_pct"]), 0.01), 0.50)
+    cfg["pyramid_headroom"] = min(max(float(cfg["pyramid_headroom"]), 1.0), 2.0)
     engine = engine if isinstance(engine, dict) and engine.get("pos") is not None \
         else new_engine_state()
     equity = float(equity)
@@ -363,12 +369,19 @@ def decide(scored: list[dict], positions: dict, equity: float, buying_power: flo
             if adds < int(cfg["pyramid_max_adds"]) \
                     and r_now >= (adds + 1) * float(cfg["pyramid_r"]) \
                     and sc >= float(cfg["pyramid_min_score"]):
-                add_qty = int(max(1, rec.get("init_qty", 0) * float(cfg["pyramid_frac"])))
                 mv_now = abs(float(positions[sym].get("market_value") or 0))
-                if (mv_now + add_qty * px) <= equity * float(cfg["max_position_pct"]) \
-                        and add_qty * px <= bp:
+                # 加碼量＝裝得下多少加多少：min(半倍, headroom 剩餘空間, 現金)。
+                # 全有全無的舊寫法在「進場即滿格」幾何下恆 False（死鎖實案）；
+                # headroom 上限只給贏家加碼用，初始進場仍受 max_position_pct 約束
+                room = equity * float(cfg["max_position_pct"]) \
+                    * float(cfg["pyramid_headroom"]) - mv_now
+                add_qty = min(int(max(1, rec.get("init_qty", 0) * float(cfg["pyramid_frac"]))),
+                              int(room / px) if room > 0 else 0,
+                              int(bp / px))
+                if add_qty >= 1:
                     orders.append({"symbol": sym, "side": "buy", "qty": add_qty,
-                                   "reason": f"贏家加碼 #{adds + 1}（獲利 {r_now:+.1f}R，評分 {sc:+.2f}）",
+                                   "reason": f"贏家加碼 #{adds + 1}（獲利 {r_now:+.1f}R，"
+                                             f"評分 {sc:+.2f}，空間內 {add_qty} 股）",
                                    "mechanism": "pyramid"})
                     rec["adds"] = adds + 1
                     bp -= add_qty * px
@@ -540,6 +553,32 @@ if __name__ == "__main__":
         {"AMD": mk_pos(10, 100, 105)}, 100000, 50000, eng3, "risk_off", None, T)
     assert not any(o["mechanism"] == "pyramid" for o in orders), orders
     print("✅ 11 贏家加碼（一次 / 上限 / REDUCING 禁止）")
+
+    # 11b) 死鎖幾何迴歸（2026-08 production 實案：ATR sizing 進場即 15% 滿格，
+    #      舊「全有全無」條件恆 False——上線一個月 8/8 檔加碼零觸發）
+    eng = mk_eng("FULL", 100, 5, peak=106, init_qty=147)   # 147×100=14,700=15% 滿格
+    orders, eng, _ = decide(
+        [{"ticker": "FULL", "score": 0.6, "price": 105.0}],
+        {"FULL": mk_pos(147, 100, 105)}, 100000, 50000, eng, "risk_on", None, T)
+    pyr = [o for o in orders if o["mechanism"] == "pyramid"]
+    # headroom 1.3：room = 19,500 − 15,435 = 4,065 → 加 38 股（部分加碼，非半倍 73）
+    assert len(pyr) == 1 and pyr[0]["qty"] == 38, orders
+    assert (147 + 38) * 105.0 <= 100000 * 0.15 * 1.3 + 1e-6   # 加碼後仍在 19.5% 內
+    # headroom 亂值 0.5 → 夾回 1.0 → 滿格部位無空間 → 重現死鎖（不加碼）
+    eng2 = mk_eng("FULL", 100, 5, peak=106, init_qty=147)
+    orders2, _, _ = decide(
+        [{"ticker": "FULL", "score": 0.6, "price": 105.0}],
+        {"FULL": mk_pos(147, 100, 105)}, 100000, 50000, eng2, "risk_on",
+        {"pyramid_headroom": 0.5}, T)
+    assert not any(o["mechanism"] == "pyramid" for o in orders2), orders2
+    # 現金不足時加碼縮到現金可及量
+    eng3 = mk_eng("CASH", 100, 5, peak=106, init_qty=10)
+    orders3, _, _ = decide(
+        [{"ticker": "CASH", "score": 0.6, "price": 105.0}],
+        {"CASH": mk_pos(10, 100, 105)}, 100000, 250, eng3, "risk_on", None, T)
+    p3 = [o for o in orders3 if o["mechanism"] == "pyramid"]
+    assert len(p3) == 1 and p3[0]["qty"] == 2, orders3        # bp 250/105 → 2 股
+    print("✅ 11b 死鎖幾何修復（headroom 部分加碼 / 夾制重現死鎖 / 現金約束）")
 
     # 12) 新進場：ACTIVE + 高分 → 買進且簿記建檔；上限約束仍在
     eng = new_engine_state()
