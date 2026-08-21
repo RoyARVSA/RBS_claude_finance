@@ -1083,7 +1083,11 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
             try:
                 import mirror_book as mb
                 sub = args[0].lower() if args else ""
-                if sub == "init":
+                # 加密未解的降級輪：寫入會被密文蓋回、看似成功實則丟失（Low-2）
+                if sub in ("init", "reset") and \
+                        "mirror" in (state.get("__enc_locked__") or {}):
+                    reply = "❌ 加密區塊未解鎖（STATE_ENC_KEY 異常），暫停鏡像帳寫入操作"
+                elif sub == "init":
                     if isinstance(state.get("mirror"), dict) and "cash" in state["mirror"]:
                         reply = (f"⚠️ 鏡像帳已存在（{state['mirror'].get('started')} 起）——"
                                  "要重建請先 `/mirror reset`")
@@ -1109,6 +1113,12 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                                          f"${state['mirror']['start_equity']:,.0f}）\n"
                                          "引擎將於下輪開盤掃描起自主管理；"
                                          "持倉標的已自動納入掃描。資料存加密區")
+                                # 鏡像依附 autotrade 迴圈——未開等於不會運轉（Low-1）
+                                _k, _s = _alpaca_keys()
+                                if not th.get("autotrade_enabled", False):
+                                    reply += "\n⚠️ autotrade 未開啟——`/autotrade on` 後鏡像帳才會開始運轉"
+                                elif not _k or not _s:
+                                    reply += "\n⚠️ 未設 Alpaca key——autotrade 迴圈不會執行，鏡像帳也不會運轉"
                 elif sub == "reset":
                     had = isinstance(state.get("mirror"), dict)
                     state.pop("mirror", None)

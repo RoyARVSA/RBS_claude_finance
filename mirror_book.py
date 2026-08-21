@@ -30,19 +30,30 @@ JOURNAL_CAP = 200
 
 
 def parse_holdings(tokens: list[str]) -> tuple[list, list]:
-    """解析 ["AAPL:10:180.5", ...] → ([(sym, qty, cost)], 錯誤清單)。"""
+    """解析 ["AAPL:10:180.5", ...] → ([(sym, qty, cost)], 錯誤清單)。
+    股數 <1 拒收（引擎不管零股，收了會靜默凍結佔名額——對抗驗證 Med-3）；
+    重複 symbol 合併為加權均價（覆蓋會虛報虧損——Med-2）。"""
     out, bad = [], []
     for t in tokens:
         try:
             sym, qty, cost = t.split(":")
             sym = sym.strip().upper()
             qty_f, cost_f = float(qty), float(cost)
-            if not sym or not sym.isalnum() or qty_f <= 0 or cost_f <= 0:
+            if not sym or not sym.isalnum() or qty_f < 1 or cost_f <= 0:
                 raise ValueError
             out.append((sym, qty_f, cost_f))
         except ValueError:
             bad.append(t)
-    return out, bad
+    merged: dict = {}
+    order = []
+    for sym, q, c in out:
+        if sym in merged:
+            q0, c0 = merged[sym]
+            merged[sym] = (q0 + q, (q0 * c0 + q * c) / (q0 + q))
+        else:
+            merged[sym] = (q, c)
+            order.append(sym)
+    return [(s, merged[s][0], round(merged[s][1], 4)) for s in order], bad
 
 
 def init_book(cash: float, holdings: list, today: str) -> dict:
@@ -78,6 +89,25 @@ def run_mirror(state: dict, scored: list[dict], config: dict,
     prices = {s["ticker"]: float(s["price"]) for s in scored
               if s.get("ticker") and s.get("price")}
 
+    # 殭屍倉防護（對抗驗證 Med-1，同 shadow_book 設計）：持倉連續 5 天無報價
+    # →凍結價強平。不然 decide 每輪用凍結價產生幽靈賣單、apply 因無價 skip、
+    # 迴圈永不終止（production=每 15 分鐘推播騷擾一次）
+    from shadow_book import STALE_CLOSE_DAYS, _days_between
+    pos_book = m.setdefault("positions", {})
+    stale_notes = []
+    for sym, p in list(pos_book.items()):
+        if sym in prices:
+            p.pop("stale_since", None)
+            continue
+        p.setdefault("stale_since", str(today)[:10])
+        if _days_between(p["stale_since"], today) >= STALE_CLOSE_DAYS:
+            px = (m.get("last_px") or {}).get(sym) or p.get("entry") or 0
+            m["cash"] += float(p.get("qty", 0)) * float(px)
+            del pos_book[sym]
+            (m.get("last_px") or {}).pop(sym, None)
+            stale_notes.append(f"🪞 {sym} 連續 {STALE_CLOSE_DAYS} 天無報價 → "
+                               f"凍結價 {px:.2f} 強制平倉")
+
     # 引擎視角的「broker 持倉」＝鏡像帳本身（含 market_value 供 price_of 退路）
     pos_view = {}
     for sym, p in (m.get("positions") or {}).items():
@@ -91,7 +121,10 @@ def run_mirror(state: dict, scored: list[dict], config: dict,
     orders, eng, notes = te.decide(scored, pos_view, equity, m["cash"],
                                    m.get("engine"), regime, config, today)
     m["engine"] = eng
-    exec_notes = sb.apply_orders(m, orders, prices)
+    # 只認「有報價、實際會成交」的單——無價幽靈單不入帳/不入 journal/不推播
+    # （對抗驗證 Med-1：apply_orders 對無價單 skip，記意圖會與帳本脫節）
+    filled = [o for o in orders if prices.get(o["symbol"])]
+    sb.apply_orders(m, filled, prices)
 
     lp = m.setdefault("last_px", {})
     for sym in list(m.get("positions") or {}):
@@ -103,9 +136,9 @@ def run_mirror(state: dict, scored: list[dict], config: dict,
                  "equity": round(sb.book_equity(m, prices), 2)}
 
     lines = []
-    if orders:
+    if filled or stale_notes:
         j = m.setdefault("journal", [])
-        for o in orders:
+        for o in filled:
             j.append({"date": str(today)[:10], "symbol": o["symbol"],
                       "side": o["side"], "qty": o["qty"],
                       "price": prices.get(o["symbol"]),
@@ -113,8 +146,11 @@ def run_mirror(state: dict, scored: list[dict], config: dict,
         if len(j) > JOURNAL_CAP:
             m["journal"] = j[-JOURNAL_CAP:]
         lines.append("🪞 *鏡像帳*（引擎管理你的實倉起點）")
-        for o, note in zip(orders, exec_notes + [""] * len(orders)):
+        for o in filled:
             lines.append(f"・{o['side'].upper()} {o['symbol']} x{int(o['qty'])} — {o['reason']}")
+        lines.extend(stale_notes)
+        # 保險絲/曝險級事件值得推播（對抗驗證 Low-4）
+        lines.extend(n for n in notes if n.startswith("🚨"))
     return lines
 
 
@@ -159,10 +195,15 @@ def mirror_text(state: dict) -> str:
 if __name__ == "__main__":
     T = "2026-08-21"
 
-    # 1) 解析
-    hold, bad = parse_holdings(["AAPL:10:180.5", "NVDA:20:150", "壞的", "X:-1:5", "Y:1:0"])
-    assert hold == [("AAPL", 10.0, 180.5), ("NVDA", 20.0, 150.0)] and len(bad) == 3
-    print("✅ 1 快照解析（合法/壞格式）")
+    # 1) 解析：壞格式拒收、零股拒收（Med-3）、重複 symbol 加權合併（Med-2）
+    hold, bad = parse_holdings(["AAPL:10:180.5", "NVDA:20:150", "壞的", "X:-1:5",
+                                "Y:1:0", "Z:0.5:100"])
+    assert hold == [("AAPL", 10.0, 180.5), ("NVDA", 20.0, 150.0)] and len(bad) == 4
+    dup, bad2 = parse_holdings(["AAPL:10:100", "AAPL:5:200"])
+    assert dup == [("AAPL", 15.0, round((10 * 100 + 5 * 200) / 15, 4))] and not bad2
+    b_dup = init_book(1000, dup, T)
+    assert abs(b_dup["start_equity"] - (1000 + 10 * 100 + 5 * 200)) < 1e-6  # 不再虛報
+    print("✅ 1 快照解析（壞格式/零股拒收/重複合併不虛報）")
 
     # 2) init：start_equity = 現金 + 成本市值
     st = {"mirror": init_book(25000, hold, T)}
@@ -203,6 +244,23 @@ if __name__ == "__main__":
     assert "鏡像帳" in txt and "_" not in txt and txt.count("*") % 2 == 0, txt
     assert "未初始化" in mirror_text({})
     print("✅ 5 邊界 + 顯示（Markdown 安全）")
+
+    # 5b) 幽靈賣單防護（Med-1）：持倉不在 scored → decide 用凍結價產生賣單，
+    #     但不得入帳/入 journal/推播；連續 5 天無報價 → 凍結價強平
+    stg = {"mirror": init_book(1000, [("DEAD", 10, 100.0)], "2026-08-21")}
+    stg["mirror"]["positions"]["DEAD"]["entry"] = 100.0
+    ln_a = run_mirror(stg, [{"ticker": "GLD2", "score": 0.0, "price": 50.0}],
+                      {}, "risk_on", "2026-08-21")
+    assert "DEAD" in stg["mirror"]["positions"]           # 無價 → 沒被幽靈單平掉
+    assert not any(e["symbol"] == "DEAD" for e in stg["mirror"].get("journal", []))
+    assert not any("DEAD" in ln for ln in ln_a), ln_a     # 不推播幽靈單
+    assert stg["mirror"]["positions"]["DEAD"]["stale_since"] == "2026-08-21"
+    ln_b = run_mirror(stg, [{"ticker": "GLD2", "score": 0.0, "price": 50.0}],
+                      {}, "risk_on", "2026-08-26")        # 5 天後
+    assert "DEAD" not in stg["mirror"]["positions"]       # 凍結價強平
+    assert stg["mirror"]["cash"] >= 1000 + 10 * 100 - 1e-6
+    assert any("強制平倉" in ln for ln in ln_b), ln_b
+    print("✅ 5b 幽靈單不入帳 + 殭屍倉 5 天凍結強平")
 
     # 6) journal cap
     st["mirror"]["journal"] = [{"x": i} for i in range(JOURNAL_CAP + 50)]
