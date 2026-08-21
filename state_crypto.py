@@ -38,7 +38,8 @@ import os
 # 加密的 state 頂層鍵（其餘留明文：watchlist/weather/signal_history 等
 # 皆為公開資料的衍生，加密徒增體積）
 SENSITIVE_KEYS = ("theses", "shadow", "engine", "thresholds",
-                  "plan_calib", "reflections", "calibration")
+                  "plan_calib", "reflections", "calibration",
+                  "mirror")   # 鏡像帳：使用者真實布建與資金量，絕不落明文
 
 _MAGIC = "__enc__"
 
