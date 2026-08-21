@@ -36,6 +36,7 @@ Telegram 指令（傳給 Bot）：
   /checkup                – 交易行為體檢：追高/過度交易/太早出場/持有期（journal 實測）
   /attrib                 – 機制歸因報告：各出場/進場機制的損益/勝率/賣後追蹤
   /shadow                 – Shadow 對照：舊決策邏輯平行記帳 vs 新引擎（同訊號流）
+  /mirror [init|reset]    – 鏡像帳：以你的實際持倉+資金為起點，引擎自主模擬操作
   /rebalance [配置法]     – 再平衡顧問：Alpaca 持倉 vs HRP/Sharpe/風險平價 → 加減碼清單
   /dcf TICKER [成長%]     – DCF 內在價值估值（FCF/WACC/終值/隱含股價；投行標準流程）
   /fund SYM [vs BENCH]    – 基金/ETF 評估：費用率/追蹤誤差/α β/捕獲率；overlap 比重疊
@@ -420,6 +421,7 @@ def _cmd_help() -> str:
         "`/checkup` — 交易行為體檢：追高/過度交易/太早出場（各機制賣後 10 日追蹤）\n"
         "`/attrib` — 機制歸因報告：各出場/進場機制的實測損益、勝率、賣後追蹤（哪一層在賺錢）\n"
         "`/shadow` — Shadow 對照：舊邏輯虛擬帳 vs 新引擎真帳，量化引擎增量\n"
+        "`/mirror [init 現金 代碼:股數:成本 ...|reset]` — 鏡像帳：引擎接管你的實倉起點做模擬\n"
         "`/rebalance [hrp|max_sharpe|min_vol|erc|equal]` — 再平衡顧問（持倉 vs 目標權重 → 加減碼清單）\n"
         "`/dcf AAPL [成長%]` — DCF 內在價值估值（FCF→WACC→終值→隱含股價）\n"
         "`/fg` — 雙恐懼貪婪指數（美股+加密）；`/taifex` — 台指期三大法人籌碼\n"
@@ -1076,6 +1078,56 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                 "設定範例：`/risk 100000 1`（帳戶 $10萬、單筆風險 1%）\n"
                 "或 `/set atr_mult 2`、`/set position_sizing_enabled off`"
             )
+
+        elif cmd == "/mirror":
+            try:
+                import mirror_book as mb
+                sub = args[0].lower() if args else ""
+                # 加密未解的降級輪：寫入會被密文蓋回、看似成功實則丟失（Low-2）
+                if sub in ("init", "reset") and \
+                        "mirror" in (state.get("__enc_locked__") or {}):
+                    reply = "❌ 加密區塊未解鎖（STATE_ENC_KEY 異常），暫停鏡像帳寫入操作"
+                elif sub == "init":
+                    if isinstance(state.get("mirror"), dict) and "cash" in state["mirror"]:
+                        reply = (f"⚠️ 鏡像帳已存在（{state['mirror'].get('started')} 起）——"
+                                 "要重建請先 `/mirror reset`")
+                    elif len(args) < 2:
+                        reply = "用法：`/mirror init 現金 代碼:股數:成本 ...`"
+                    else:
+                        try:
+                            cash = float(args[1])
+                            assert cash >= 0
+                        except (ValueError, AssertionError):
+                            reply = f"❌ 現金額無效：{args[1]}"
+                        else:
+                            hold, bad = mb.parse_holdings(args[2:])
+                            if bad:
+                                reply = ("❌ 這些持倉格式無效（要 代碼:股數:成本）：\n"
+                                         + "、".join(bad))
+                            else:
+                                state["mirror"] = mb.init_book(
+                                    cash, hold, datetime.now(ET).strftime("%Y-%m-%d"))
+                                changed = True
+                                reply = (f"🪞 鏡像帳已啟動：現金 ${cash:,.0f}＋"
+                                         f"{len(hold)} 檔持倉（起始淨值 "
+                                         f"${state['mirror']['start_equity']:,.0f}）\n"
+                                         "引擎將於下輪開盤掃描起自主管理；"
+                                         "持倉標的已自動納入掃描。資料存加密區")
+                                # 鏡像依附 autotrade 迴圈——未開等於不會運轉（Low-1）
+                                _k, _s = _alpaca_keys()
+                                if not th.get("autotrade_enabled", False):
+                                    reply += "\n⚠️ autotrade 未開啟——`/autotrade on` 後鏡像帳才會開始運轉"
+                                elif not _k or not _s:
+                                    reply += "\n⚠️ 未設 Alpaca key——autotrade 迴圈不會執行，鏡像帳也不會運轉"
+                elif sub == "reset":
+                    had = isinstance(state.get("mirror"), dict)
+                    state.pop("mirror", None)
+                    changed = True
+                    reply = "🪞 鏡像帳已刪除" if had else "🪞 沒有鏡像帳可刪"
+                else:
+                    reply = mb.mirror_text(state)
+            except Exception as e:
+                reply = f"❌ 鏡像帳操作失敗：{e}"
 
         elif cmd == "/shadow":
             try:
@@ -2408,7 +2460,14 @@ def scan_and_report(state: dict, timestamp: str) -> tuple[str | None, list[dict]
         print(f"plan autocal error: {e}")
 
     # 掃描（校準加權評分）
-    results = scan(state["watchlist"], th, calibration=_calibration_weights(state))
+    # 掃描清單自動聯集鏡像帳持倉——引擎對使用者的實倉標的不可失明（殭屍倉教訓）
+    _scan_syms = list(state["watchlist"])
+    try:
+        import mirror_book as _mb
+        _scan_syms += [s for s in _mb.holdings_symbols(state) if s not in _scan_syms]
+    except ImportError:
+        pass
+    results = scan(_scan_syms, th, calibration=_calibration_weights(state))
     state["last_scan_time"] = timestamp
 
     # 大盤風險濾網
@@ -2619,7 +2678,25 @@ def run_autotrade(state: dict, results: list[dict]) -> str | None:
             print(f"Autotrade: 舊決策邏輯也失敗，本輪跳過 {e2}")
             return None
 
+    # 鏡像帳（模式 A）：同 scored/config 由引擎自主操作使用者實倉起點的虛擬帳
+    # ——獨立 try，鏡像炸掉絕不影響真帳；market_regime 有 1h 快取重呼叫零成本
+    mirror_lines = []
+    try:
+        import mirror_book as mb
+        _mr_rg = market_regime(state) if th.get("regime_filter_enabled", True) else None
+        mirror_lines = mb.run_mirror(
+            state, scored, config,
+            _mr_rg.get("regime") if _mr_rg else None,
+            datetime.now(ET).strftime("%Y-%m-%d"))
+        for ln in mirror_lines:
+            print(f"Mirror: {ln}")
+    except Exception as e:
+        print(f"Mirror: 鏡像帳失敗，跳過 {e}")
+        mirror_lines = []
+
     if not orders:
+        if mirror_lines:
+            return "\n".join(mirror_lines)   # 真帳無單但鏡像有動作，照樣通知
         print("Autotrade: 無符合下單條件")
         return None
 
@@ -2646,6 +2723,9 @@ def run_autotrade(state: dict, results: list[dict]) -> str | None:
     for n in notes:
         if n.startswith(("⏸", "🚨")) or "曝險狀態" in n:
             lines.append(f"_{n}_")
+    if mirror_lines:
+        lines.append("")
+        lines.extend(mirror_lines)
     order_syms = {o["symbol"] for o in orders}
     for n in ao_notes:
         # 🔗 相關性跳過/縮半與 🎭 帳戶級縮倉一律顯示（少量且都是「為什麼沒買/買少」

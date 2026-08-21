@@ -59,6 +59,9 @@ Streamlit 網頁應用 + 獨立的訊號掃描 Bot（GitHub Actions 排程版 / 
   機制歸因雛形）、持有期分佈（概念參考 HKUDS/Vibe-Trading，MIT）
 - **Shadow 對照**（`/shadow`）：舊版決策邏輯以虛擬帳本平行記帳（同一訊號流、
   疊加前原始評分）——直接量化引擎重製的增量價值，比任何回測都有說服力
+- **鏡像帳**（`/mirror`）：以你的實際持倉與資金量為起點的虛擬帳戶，
+  由完整引擎堆疊自主模擬操作（模式 A：真實買賣不同步）——回答
+  「該不該把實倉交給系統」；實倉資料存加密區、持倉標的自動納入掃描
 - **機制歸因報告**（`/attrib`）：FIFO 重建每筆已實現損益，按出場機制
   （硬停損/追蹤/分批/訊號/死錢）與進場機制（首進/加碼）分組：損益/勝率/
   持有天 + 賣後 10 日追蹤——用實測數據回答「引擎哪一層在賺錢、哪個機制太急」，
@@ -170,6 +173,7 @@ alpha_overlay.py        Alpha 資訊疊加層：內部人/選擇權/空單/財�
 market_weather.py       市場氣象台：廣度/信用/VIX期限/曲線/銅金五因子體質分
 behavior_check.py       交易行為體檢：追高/頻率/出場品質/持有期
 shadow_book.py          Shadow 對照帳本：舊決策邏輯平行記帳 vs 新引擎
+mirror_book.py          鏡像帳：引擎接管使用者實倉起點的虛擬帳戶(模式 A)
 attribution.py          機制歸因報告：各機制實測損益/勝率/賣後追蹤(FIFO)
 state_crypto.py         敏感區塊加密：論點/淨值/簿記/參數以密文 commit(STATE_ENC_KEY)
 net_guard.py            慢源熔斷 decorator：慢且空→本輪跳過該源(掛 options/short)
