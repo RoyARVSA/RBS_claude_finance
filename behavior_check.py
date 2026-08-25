@@ -279,18 +279,22 @@ def fetch_closes(symbols: list[str], period: str = "9mo") -> dict:
     return out
 
 
-def run_checkup(journal_path) -> str:
-    """Bot /checkup 進入點。"""
-    import alpaca_trader as at
-    journal = at.load_journal(journal_path)
+def run_checkup_for(journal: list, header: str = "") -> str:
+    """任意標準格式 journal 的行為體檢（/checkup 與 /checkup mirror 共用主體）。"""
     subs = [e for e in journal if e.get("submitted")]
     if len(subs) < MIN_N:
-        return f"🩺 交易日誌僅 {len(subs)} 筆，累積 {MIN_N} 筆以上再來體檢"
+        return header + f"🩺 交易紀錄僅 {len(subs)} 筆，累積 {MIN_N} 筆以上再來體檢"
     syms = sorted({e.get("symbol") for e in subs if e.get("symbol")})
     closes = fetch_closes(syms)
     if not closes:
-        return "❌ 行情抓取失敗，稍後再試"
-    return checkup_text(analyze(journal, closes))
+        return header + "❌ 行情抓取失敗，稍後再試"
+    return header + checkup_text(analyze(journal, closes))
+
+
+def run_checkup(journal_path) -> str:
+    """Bot /checkup 進入點。"""
+    import alpaca_trader as at
+    return run_checkup_for(at.load_journal(journal_path))
 
 
 # ── 自我測試（合成資料，離線）─────────────────────────────────────────────

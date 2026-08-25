@@ -422,6 +422,7 @@ def _cmd_help() -> str:
         "`/attrib` — 機制歸因報告：各出場/進場機制的實測損益、勝率、賣後追蹤（哪一層在賺錢）\n"
         "`/shadow` — Shadow 對照：舊邏輯虛擬帳 vs 新引擎真帳，量化引擎增量\n"
         "`/mirror [init 現金 代碼:股數:成本 ...|reset]` — 鏡像帳：引擎接管你的實倉起點做模擬\n"
+        "`/attrib mirror`、`/checkup mirror` — 鏡像帳版的機制歸因與行為體檢\n"
         "`/rebalance [hrp|max_sharpe|min_vol|erc|equal]` — 再平衡顧問（持倉 vs 目標權重 → 加減碼清單）\n"
         "`/dcf AAPL [成長%]` — DCF 內在價值估值（FCF→WACC→終值→隱含股價）\n"
         "`/fg` — 雙恐懼貪婪指數（美股+加密）；`/taifex` — 台指期三大法人籌碼\n"
@@ -1147,7 +1148,13 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
             _tg_send(token, src_chat or chat_id, "🧾 重建配對損益中，約 20 秒…")
             try:
                 import attribution as ab
-                reply = ab.run_attrib(JOURNAL_FILE)
+                if args and args[0].lower() == "mirror":
+                    import mirror_book as mb
+                    reply = ab.run_attrib_for(
+                        mb.to_std_journal(state.get("mirror")),
+                        header="🪞 *鏡像帳歸因*\n")
+                else:
+                    reply = ab.run_attrib(JOURNAL_FILE)
             except Exception as e:
                 reply = f"❌ 歸因報告失敗：{e}"
 
@@ -1155,7 +1162,13 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
             _tg_send(token, src_chat or chat_id, "🩺 分析交易紀錄與行情中，約 20 秒…")
             try:
                 import behavior_check as bc
-                reply = bc.run_checkup(JOURNAL_FILE)
+                if args and args[0].lower() == "mirror":
+                    import mirror_book as mb
+                    reply = bc.run_checkup_for(
+                        mb.to_std_journal(state.get("mirror")),
+                        header="🪞 *鏡像帳體檢*\n")
+                else:
+                    reply = bc.run_checkup(JOURNAL_FILE)
             except Exception as e:
                 reply = f"❌ 行為體檢失敗：{e}"
 

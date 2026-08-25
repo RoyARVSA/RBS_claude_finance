@@ -154,6 +154,23 @@ def run_mirror(state: dict, scored: list[dict], config: dict,
     return lines
 
 
+def to_std_journal(m: dict | None) -> list[dict]:
+    """mirror journal → attribution/behavior_check 相容格式（純函數）。
+    mirror 條目用 date 且必然成交；標準格式要 time/submitted。"""
+    if not isinstance(m, dict):
+        return []
+    out = []
+    for e in (m.get("journal") or []):
+        if not isinstance(e, dict) or not e.get("symbol"):
+            continue
+        out.append({"time": f"{e.get('date', '')}T15:00:00Z",
+                    "symbol": e["symbol"], "side": e.get("side"),
+                    "qty": e.get("qty"), "price": e.get("price"),
+                    "mechanism": e.get("mechanism"), "reason": e.get("reason"),
+                    "submitted": True})
+    return out
+
+
 def mirror_text(state: dict) -> str:
     """/mirror 顯示（Telegram legacy Markdown：單 *、無底線）。"""
     m = state.get("mirror")
@@ -268,5 +285,17 @@ if __name__ == "__main__":
                      "risk_per_share": 2.0}], {}, "risk_on", T)
     assert len(st["mirror"]["journal"]) <= JOURNAL_CAP + 1
     print("✅ 6 journal cap")
+
+    # 7) to_std_journal：mirror journal → attribution/behavior_check 相容格式
+    std = to_std_journal({"journal": [
+        {"date": "2026-08-21", "side": "buy", "symbol": "MSFT", "qty": 3,
+         "price": 100.0, "mechanism": "entry", "reason": "r"},
+        {"bad": 1}, "junk"]})
+    assert len(std) == 1 and std[0]["submitted"] is True
+    assert std[0]["time"] == "2026-08-21T15:00:00Z"
+    assert std[0]["symbol"] == "MSFT" and std[0]["mechanism"] == "entry"
+    assert to_std_journal(None) == [] and to_std_journal({}) == []
+    assert to_std_journal({"__enc__": True, "n": "x"}) == []  # 鎖定密文 → 空
+    print("✅ 7 to_std_journal 橋接")
 
     print("\nmirror_book selftest OK ✅")
