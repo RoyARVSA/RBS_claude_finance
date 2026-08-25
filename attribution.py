@@ -247,18 +247,28 @@ def attrib_text(r: dict | None, fwd: dict | None = None) -> str:
 
 # ── 抓取層 + Bot 進入點 ───────────────────────────────────────────────────
 
-def run_attrib(journal_path) -> str:
-    import alpaca_trader as at
+def run_attrib_for(journal: list, broker_qty: dict | None = None,
+                   header: str = "") -> str:
+    """任意標準格式 journal 的歸因報告（/attrib 與 /attrib mirror 共用主體）。"""
     from behavior_check import fetch_closes, exit_quality
-    journal = at.load_journal(journal_path)
     subs = [e for e in journal if e.get("submitted")]
     if not subs:
-        return "🧾 交易日誌是空的——開 /autotrade on 累積紀錄後再來"
+        return header + "🧾 尚無交易紀錄可歸因"
     syms = sorted({e.get("symbol") for e in subs if e.get("symbol")})
     # 連 SPY 一起抓（相對基準歸因用；SPY 本身也可能是持倉標的，留在 closes 內）
     closes = _normalize_tz(fetch_closes(sorted(set(syms) | {"SPY"})))
     if not closes:
-        return "❌ 行情抓取失敗，稍後再試"
+        return header + "❌ 行情抓取失敗，稍後再試"
+    r = attribution(journal, closes, broker_qty, bench=closes.get("SPY"))
+    fwd = exit_quality(journal, closes)
+    return header + attrib_text(r, fwd)
+
+
+def run_attrib(journal_path) -> str:
+    import alpaca_trader as at
+    journal = at.load_journal(journal_path)
+    if not [e for e in journal if e.get("submitted")]:
+        return "🧾 交易日誌是空的——開 /autotrade on 累積紀錄後再來"
 
     broker_qty = None
     try:
@@ -277,9 +287,7 @@ def run_attrib(journal_path) -> str:
     except Exception:
         pass
 
-    r = attribution(journal, closes, broker_qty, bench=closes.get("SPY"))
-    fwd = exit_quality(journal, closes)
-    return attrib_text(r, fwd)
+    return run_attrib_for(journal, broker_qty)
 
 
 # ── 自我測試（合成資料，離線）─────────────────────────────────────────────

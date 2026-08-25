@@ -33,8 +33,8 @@ Telegram 指令（傳給 Bot）：
   /alpha                  – Alpha 資訊疊加層：內部人/選擇權情緒/空單/財報迴避/恐貪縮倉
   /positions /pnl /closeall – 模擬持倉 / 帳戶報酬 / 一鍵平倉
   /journal [N]            – 交易日誌（每筆自動交易的評分與原因）
-  /checkup                – 交易行為體檢：追高/過度交易/太早出場/持有期（journal 實測）
-  /attrib                 – 機制歸因報告：各出場/進場機制的損益/勝率/賣後追蹤
+  /checkup [mirror]       – 交易行為體檢：追高/過度交易/太早出場/持有期（journal 實測）
+  /attrib [mirror]        – 機制歸因報告：各出場/進場機制的損益/勝率/賣後追蹤（加 mirror 看鏡像帳）
   /shadow                 – Shadow 對照：舊決策邏輯平行記帳 vs 新引擎（同訊號流）
   /mirror [init|reset]    – 鏡像帳：以你的實際持倉+資金為起點，引擎自主模擬操作
   /rebalance [配置法]     – 再平衡顧問：Alpaca 持倉 vs HRP/Sharpe/風險平價 → 加減碼清單
@@ -422,6 +422,7 @@ def _cmd_help() -> str:
         "`/attrib` — 機制歸因報告：各出場/進場機制的實測損益、勝率、賣後追蹤（哪一層在賺錢）\n"
         "`/shadow` — Shadow 對照：舊邏輯虛擬帳 vs 新引擎真帳，量化引擎增量\n"
         "`/mirror [init 現金 代碼:股數:成本 ...|reset]` — 鏡像帳：引擎接管你的實倉起點做模擬\n"
+        "`/attrib mirror`、`/checkup mirror` — 鏡像帳版的機制歸因與行為體檢\n"
         "`/rebalance [hrp|max_sharpe|min_vol|erc|equal]` — 再平衡顧問（持倉 vs 目標權重 → 加減碼清單）\n"
         "`/dcf AAPL [成長%]` — DCF 內在價值估值（FCF→WACC→終值→隱含股價）\n"
         "`/fg` — 雙恐懼貪婪指數（美股+加密）；`/taifex` — 台指期三大法人籌碼\n"
@@ -1147,7 +1148,22 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
             _tg_send(token, src_chat or chat_id, "🧾 重建配對損益中，約 20 秒…")
             try:
                 import attribution as ab
-                reply = ab.run_attrib(JOURNAL_FILE)
+                if args and args[0].lower() == "mirror":
+                    import mirror_book as mb
+                    if "mirror" in (state.get("__enc_locked__") or {}):
+                        reply = ("❌ 加密區塊未解鎖（STATE_ENC_KEY 異常），"
+                                 "鏡像帳資料暫不可讀")
+                    else:
+                        m = state.get("mirror") or {}
+                        # mirror 自己的 positions 就是 broker truth：
+                        # 殭屍倉強平不寫 journal，靠對帳淘汰掛帳 lot（驗證 Med-1）
+                        bq = {s: float(p.get("qty", 0))
+                              for s, p in (m.get("positions") or {}).items()}
+                        reply = ab.run_attrib_for(
+                            mb.to_std_journal(m), broker_qty=bq,
+                            header="🪞 *鏡像帳歸因*\n")
+                else:
+                    reply = ab.run_attrib(JOURNAL_FILE)
             except Exception as e:
                 reply = f"❌ 歸因報告失敗：{e}"
 
@@ -1155,7 +1171,17 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
             _tg_send(token, src_chat or chat_id, "🩺 分析交易紀錄與行情中，約 20 秒…")
             try:
                 import behavior_check as bc
-                reply = bc.run_checkup(JOURNAL_FILE)
+                if args and args[0].lower() == "mirror":
+                    import mirror_book as mb
+                    if "mirror" in (state.get("__enc_locked__") or {}):
+                        reply = ("❌ 加密區塊未解鎖（STATE_ENC_KEY 異常），"
+                                 "鏡像帳資料暫不可讀")
+                    else:
+                        reply = bc.run_checkup_for(
+                            mb.to_std_journal(state.get("mirror")),
+                            header="🪞 *鏡像帳體檢*\n")
+                else:
+                    reply = bc.run_checkup(JOURNAL_FILE)
             except Exception as e:
                 reply = f"❌ 行為體檢失敗：{e}"
 
