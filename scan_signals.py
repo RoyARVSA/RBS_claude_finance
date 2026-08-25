@@ -33,8 +33,8 @@ Telegram 指令（傳給 Bot）：
   /alpha                  – Alpha 資訊疊加層：內部人/選擇權情緒/空單/財報迴避/恐貪縮倉
   /positions /pnl /closeall – 模擬持倉 / 帳戶報酬 / 一鍵平倉
   /journal [N]            – 交易日誌（每筆自動交易的評分與原因）
-  /checkup                – 交易行為體檢：追高/過度交易/太早出場/持有期（journal 實測）
-  /attrib                 – 機制歸因報告：各出場/進場機制的損益/勝率/賣後追蹤
+  /checkup [mirror]       – 交易行為體檢：追高/過度交易/太早出場/持有期（journal 實測）
+  /attrib [mirror]        – 機制歸因報告：各出場/進場機制的損益/勝率/賣後追蹤（加 mirror 看鏡像帳）
   /shadow                 – Shadow 對照：舊決策邏輯平行記帳 vs 新引擎（同訊號流）
   /mirror [init|reset]    – 鏡像帳：以你的實際持倉+資金為起點，引擎自主模擬操作
   /rebalance [配置法]     – 再平衡顧問：Alpaca 持倉 vs HRP/Sharpe/風險平價 → 加減碼清單
@@ -1150,9 +1150,18 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                 import attribution as ab
                 if args and args[0].lower() == "mirror":
                     import mirror_book as mb
-                    reply = ab.run_attrib_for(
-                        mb.to_std_journal(state.get("mirror")),
-                        header="🪞 *鏡像帳歸因*\n")
+                    if "mirror" in (state.get("__enc_locked__") or {}):
+                        reply = ("❌ 加密區塊未解鎖（STATE_ENC_KEY 異常），"
+                                 "鏡像帳資料暫不可讀")
+                    else:
+                        m = state.get("mirror") or {}
+                        # mirror 自己的 positions 就是 broker truth：
+                        # 殭屍倉強平不寫 journal，靠對帳淘汰掛帳 lot（驗證 Med-1）
+                        bq = {s: float(p.get("qty", 0))
+                              for s, p in (m.get("positions") or {}).items()}
+                        reply = ab.run_attrib_for(
+                            mb.to_std_journal(m), broker_qty=bq,
+                            header="🪞 *鏡像帳歸因*\n")
                 else:
                     reply = ab.run_attrib(JOURNAL_FILE)
             except Exception as e:
@@ -1164,9 +1173,13 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                 import behavior_check as bc
                 if args and args[0].lower() == "mirror":
                     import mirror_book as mb
-                    reply = bc.run_checkup_for(
-                        mb.to_std_journal(state.get("mirror")),
-                        header="🪞 *鏡像帳體檢*\n")
+                    if "mirror" in (state.get("__enc_locked__") or {}):
+                        reply = ("❌ 加密區塊未解鎖（STATE_ENC_KEY 異常），"
+                                 "鏡像帳資料暫不可讀")
+                    else:
+                        reply = bc.run_checkup_for(
+                            mb.to_std_journal(state.get("mirror")),
+                            header="🪞 *鏡像帳體檢*\n")
                 else:
                     reply = bc.run_checkup(JOURNAL_FILE)
             except Exception as e:
