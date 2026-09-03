@@ -34,12 +34,12 @@ Streamlit 金融儀表板（`app.py`，13 頁）+ Telegram 訊號 Bot（`scan_si
 | 網頁頁面/UI | `app.py`（~4300 行、會持續漂移，以 `wc -l` 為準；**不要整檔讀**。導航：Grep `def page_` 找頁面、`PAGES = {` 看路由、`def _cached_` 找快取層、`def _run_.*_tool` 找 AI 助理工具執行器）|
 | Bot 訊號/指令/晨報 | `scan_signals.py`（排程進入點；指令 dispatch 搜 `elif cmd ==`）；`bot_daemon.py` 重用其全部邏輯 |
 | 技術指標 / 綜合評分 | `indicators.py`（RSI/MACD/布林/ATR/評分 `composite_score`/部位提示/回測校準/掃描 `scan`——外部一律走公開名，scan_signals 內的底線名是 re-export 向後相容）|
-| 回測引擎 | `backtest.py`（triple-barrier / walk-forward / 參數最佳化）|
+| 回測引擎 | `backtest.py`（triple-barrier / walk-forward / 參數最佳化）+ `engine_backtest.py`（/engtest：整台 trade_engine 逐日重放、次日開盤成交含成本、108 組參數三段 walk-forward + DSR、apply 寫 thresholds eng_*）|
 | 部位與風險數學 | `quant_tools.py`（ATR/Kelly/風險平價）、`rbs_lib.py`（VaR/CVaR）|
 | 公司基本面 | `fundamentals.py`（主）+ `finnhub_data.py`（限流備援）|
 | 總經 / 產業掃描 / 選股庫 | `macro.py` / `sector_scan.py` / `stock_db.py`（含 AI 供應鏈瓶頸主題）|
 | 大盤濾網 / 市場氣象台 | `market_weather.py`（五因子體質分：廣度/信用/VIX 期限/曲線/銅金，成分可缺席、遲滯三態；`scan_signals.market_regime(state)` 優先用它、退回 MA50）|
-| 行為體檢 / Shadow / 歸因 | `behavior_check.py`（/checkup：追高/頻率/太早出場/持有期，journal 實測）+ `shadow_book.py`（/shadow：舊 decide_orders 吃原始評分平行記帳 state["shadow"]，量化引擎增量）+ `attribution.py`（/attrib：FIFO 重建各出場/進場機制的實測損益+勝率+賣後追蹤，broker 對帳淘汰 journal 外平倉的 lot）+ `mirror_book.py`（/mirror：引擎接管使用者實倉起點的虛擬帳，state["mirror"] 加密）|
+| 行為體檢 / Shadow / 歸因 | `behavior_check.py`（/checkup：追高/頻率/太早出場/持有期，journal 實測）+ `shadow_book.py`（/shadow：舊 decide_orders 吃原始評分平行記帳 state["shadow"]，量化引擎增量）+ `attribution.py`（/attrib：FIFO 重建各出場/進場機制的實測損益+勝率+賣後追蹤，broker 對帳淘汰 journal 外平倉的 lot）+ `mirror_book.py`（/mirror：引擎接管使用者實倉起點的虛擬帳，state["mirror"] 加密含 history 淨值序列；網頁 `page_mirror_book` 獨立頁）|
 | AI 助理 | `assistant.py`（意圖/context 純邏輯）+ `assistant_tools.py`（工具規劃/解析）+ app.py 的 `page_ai_assistant` 與 `_assistant_*` |
 | 選擇權情緒 / SEC 內部人 | `options_sentiment.py` / `sec_insider.py` |
 | Alpaca 模擬交易 | `trade_engine.py`（Lean 式分層引擎 `decide`：訊號只管進場、出場走停損/追蹤/分批/死錢、保險絲三態；state["engine"] 簿記）+ `alpha_overlay.py`（Alpha 層資訊疊加：內部人/選擇權/空單/財報 veto/恐貪縮倉，state["alpha_cache"] 限額輪替）+ `alpaca_trader.py`（REST client + bracket 單；`decide_orders` 為 legacy 退回路徑）|

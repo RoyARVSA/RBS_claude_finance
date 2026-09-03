@@ -25,6 +25,7 @@ Streamlit 網頁應用 + 獨立的訊號掃描 Bot（GitHub Actions 排程版 / 
 | 🚨 即時警報 | 監控清單、盤中走勢、訊號掃描、Telegram/Email 推播、**🎯 當日交易計畫（VWAP/ORB/RVOL 盤中訂單票：進場區間/停損/停利/股數，財報日自動迴避，可選 Alpaca IEX 即時價，一鍵送模擬 bracket 單）** |
 | 🛠️ 交易工具 | 部位大小、**波動率目標部位**、Kelly、風險報酬比、複利 |
 | 📉 模擬交易 | **Alpaca 紙上交易：帳戶績效、持倉、權益曲線 vs SPY、交易日誌（原因）、訊號實測勝率** |
+| 🪞 鏡像帳 | **引擎接管你實倉起點的虛擬帳（獨立檢視）：起始/目前淨值、持倉分布圓餅、淨值曲線、交易歷史（為什麼交易）、引擎保險絲狀態** |
 | 🏦 機構選股 | 6 步驟系統化選股（市場→策略→宏觀→資產類型→產業→標的）、**超級投資人 13F 持倉動向** |
 | 📰 新聞情報 | 多來源 RSS 聚合、LLM 情緒分析、金融報告生成 |
 | 📦 匯出報告 | 圖表 + KPI 表打包下載 |
@@ -69,12 +70,13 @@ Streamlit 網頁應用 + 獨立的訊號掃描 Bot（GitHub Actions 排程版 / 
 - **當日交易計畫**：`/today [帳戶 風險%]` 盤中訂單票（VWAP/ORB/RVOL 進場、停損/停利/股數、財報日迴避）；進場票自動記入決策計分板（隔日結算，與量化/委員會同板比較）
 - **當日計畫歷史回測**：`/plantest` 用過去 ~60 交易日 5 分 K 逐日重放訂單票（無前視、扣成本、停損優先），統計各型態實證勝率/R 期望值；`/plantest apply` 把 walk-forward 校準（負期望型態停用、不穩定降信心）套進 /today——**讓判定吃歷史實證自我修正**；**每週自動重跑校準**（動作有變時推播通知，`/set plan_autocal_enabled off` 關閉）
 - **參數尋優**：`/plantest opt` 掃 ORB 分鐘 × 停損 ATR 倍數 × 目標 R:R 共 27 組參數，訓練段排序、**驗證段沒明確勝過現行預設就不推薦**（防過擬合）；`opt apply` 一鍵套用推薦參數＋對應校準
+- **引擎歷史重放與參數學習**：`/engtest [3m|6m|1y|2y]` 把**整台波段引擎**（進場門檻、停損/追蹤/分批/死錢、保險絲、regime 三態）逐日重放過去 N 個月——每日評分只用當日以前 K 棒、t 日決策 t+1 開盤成交、單邊 0.05% 成本、對照 SPY 買進持有，回答「如果用現行參數過去會賺多少」；`/engtest opt [apply]` 掃 進場門檻×停損倍數×追蹤回落×分批R×死錢天數 108 組，三段 walk-forward（訓練排序/驗證挑選/holdout 只看一次把關）+ DSR 扣多重測試幸運上限——這是「從歷史學規則」的誠實版（參數搜索，非深度 RL：日 K 樣本太少會學到雜訊）；`clear` 還原
 - **假設反駁器**：`/falsify` 對投資故事跑 8 類反駁測試——block bootstrap 漂移顯著性（誠實處理重疊視窗）、日期穩健性、晚進場、成本存活、事件日 CAR、regime/利率週期切分、動能混淆兩因子回歸、跨市場泛化——外加 **DSR 多重假設帳本**（試了幾個才挑到這個→折減）。**只能證偽、不能證實**，報告頁首永遠印這句話
 - **投資論點追蹤**：`/thesis` 記錄每檔的論點/支柱/風險/催化劑與**失效價**，掃描自動監測失效與達標即推播；逾 90 天未複查晨報提醒（「不可否證的不是論點」）
 - **財報前瞻/覆盤**：`/preview TICKER` 財報前 3 週出前瞻（共識、beat 率、選擇權隱含波動、三情境框架），公布後 2 週出覆盤（beat/miss、隔日反應、評等動向），模式自動判定
 - **Telegram 指令**：清單 `/add /remove /list`、分析 `/rank /fundamentals /options /insider /whales /earnings /briefing /weekly /today`、
   **AI `/committee`（手機開機構決策會議）**、警報 `/alert`、風控 `/risk /protections /calibrate`、
-  模擬交易 `/autotrade /positions /pnl /journal /closeall`（`/help` 看全部）
+  模擬交易 `/autotrade /positions /pnl /journal /closeall /mirror /engtest`（`/help` 看全部）
 
 ### 🧪 回測引擎（`backtest.py`）
 
@@ -174,6 +176,7 @@ market_weather.py       市場氣象台：廣度/信用/VIX期限/曲線/銅金�
 behavior_check.py       交易行為體檢：追高/頻率/出場品質/持有期
 shadow_book.py          Shadow 對照帳本：舊決策邏輯平行記帳 vs 新引擎
 mirror_book.py          鏡像帳：引擎接管使用者實倉起點的虛擬帳戶(模式 A)
+engine_backtest.py      引擎歷史重放 + 參數學習（walk-forward 三段 + DSR，/engtest）
 attribution.py          機制歸因報告：各機制實測損益/勝率/賣後追蹤(FIFO)
 state_crypto.py         敏感區塊加密：論點/淨值/簿記/參數以密文 commit(STATE_ENC_KEY)
 net_guard.py            慢源熔斷 decorator：慢且空→本輪跳過該源(掛 options/short)

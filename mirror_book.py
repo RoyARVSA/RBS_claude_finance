@@ -27,6 +27,7 @@ mirror_book.py – 鏡像帳本（模式 A 接管模擬；純邏輯、離線可�
 from __future__ import annotations
 
 JOURNAL_CAP = 200
+HISTORY_CAP = 400        # 每日淨值點數上限（~1.5 年）
 
 
 def parse_holdings(tokens: list[str]) -> tuple[list, list]:
@@ -134,6 +135,14 @@ def run_mirror(state: dict, scored: list[dict], config: dict,
         del lp[sym]
     m["last"] = {"date": str(today)[:10],
                  "equity": round(sb.book_equity(m, prices), 2)}
+    # 淨值歷史（網頁鏡像帳頁的淨值曲線）：每日一點、同日覆寫、上限 HISTORY_CAP
+    hist = m.setdefault("history", [])
+    if hist and hist[-1].get("date") == m["last"]["date"]:
+        hist[-1] = dict(m["last"])
+    else:
+        hist.append(dict(m["last"]))
+    if len(hist) > HISTORY_CAP:
+        del hist[:-HISTORY_CAP]
 
     lines = []
     if filled or stale_notes:
@@ -297,5 +306,21 @@ if __name__ == "__main__":
     assert to_std_journal(None) == [] and to_std_journal({}) == []
     assert to_std_journal({"__enc__": True, "n": "x"}) == []  # 鎖定密文 → 空
     print("✅ 7 to_std_journal 橋接")
+
+    # 8) 淨值歷史：同日覆寫不重複、跨日追加、超過 HISTORY_CAP 截舊
+    sh = {"mirror": init_book(1000, [], "2026-08-21")}
+    sc1 = [{"ticker": "GLD", "score": 0.0, "price": 50.0}]
+    run_mirror(sh, sc1, {}, "risk_on", "2026-08-21")
+    run_mirror(sh, sc1, {}, "risk_on", "2026-08-21")
+    assert len(sh["mirror"]["history"]) == 1
+    run_mirror(sh, sc1, {}, "risk_on", "2026-08-22")
+    assert [h["date"] for h in sh["mirror"]["history"]] == ["2026-08-21", "2026-08-22"]
+    assert sh["mirror"]["history"][-1]["equity"] == sh["mirror"]["last"]["equity"]
+    sh["mirror"]["history"] = [{"date": f"2020-01-{i % 28 + 1:02d}", "equity": 1.0}
+                               for i in range(HISTORY_CAP + 30)]
+    run_mirror(sh, sc1, {}, "risk_on", "2026-08-23")
+    assert len(sh["mirror"]["history"]) == HISTORY_CAP
+    assert sh["mirror"]["history"][-1]["date"] == "2026-08-23"
+    print("✅ 8 淨值歷史（同日覆寫/追加/cap）")
 
     print("\nmirror_book selftest OK ✅")
