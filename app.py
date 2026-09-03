@@ -6096,7 +6096,7 @@ def page_paper_trading():
                     use_container_width=True, hide_index=True)
             st.caption("⚠️ 為訊號發出後的 mark-to-market（未配對賣出、未計費用），"
                        "與「回測」的差異即真實 vs 歷史模擬的落差。")
-    else:
+    elif not _j_locked and hasattr(at, "load_journal"):
         st.info("尚無自動交易紀錄。開啟 Bot 的 `/autotrade on` 後，每筆自動交易的評分與原因會記在這裡。")
 
     st.caption("⚠️ Alpaca paper 為模擬環境，成交為理想化（無真實滑價/流動性）。"
@@ -6211,13 +6211,13 @@ def page_mirror_book():
                 p = pos[sym]
                 q = float(p.get("qty") or 0)
                 ent = float(p.get("entry") or 0)
-                px = float(lp.get(sym) or ent)
-                mv = q * px
+                _px = float(lp.get(sym) or ent)     # 勿命名 px：會遮蔽 plotly.express（驗證 High-1）
+                mv = q * _px
                 # 收養＝初始化帶進來且引擎從未買過（journal 無該檔 buy）
                 adopted = not any(j.get("symbol") == sym and j.get("side") == "buy"
                                   for j in (m.get("journal") or []) if isinstance(j, dict))
-                rows.append({"代碼": sym, "股數": q, "成本": ent, "最新價": px,
-                             "市值": mv, "未實現": (px / ent - 1) if ent else 0.0,
+                rows.append({"代碼": sym, "股數": q, "成本": ent, "最新價": _px,
+                             "市值": mv, "未實現": (_px / ent - 1) if ent else 0.0,
                              "權重": (mv / eq) if eq else 0.0,
                              "來源": "收養（你的原持倉）" if adopted else "引擎建倉"})
             pdf = pd.DataFrame(rows)
@@ -6240,7 +6240,8 @@ def page_mirror_book():
 
     # ── Tab 2：淨值曲線 ─────────────────────────────────────────────
     with tab2:
-        hist = [h for h in (m.get("history") or []) if h.get("date") and h.get("equity")]
+        hist = [h for h in (m.get("history") or [])
+                if isinstance(h, dict) and h.get("date") and h.get("equity")]
         if len(hist) < 2:
             st.info("淨值歷史累積中（每交易日一點；此功能上線後才開始記錄，"
                     "最少需兩個交易日）。目前僅有：" +
