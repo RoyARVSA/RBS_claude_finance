@@ -1443,6 +1443,8 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                 is_opt = sub == "opt"
                 rest = args[1:] if is_opt else args
                 period = next((a.lower() for a in rest if a.lower() in eb.PERIOD_DAYS), "1y")
+                if is_opt and eb.PERIOD_DAYS.get(period, 0) < 80:
+                    period = "6m"        # 三段 walk-forward 需 ≥80 個交易日（3m 恆不足）
                 do_apply = is_opt and any(a.lower() == "apply" for a in rest)
                 eng_pos = sorted(((state.get("engine") or {}).get("pos") or {}).keys())
                 syms = list(dict.fromkeys(list(state["watchlist"][:12]) + eng_pos))
@@ -1452,7 +1454,7 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                     _tg_send(token, src_chat or chat_id,
                              f"🧪 引擎歷史重放（{len(syms)} 檔 × {period}"
                              f"{'、108 組參數 × 三段 walk-forward' if is_opt else ''}，"
-                             f"約 {'3-5' if is_opt else '1'} 分鐘）…")
+                             f"約 {'1-2' if is_opt else '1'} 分鐘）…")
                     try:
                         # 長操作前先落盤 last_update_id（runner 超時被殺也不會毒訊息迴圈）
                         save_state(state)

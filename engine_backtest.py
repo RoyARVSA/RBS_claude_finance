@@ -329,9 +329,13 @@ def optimize(pre: dict, grid: dict | None = None, baseline: dict | None = None,
     base_prm = {k: te.ENGINE_DEFAULTS[k] for k in keys}
     if baseline:
         base_prm.update({k: baseline[k] for k in keys if k in baseline})
+    # 非網格的現行覆蓋（max_positions/risk_pct/…）固定帶入每組——否則「基準（現行）」
+    # 不是現行、推薦參數沒在使用者實際設定下測過（對抗驗證 Med-1）
+    fixed = {k: v for k, v in (baseline or {}).items() if k not in keys}
+    out["fixed"] = fixed
 
     def _run(prm):
-        segs = {seg: replay(pre, prm, sp[seg]) for seg in ("train", "val", "holdout")}
+        segs = {seg: replay(pre, {**fixed, **prm}, sp[seg]) for seg in ("train", "val", "holdout")}
         return {"params": prm,
                 **{seg: segs[seg]["metrics"] for seg in segs},
                 "_holdout_eq": segs["holdout"]["equity"]}
@@ -366,7 +370,9 @@ def optimize(pre: dict, grid: dict | None = None, baseline: dict | None = None,
     if best:
         try:
             import falsifier as fz
-            trial_srs = [r["train"]["sr_d"] for r in results]
+            # 幸運上限的跨組變異須與 sr 同樣本長度：用各組 holdout sr_d（只借變異、
+            # 不做挑選；train 段長 2 倍會讓 sr_star 低估→DSR 偏樂觀，對抗驗證 Med-2）
+            trial_srs = [r["holdout"]["sr_d"] for r in results]
             out["dsr"] = fz.deflated_sharpe(best["holdout"]["sr_d"], best["holdout"]["n_days"],
                                             len(results), trial_srs,
                                             best["holdout"]["skew"], best["holdout"]["kurt"])
@@ -381,23 +387,34 @@ def apply_params(state: dict, params: dict, meta: dict | None = None) -> list[st
     """把推薦參數寫進 thresholds 的 eng_* 鍵（引擎 config 覆蓋路徑），並記錄
     state["eng_opt"] 供 /engtest clear 還原。回寫入的鍵名。"""
     th = state.setdefault("thresholds", {})
-    prev = {}
+    old_rec = state.get("eng_opt") if isinstance(state.get("eng_opt"), dict) else {}
+    prev = dict(old_rec.get("prev") or {})       # 連續 apply：保留最早的原值
+    applied = dict(old_rec.get("applied") or {})
     written = []
     for k, v in params.items():
         key = f"eng_{k}"
-        prev[key] = th.get(key)
+        if key not in prev:
+            prev[key] = th.get(key)
         th[key] = v
+        applied[key] = v
         written.append(key)
-    state["eng_opt"] = {"params": dict(params), "prev": prev, **(meta or {})}
+    state["eng_opt"] = {"params": dict(params), "prev": prev, "applied": applied,
+                        **(meta or {})}
     return written
 
 
 def clear_params(state: dict) -> list[str]:
-    """還原 apply_params 寫入的鍵（有舊值還舊值、原本沒有就刪）。回還原的鍵名。"""
+    """還原 apply_params 寫入的鍵（有舊值還舊值、原本沒有就刪）。
+    使用者事後手動 /set 過的鍵（現值 ≠ 套用值）保留不動（對抗驗證 Med-3）。
+    回還原的鍵名（被保留的鍵以 "鍵(手動值保留)" 標示）。"""
     rec = state.pop("eng_opt", None) or {}
     th = state.get("thresholds") or {}
     done = []
+    applied = rec.get("applied") or {}
     for key, old in (rec.get("prev") or {}).items():
+        if key in applied and key in th and th[key] != applied[key]:
+            done.append(f"{key}(手動值保留)")
+            continue
         if old is None:
             th.pop(key, None)
         else:
@@ -618,7 +635,28 @@ if __name__ == "__main__":
     assert st["eng_opt"]["as_of"] == "2026-09-03" and set(keys) == {"eng_trail_pct", "eng_buy_threshold"}
     clear_params(st)
     assert st["thresholds"] == {"eng_trail_pct": 0.07} and "eng_opt" not in st
-    print("✅ 8 apply/clear 往返")
+    # 連續兩次 apply → clear 必須回到最初原值（不是第一次 apply 的值）
+    st2 = {"thresholds": {"eng_trail_pct": 0.07}}
+    apply_params(st2, {"trail_pct": 0.05})
+    apply_params(st2, {"trail_pct": 0.12, "stop_mult": 1.5})
+    clear_params(st2)
+    assert st2["thresholds"] == {"eng_trail_pct": 0.07}, st2["thresholds"]
+    # 使用者事後手動 /set 過的鍵 → clear 保留手動值
+    st3 = {"thresholds": {}}
+    apply_params(st3, {"trail_pct": 0.05, "stop_mult": 1.5})
+    st3["thresholds"]["eng_trail_pct"] = 0.1          # 手動覆蓋
+    done3 = clear_params(st3)
+    assert st3["thresholds"] == {"eng_trail_pct": 0.1}, st3["thresholds"]
+    assert any("手動值保留" in d for d in done3)
+    print("✅ 8 apply/clear 往返（連續 apply / 手動值保留）")
+
+    # 8b) opt 的非網格現行覆蓋固定帶入：max_positions=1 必須讓結果不同於不帶
+    o_a = optimize(pre, {"buy_threshold": (0.3,)}, baseline={"max_positions": 1})
+    o_b = optimize(pre, {"buy_threshold": (0.3,)})
+    assert o_a["fixed"] == {"max_positions": 1}
+    assert o_a["baseline"]["train"]["n_trades"] != o_b["baseline"]["train"]["n_trades"] or \
+        o_a["baseline"]["train"]["total_ret"] != o_b["baseline"]["train"]["total_ret"]
+    print("✅ 8b optimize 帶入非網格現行參數")
 
     # 9) 文字輸出 Markdown 安全（單 * 成對、無底線）
     txt = run_text(rep, {"buy_threshold": 0.3}, pre["dates"], bench_return(pre, pre["dates"]), "1y")
