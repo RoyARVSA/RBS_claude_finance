@@ -243,6 +243,7 @@ with st.sidebar:
             # 交易與監控
             "🚨 即時警報",
             "📉 模擬交易",
+            "🪞 鏡像帳",
             # 工具
             "📦 匯出報告",
         ],
@@ -5993,11 +5994,20 @@ def page_paper_trading():
 
     # ── 交易日誌（含下單原因/評分）─────────────────────────────
     section("交易日誌（為什麼交易）")
+    _j_locked = False
     if not hasattr(at, "load_journal"):
         st.info("交易日誌需要較新版 alpaca_trader.py。請重新啟動 App（Streamlit Cloud → Manage app → Reboot）以載入最新程式碼。")
         journal = []
+    elif hasattr(at, "_load_journal2"):
+        # 區分「真的沒紀錄」與「加密檔解不開」（使用者實案：51 筆日誌被顯示成
+        # 「尚無自動交易紀錄」——Streamlit Secrets 沒設 STATE_ENC_KEY）
+        journal, _j_locked = at._load_journal2(BASE_DIR / "trade_journal.json")
     else:
         journal = at.load_journal(BASE_DIR / "trade_journal.json")
+    if _j_locked:
+        st.warning("🔒 交易日誌已加密但無法解密——請在 Streamlit Cloud → Settings → Secrets "
+                   "加入 `STATE_ENC_KEY`（與 GitHub Secrets 同值），然後 Reboot app。"
+                   "Bot 端 /journal 不受影響。")
     if journal:
         jrows = []
         for e in journal[-30:][::-1]:
@@ -6007,6 +6017,7 @@ def page_paper_trading():
                 "代碼": e.get("symbol"), "方向": e.get("side"),
                 "股數": e.get("qty"),
                 "評分": (round(sc, 2) if isinstance(sc, (int, float)) else None),
+                "機制": e.get("mechanism") or "—",
                 "原因": e.get("reason"),
                 "送出": "✅" if e.get("submitted") else "❌",
             })
@@ -6085,12 +6096,236 @@ def page_paper_trading():
                     use_container_width=True, hide_index=True)
             st.caption("⚠️ 為訊號發出後的 mark-to-market（未配對賣出、未計費用），"
                        "與「回測」的差異即真實 vs 歷史模擬的落差。")
-    else:
+    elif not _j_locked and hasattr(at, "load_journal"):
         st.info("尚無自動交易紀錄。開啟 Bot 的 `/autotrade on` 後，每筆自動交易的評分與原因會記在這裡。")
 
     st.caption("⚠️ Alpaca paper 為模擬環境，成交為理想化（無真實滑價/流動性）。"
                "自動下單由 Bot 的 /autotrade 控制，此頁僅檢視。")
 
+
+
+# ════════════════════════════════════════════════════════════════════
+# PAGE: Mirror Book（鏡像帳：引擎接管使用者實倉起點的虛擬帳，獨立檢視）
+# ════════════════════════════════════════════════════════════════════
+
+_MECH_LABELS_FALLBACK = {
+    "stop_loss": "硬停損", "trailing_stop": "追蹤停損", "scale_out": "分批鎖利",
+    "signal_exit": "訊號轉弱", "dead_money": "死錢釋放", "entry": "進場",
+    "pyramid": "加碼", None: "未標記", "": "未標記",
+}
+
+
+def _mirror_load() -> tuple[dict | None, str]:
+    """讀 state["mirror"]。回 (mirror | None, 狀態) 狀態 ∈ ok/none/locked/error。
+    state 由 Bot workflow commit 進 repo；Streamlit Cloud 每次 push 會重新載入。"""
+    try:
+        import state_crypto as _sc
+    except ImportError:
+        return None, "error"
+    for cand in (BASE_DIR / "watchlist_state.json", Path("watchlist_state.json")):
+        try:
+            if not Path(cand).exists():
+                continue
+            m = _sc.read_state(cand).get("mirror")
+            if m is None:
+                return None, "none"
+            if _sc.is_enc(m):
+                return None, "locked"
+            if isinstance(m, dict) and "cash" in m:
+                return m, "ok"
+            return None, "none"
+        except Exception:
+            continue
+    return None, "none"
+
+
+def page_mirror_book():
+    st.title("🪞 鏡像帳（引擎接管你的實倉起點）")
+    st.caption("以你 `/mirror init` 當下的現金與持倉為起點，交易引擎完全自主操作的虛擬帳 · "
+               "與 Alpaca 真帳、Shadow 舊邏輯帳三方獨立 · 非投資建議")
+
+    m, status = _mirror_load()
+    if status == "locked":
+        st.warning("🔒 鏡像帳資料已加密但無法解密——請在 Streamlit Cloud → Settings → Secrets "
+                   "加入 `STATE_ENC_KEY`（與 GitHub Secrets 同值），然後 Reboot app。")
+        return
+    if status == "error":
+        st.error("找不到 state_crypto.py，請同步最新程式碼（Colab 需重跑 Cell 2）。")
+        return
+    if m is None:
+        st.info("鏡像帳尚未初始化。Telegram 傳 `/mirror init 現金 代碼:股數:成本 ...`\n\n"
+                "例：`/mirror init 25000 AAPL:10:180.5 NVDA:20:150`　"
+                "初始化後引擎完全自主（你的真實買賣不會同步進來）。")
+        return
+
+    try:
+        import shadow_book as _sb
+        _book_eq = _sb.book_equity
+    except Exception:
+        def _book_eq(book, prices=None):
+            eq = float(book.get("cash", 0))
+            for _s, _p in (book.get("positions") or {}).items():
+                eq += float(_p.get("qty", 0)) * float(
+                    (book.get("last_px") or {}).get(_s) or _p.get("entry") or 0)
+            return eq
+    try:
+        from behavior_check import MECH_LABELS as _ML
+    except Exception:
+        _ML = _MECH_LABELS_FALLBACK
+
+    start = float(m.get("start_equity") or 0)
+    last = m.get("last") or {}
+    eq = float(last.get("equity") or _book_eq(m))
+    cash = float(m.get("cash") or 0)
+    pos = m.get("positions") or {}
+    lp = m.get("last_px") or {}
+    eng = m.get("engine") or {}
+    peak = max(float(eng.get("equity_peak") or 0), eq)
+    dd = (1 - eq / peak) if peak > 0 else 0.0
+    ret = (eq / start - 1) if start > 0 else 0.0
+
+    c1, c2, c3, c4, c5 = st.columns(5)
+    with c1:
+        metric_card("起始淨值（成本計）", f"${start:,.0f}", delta=f"{m.get('started', '—')} 起")
+    with c2:
+        metric_card("目前淨值", f"${eq:,.0f}", delta=f"{ret:+.2%}", positive=ret >= 0)
+    with c3:
+        metric_card("現金", f"${cash:,.0f}",
+                    delta=f"{(cash / eq if eq else 0):.0%} 水位")
+    with c4:
+        metric_card("持倉檔數", f"{len(pos)}")
+    with c5:
+        metric_card("距淨值峰", f"{-dd:.2%}", positive=dd < 0.05)
+    st.caption(f"最後更新 {last.get('date', '—')}（Bot 每 15 分鐘掃描並 commit state；"
+               "起始淨值按你的買進成本計，收養持倉的既有浮虧會反映在報酬裡）")
+
+    tab1, tab2, tab3, tab4 = st.tabs(["📊 持倉分布", "📈 淨值曲線", "🧾 交易歷史（為什麼交易）", "⚙️ 引擎狀態"])
+
+    # ── Tab 1：持倉分布 ─────────────────────────────────────────────
+    with tab1:
+        if not pos:
+            st.info("目前全現金，無持倉。")
+        else:
+            rows = []
+            for sym in sorted(pos):
+                p = pos[sym]
+                q = float(p.get("qty") or 0)
+                ent = float(p.get("entry") or 0)
+                _px = float(lp.get(sym) or ent)     # 勿命名 px：會遮蔽 plotly.express（驗證 High-1）
+                mv = q * _px
+                # 收養＝初始化帶進來且引擎從未買過（journal 無該檔 buy）
+                adopted = not any(j.get("symbol") == sym and j.get("side") == "buy"
+                                  for j in (m.get("journal") or []) if isinstance(j, dict))
+                rows.append({"代碼": sym, "股數": q, "成本": ent, "最新價": _px,
+                             "市值": mv, "未實現": (_px / ent - 1) if ent else 0.0,
+                             "權重": (mv / eq) if eq else 0.0,
+                             "來源": "收養（你的原持倉）" if adopted else "引擎建倉"})
+            pdf = pd.DataFrame(rows)
+            lft, rgt = st.columns([3, 2])
+            with lft:
+                st.dataframe(
+                    pdf.style.format({"股數": "{:g}", "成本": "{:.2f}", "最新價": "{:.2f}",
+                                      "市值": "${:,.0f}", "未實現": "{:+.1%}", "權重": "{:.1%}"}),
+                    use_container_width=True, hide_index=True)
+            with rgt:
+                pie = pd.concat([pdf[["代碼", "市值"]],
+                                 pd.DataFrame([{"代碼": "現金", "市值": cash}])])
+                fig = px.pie(pie, names="代碼", values="市值", hole=0.45,
+                             title="資金配置（含現金）")
+                fig.update_layout(**PLOTLY_LAYOUT, height=360, showlegend=True)
+                st.plotly_chart(fig, use_container_width=True)
+            conc = float(pdf["權重"].max()) if len(pdf) else 0.0
+            st.caption(f"最大單檔權重 {conc:.1%}（引擎上限 15%，贏家加碼可到 19.5%）；"
+                       "「收養」= 初始化帶進來、引擎尚未動過的原持倉。")
+
+    # ── Tab 2：淨值曲線 ─────────────────────────────────────────────
+    with tab2:
+        hist = [h for h in (m.get("history") or [])
+                if isinstance(h, dict) and h.get("date") and h.get("equity")]
+        if len(hist) < 2:
+            st.info("淨值歷史累積中（每交易日一點；此功能上線後才開始記錄，"
+                    "最少需兩個交易日）。目前僅有：" +
+                    (f"{hist[0]['date']} ${hist[0]['equity']:,.0f}" if hist else "—"))
+        else:
+            hdf = pd.DataFrame(hist)
+            hdf["date"] = pd.to_datetime(hdf["date"])
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=hdf["date"], y=hdf["equity"], name="鏡像帳淨值",
+                                     line=dict(color="#1E88E5", width=2), mode="lines+markers"))
+            if start > 0:
+                fig.add_hline(y=start, line=dict(color="#FF9800", dash="dash"),
+                              annotation_text="起始淨值（成本計）", annotation_position="bottom right")
+            fig.add_hline(y=peak, line=dict(color="#9E9E9E", dash="dot"),
+                          annotation_text="淨值高點", annotation_position="top right")
+            fig.update_layout(**PLOTLY_LAYOUT, height=400, title="鏡像帳淨值曲線",
+                              yaxis_title="USD")
+            st.plotly_chart(fig, use_container_width=True)
+            h_ret = hdf["equity"].pct_change().dropna()
+            if len(h_ret) >= 5:
+                mdd = float((hdf["equity"] / hdf["equity"].cummax() - 1).min())
+                st.caption(f"期間最大回撤 {mdd:.2%}　日報酬標準差 {float(h_ret.std()):.2%}　"
+                           f"樣本 {len(hdf)} 個交易日")
+
+    # ── Tab 3：交易歷史 ─────────────────────────────────────────────
+    with tab3:
+        jr = [e for e in (m.get("journal") or []) if isinstance(e, dict) and e.get("symbol")]
+        if not jr:
+            st.info("引擎尚未執行任何虛擬交易。")
+        else:
+            jrows = []
+            for e in jr[::-1]:
+                jrows.append({"日期": e.get("date"), "方向": "買進" if e.get("side") == "buy" else "賣出",
+                              "代碼": e.get("symbol"), "股數": e.get("qty"),
+                              "成交價": e.get("price"),
+                              "機制": _ML.get(e.get("mechanism"), str(e.get("mechanism"))),
+                              "原因": e.get("reason")})
+            st.dataframe(pd.DataFrame(jrows).style.format({"成交價": "{:.2f}", "股數": "{:g}"}),
+                         use_container_width=True, hide_index=True)
+            mc = pd.Series([_ML.get(e.get("mechanism"), str(e.get("mechanism"))) for e in jr]) \
+                   .value_counts().reset_index()
+            mc.columns = ["機制", "筆數"]
+            fig = px.bar(mc, x="機制", y="筆數", title="出手機制分佈（引擎為什麼交易）")
+            fig.update_layout(**PLOTLY_LAYOUT, height=300)
+            st.plotly_chart(fig, use_container_width=True)
+            st.caption("進場=評分過門檻的新倉；加碼=贏家 +1R 加碼；出場全由價格機制驅動"
+                       "（硬停損/追蹤停損/分批鎖利/死錢釋放/訊號轉弱）。"
+                       "Telegram `/attrib mirror`、`/checkup mirror` 看機制歸因與行為體檢。")
+
+    # ── Tab 4：引擎狀態 ─────────────────────────────────────────────
+    with tab4:
+        import datetime as _dt
+        today = _dt.date.today().isoformat()
+        try:
+            import trade_engine as _te
+            txt = _te.engine_status_text(eng, today).replace("*", "")
+            for ln in txt.splitlines():
+                st.write(ln)
+        except Exception:
+            st.write("保險絲狀態：" + ("🚨 冷卻中" if eng.get("halted_until") else "🟢 正常"))
+        ev = eng.get("stop_events") or []
+        if ev:
+            st.caption("停損事件：" + "、".join(str(x).replace("|", " ") for x in ev[-10:]))
+        epos = eng.get("pos") or {}
+        if epos:
+            erows = []
+            for sym in sorted(epos):
+                b = epos[sym]
+                ent = float(b.get("entry") or 0)
+                pk = float(b.get("peak") or 0)
+                erows.append({"代碼": sym, "進場": ent, "峰值": pk,
+                              "峰值回落": (pk and (float(lp.get(sym) or pk) / pk - 1)) or 0.0,
+                              "開倉日": b.get("opened"), "加碼次數": b.get("adds", 0),
+                              "已分批": "✅" if b.get("scaled_out") else "—",
+                              "每股風險": float(b.get("rps") or 0)})
+            st.dataframe(pd.DataFrame(erows).style.format(
+                {"進場": "{:.2f}", "峰值": "{:.2f}", "峰值回落": "{:+.1%}", "每股風險": "{:.2f}"}),
+                use_container_width=True, hide_index=True)
+            st.caption("追蹤停損：獲利 ≥ +1R 啟動，自峰值回落 8%（+2R 後收緊為 5%）出場；"
+                       "分批：+1.5R 賣半；死錢：持有 30 天且報酬 <2% 釋放名額。"
+                       "參數可用 Telegram `/set eng_<參數>` 調整（`/protections` 查看）。")
+
+    st.caption("⚠️ 模式 A：初始化後你的真實買賣不同步；成交=掃描價、無滑價；"
+               "此頁唯讀，操作經 Telegram `/mirror`。非投資建議。")
 
 # ════════════════════════════════════════════════════════════════════
 # PAGE: Trading Tools (Position Sizing / Kelly / R:R / Compound)
@@ -6350,6 +6585,7 @@ PAGES = {
     "🚨 即時警報":  page_alerts,
     "🛠️ 交易工具":  page_trading_tools,
     "📉 模擬交易":  page_paper_trading,
+    "🪞 鏡像帳":    page_mirror_book,
     "🏦 機構選股":  page_stock_selector,
     "📰 新聞情報":  page_news_sentiment,
     "📦 匯出報告":  page_export,

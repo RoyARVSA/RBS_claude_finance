@@ -50,6 +50,8 @@ Telegram 指令（傳給 Bot）：
   /today [帳戶 風險%]     – 當日交易計畫：VWAP/ORB/RVOL 訂單票（別名 /plan）
   /plantest [apply|clear] – 當日計畫 60 日歷史回測；apply 套用校準（每週亦自動跑）
   /plantest opt [apply]   – 參數尋優（ORB 分鐘×停損 ATR×目標 R:R，walk-forward 把關）
+  /engtest [期間]          – 整台引擎歷史重放（現行參數；次日開盤成交、含成本、對照 SPY）
+  /engtest opt [期間] [apply] – 引擎參數學習：108 組 × 三段 walk-forward + DSR；clear 還原
   /weekly                 – 立即生成每週深度週報（每週日 ET 18:00 後自動推送）
   /committee TICKER       – 機構決策會議：分析師×4→對辯→交易員→風控→PM（別名 /cmt）
   /set mtf_enabled on/off – 週線同向確認（日線分數與週線同向加強、背離減弱）
@@ -409,6 +411,8 @@ def _cmd_help() -> str:
         "`/today [帳戶 風險%]`（或 `/plan`）— 當日交易計畫：VWAP/ORB 進場票（進場/停損/停利/股數）\n"
         "`/plantest [apply|clear]` — 當日計畫 60 日回測；apply 套用校準（每週自動跑，`/set plan_autocal_enabled off` 關）\n"
         "`/plantest opt [apply]` — 參數尋優：ORB×停損×R:R 掃 27 組，holdout 段把關通過才推薦\n"
+        "`/engtest [3m|6m|1y|2y]` — 整台引擎歷史重放：現行參數過去 N 個月會賺多少（次日開盤成交、含成本、對照 SPY）\n"
+        "`/engtest opt [1y] [apply]` — 引擎參數學習：進場門檻×停損×追蹤×分批×死錢 108 組，三段 walk-forward + DSR，holdout 通過才推薦；apply 套用、`/engtest clear` 還原\n"
         "`/weekly` — 立即生成每週深度週報（指數/強弱/計分板/RRG/下週行事曆）\n"
         "`/committee NVDA`（或 `/cmt`）— 開一場機構決策會議（需 LLM key，約 1-3 分）\n\n"
         "🤖 *模擬交易（Alpaca paper・分層引擎）*\n"
@@ -1418,6 +1422,71 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                     lines.append(f"{icon} {t}　{e.get('side','').upper()} {e.get('symbol')} "
                                  f"x{e.get('qty')}　評分 {sc_s}")
                 reply = "\n".join(lines)
+
+        elif cmd == "/engtest":
+            # 引擎歷史重放（單組參數）/ opt 參數學習（walk-forward + DSR）/ clear 還原
+            sub = args[0].lower() if args else ""
+            th = state.get("thresholds") or {}
+            try:
+                import engine_backtest as eb
+            except Exception as e:
+                eb = None
+                reply = f"❌ engine_backtest 模組載入失敗：{e}"
+            if eb is None:
+                pass
+            elif sub == "clear":
+                done = eb.clear_params(state)
+                changed = bool(done)
+                reply = ("🧹 已還原 /engtest apply 寫入的引擎參數：" + "、".join(done)
+                         if done else "目前沒有 /engtest 套用的參數")
+            else:
+                is_opt = sub == "opt"
+                rest = args[1:] if is_opt else args
+                period = next((a.lower() for a in rest if a.lower() in eb.PERIOD_DAYS), "1y")
+                if is_opt and eb.PERIOD_DAYS.get(period, 0) < 80:
+                    period = "6m"        # 三段 walk-forward 需 ≥80 個交易日（3m 恆不足）
+                do_apply = is_opt and any(a.lower() == "apply" for a in rest)
+                eng_pos = sorted(((state.get("engine") or {}).get("pos") or {}).keys())
+                syms = list(dict.fromkeys(list(state["watchlist"][:12]) + eng_pos))
+                if not syms:
+                    reply = "觀察清單是空的——先 `/add AAPL NVDA`"
+                else:
+                    _tg_send(token, src_chat or chat_id,
+                             f"🧪 引擎歷史重放（{len(syms)} 檔 × {period}"
+                             f"{'、108 組參數 × 三段 walk-forward' if is_opt else ''}，"
+                             f"約 {'1-2' if is_opt else '1'} 分鐘）…")
+                    try:
+                        # 長操作前先落盤 last_update_id（runner 超時被殺也不會毒訊息迴圈）
+                        save_state(state)
+                        import trade_engine as te
+                        cur = {k: th[f"eng_{k}"] for k in te.ENGINE_DEFAULTS if f"eng_{k}" in th}
+                        if "buy_threshold" not in cur and "at_buy_threshold" in th:
+                            cur["buy_threshold"] = th["at_buy_threshold"]
+                        calib = state.get("calibration") if isinstance(state.get("calibration"), dict) else None
+                        if is_opt:
+                            opt = eb.run_optimize(syms, period, baseline=cur,
+                                                  thresholds=th, calibration=calib)
+                            reply = opt["text"]
+                            if do_apply:
+                                rec = opt.get("recommend")
+                                if rec:
+                                    eb.apply_params(state, rec["params"], {
+                                        "as_of": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                                        "period": period,
+                                        "holdout_ret": rec["holdout"]["total_ret"]})
+                                    changed = True
+                                    reply += ("\n\n✅ 已套用推薦參數到引擎（下一輪生效；"
+                                              "`/engtest clear` 還原、`/protections` 查看）")
+                                else:
+                                    reply += "\n\n（無組合通過 holdout 把關，未套用任何變更）"
+                        else:
+                            out = eb.run(syms, period, params=cur, thresholds=th, calibration=calib)
+                            reply = out["text"]
+                            if state.get("eng_opt"):
+                                reply += (f"\n（現行含 /engtest apply 於 "
+                                          f"{state['eng_opt'].get('as_of')} 套用的參數）")
+                    except Exception as e:
+                        reply = f"❌ 引擎重放失敗：{e}"
 
         elif cmd == "/plantest":
             sub = args[0].lower() if args else ""
