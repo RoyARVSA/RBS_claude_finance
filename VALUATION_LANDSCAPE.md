@@ -93,6 +93,23 @@
 | USAspending v2 / senate-stock-watcher raw / Wikimedia Pageviews | 政府合約 / 參院交易 / 注意力 | 免 key | ✓ | ✓（更新不穩） |
 | Macrotrends / Motley Fool / Capitol Trades 爬蟲 | — | **ToS 禁止** | — | 不做 |
 
+### 4.1 歷史共識到底有沒有免費來源（2026-09-08 補查）
+
+先分清兩種「歷史共識」：
+
+| 種類 | 用途 | 免費來源 | 結論 |
+|---|---|---|---|
+| **財報日當下的共識 EPS**（每季一點） | SUE / PEAD 回測、冷啟動 | **Alpha Vantage `EARNINGS`**（免費 key、25 次/日、季度 `reportedDate/reportedEPS/estimatedEPS/surprise`，長壽股回溯至 1996）；**Finnhub `/stock/earnings`**（官方 SDK 文件「going back to 2000」，免費 key 是否截 4 季待實測）；FMP `earnings`（約 5 年，`lastUpdated` 會回填，PIT 信心較低） | **有**，且夠用 |
+| **逐日/逐月共識時間序列**（vintage） | 修正動能回測 | 免費 API 一律回「現在的估計」無 vintage：FMP `analyst-estimates` 過去期別的 epsAvg 是「現在對該期的最後估計」（FMP 自己的文章明講不可當 pre-announcement estimate）；EODHD 免費層只開 demo 票；I/B/E/S 只限訂閱機構；Estimize 個人免費已無；Kaggle 無 I/B/E/S dump（授權禁再散佈） | **沒有**——唯一離線代用品是 Wayback Machine 對 Yahoo analysis 頁的快照（2017 起，內嵌 `earningsTrend/epsTrend/epsRevisions` JSON），研究用一次性回填、不可再散佈、需退避，**不進生產流程** |
+
+不做的：Zacks 公開頁（ToS 明文禁爬）、Nasdaq 內部 API（未公開、約 4 季、ToS 灰區）。
+
+**對計畫的影響**：
+- P0 的 `estimates_ledger` 維持「從今天起自建每日快照」為修正動能的正式來源；**冷啟動用 yfinance `eps_trend` 的 90 天回看**。
+- 新增 **SUE/PEAD 回填**：Alpha Vantage `EARNINGS` 一支票一次拿全部歷史，25 檔/日 → watchlist + 主題層約 80 檔三天回填完；Finnhub `/stock/earnings` 交叉驗證。這讓 `earnings_review.py` 的 SUE 與漂移規則可以立刻有 20 年樣本，不必等。
+- Alpha Vantage 因此從「可選」升為 **P0 建議接入**：新 secret `ALPHA_VANTAGE_KEY`（四處同步：app.py `_os_boot`、workflow env、GITHUB_ACTIONS.md、README），走 `net_guard` 熔斷，25 次/日配額由程式計數。
+- 修正動能因子的**回測**要等自建帳本累積（≥ 6 個月才有意義）；在此之前它只能以「顯示 + 論點監測」身分存在，不進部位。若要提前驗證假設，只做 Wayback 離線抽樣（研究筆記，不進 repo 程式碼）。
+
 **分層取數預算**（每輪 ≤ 20 分）：
 - 每 15 分：只價量（現行不變）。
 - 每日一次：watchlist ≤ 60 檔 yfinance 預估快照（1–2 秒間隔）→ 追加寫入 PIT 帳本；Finnhub recommendation / earnings calendar / insider-sentiment（< 200 次）；Alpha Vantage 25 次配給 3 天內財報者。
