@@ -864,7 +864,7 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
 
         # 安全：只接受授權聊天室（任何人都找得到 bot username；未授權者可下 /closeall 等指令）
         if src_chat != str(chat_id):
-            print(f"Ignored message from unauthorized chat {src_chat}")
+            print(f"Ignored message from unauthorized chat {_mask_chat(src_chat)}")
             continue
 
         if not text.startswith("/"):
@@ -874,7 +874,7 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
         cmd = parts[0].lower().split("@")[0]  # handle /cmd@botname format
         args = parts[1:]
 
-        print(f"Command: {cmd} {args} from chat {src_chat}")
+        _log_cmd(cmd, args, src_chat)
         reply = ""
 
         if cmd == "/help":
@@ -1857,6 +1857,36 @@ def apply_cooldown(results: list[dict], state: dict, now: datetime | None = None
     return results, suppressed
 
 
+# ── 日誌節制（公開 repo 的 GitHub Actions 日誌人人可看）────────────────────
+# 指令參數（/mirror init 的實倉與現金、/thesis 論點、/set 參數）、引擎收養持倉、
+# 鏡像帳買賣行，預設只印摘要；RBS_VERBOSE_LOGS=1（本地除錯）才完整輸出。
+# 加密 state 擋得住 repo 瀏覽，擋不住自己 print 上網——PITFALLS D14。
+_VERBOSE_LOGS = os.environ.get("RBS_VERBOSE_LOGS", "").strip() == "1"
+
+
+def _mask_chat(chat) -> str:
+    c = str(chat or "")
+    return f"…{c[-3:]}" if len(c) > 3 else "?"
+
+
+def _log_cmd(cmd: str, args: list, src_chat) -> None:
+    if _VERBOSE_LOGS:
+        print(f"Command: {cmd} {args} from chat {_mask_chat(src_chat)}")
+    else:
+        print(f"Command: {cmd} ({len(args)} args redacted) from chat {_mask_chat(src_chat)}")
+
+
+def _log_lines(prefix: str, lines: list) -> None:
+    """引擎/鏡像帳的逐行說明只在 verbose 時印，否則只印行數。"""
+    if not lines:
+        return
+    if _VERBOSE_LOGS:
+        for ln in lines:
+            print(f"{prefix}: {ln}")
+    else:
+        print(f"{prefix}: {len(lines)} 行（含持倉細節，日誌已略；RBS_VERBOSE_LOGS=1 顯示）")
+
+
 def market_regime(state: dict | None = None) -> dict | None:
     """
     大盤風險濾網。v2：優先用市場氣象台（market_weather 五因子體質分，
@@ -2761,8 +2791,7 @@ def run_autotrade(state: dict, results: list[dict]) -> str | None:
             scored, positions, equity, bp,
             state.get("engine"), regime, config, today)
         state["engine"] = eng_state
-        for n in notes:
-            print(f"Engine: {n}")
+        _log_lines("Engine", notes)
     except Exception as e:
         print(f"Autotrade: trade_engine 失敗，退回舊決策邏輯 {e}")
         notes = []
@@ -2783,8 +2812,7 @@ def run_autotrade(state: dict, results: list[dict]) -> str | None:
             state, scored, config,
             _mr_rg.get("regime") if _mr_rg else None,
             datetime.now(ET).strftime("%Y-%m-%d"))
-        for ln in mirror_lines:
-            print(f"Mirror: {ln}")
+        _log_lines("Mirror", mirror_lines)
     except Exception as e:
         print(f"Mirror: 鏡像帳失敗，跳過 {e}")
         mirror_lines = []

@@ -204,10 +204,50 @@ MoS、修正動能、品質各自：21/63 日 Rank IC 與 ICIR、三分位報酬
 | 3 | Excel 匯出/匯入橋 | **做** |
 | 4 | 順序：P0→P1→P2 只顯示觀察，再 P3 | **是**；但 **P0 的成分歷史 + PIT 快照現在就開始累積**，晚一天少一天資料 |
 | 5 | 宇宙：四層結構，Broad 層 500–750 檔月頻重建 | **是**；Core/Theme 先進 Stage 3，Broad 先只做 Stage 1–2 與快照 |
-| 6 | 新增：是否引入 FinanceToolkit 作依賴 | **否**——移植需要的公式（MIT）到 `quality.py`，避免 pandas 3 / sklearn 依賴風險與 FMP 綁定 |
-| 7 | 新增：LLM 指引萃取用哪個模型 | 建議 Haiku 抽 + Sonnet 校（成本低、雙模型一致性），沿用 `LLM_API_KEY` |
+| 6 | 新增：是否引入 FinanceToolkit 作依賴 | **否**（使用者 2026-09-08 同意）——公式自己用 pandas 寫進 `quality.py` |
+| 7 | 新增：LLM 指引萃取用哪個模型 | **便宜模型抽 + 程式驗證**（使用者 2026-09-08 拍板）；升級複核只在低信心/對帳不符時 |
 
 ---
+
+## 11. 安全性與資料洩漏規範（2026-09-08 使用者要求納入；每階段 DoD 必查）
+
+「資料洩漏」在本專案有三種意思，三種都要防：
+
+### 11.1 機密與隱私外洩（公開 repo）
+
+| 風險 | 規則 | 落實點 |
+|---|---|---|
+| **Actions 日誌公開**（本次實查：`Command: /mirror init 932 DRAM:23:…` 曾整行印進日誌） | 不 print 指令參數、持倉、股數、淨值、論點、chat id、API 回應原文；預設只印摘要，`RBS_VERBOSE_LOGS=1` 僅限本地 | 已修：`_log_cmd`/`_log_lines`（PITFALLS D14、CLAUDE.md 鐵律 1） |
+| 使用者的模型假設、公允價值、MoS、部位觀點 = 策略本體 | `state["models"]`、`val_hist`、`eng_opt`、BL views 全進 `SENSITIVE_KEYS`；宇宙快照（公開資料衍生）可明文 | P0/P2 |
+| LLM prompt 帶出私資料 | 送 LLM 的只有公開文件文字 + 代碼；**絕不**帶帳戶淨值、持倉、鏡像帳、API key；委員會/萃取的 prompt 進入前過一層 `redact()` 白名單 | P4 |
+| 新 API key（Alpha Vantage 可選） | 四處同步規則（app.py `_os_boot`、workflow env、GITHUB_ACTIONS.md、README）；不進任何 commit | P0 |
+| 第三方資料 ToS | Macrotrends / Motley Fool / Capitol Trades 等明文禁爬者不做；Wayback 只作離線研究、不進 cron | 全程 |
+| SEC 代理（若試 Cloudflare Worker） | Worker 必須帶共享 token 驗證，否則就是開放代理；視為可缺席源、首次逾時即熔斷；**另案拍板才做** | 不在 P0–P6 內 |
+| 供應鏈 | 不引入 openbb / FinanceToolkit / stockdex；新依賴（若有）釘版 + 進 `signal_scan.yml` 的 pip 釘版行；CI `permissions: read` 不變 | 全程 |
+| 公開 repo 的自架 runner | 永遠不用（fork PR 可在你機器執行任意碼） | — |
+
+### 11.2 LLM 特有：提示注入與幻覺
+
+- 財報新聞稿/逐字稿是**不受信任輸入**：LLM 只做「定位 + 轉錄」到封閉列舉 schema；任何指令性文字（「忽略前面規則」）因輸出被 schema 與 evidence 回對雙重約束而無效；HTML 去標籤、截長度、不執行任何連結。
+- 每個數字必須能從 `quote` 的 `char_start:char_end` 精確回對原文，數字用 regex 重新解析，midpoint/revision 由程式計算；對帳不符標 `xbrl_mismatch`；解析失敗 → 重試一次 → 棄權（寫入 `abstained`），**不預設中性值**。
+- 便宜模型抽取（使用者拍板）：Haiku 級模型抽 → 程式驗證為主；只有 `confidence < 0.6` 或對帳不符的欄位才升級到較強模型複核，成本可控。
+- 委員會與萃取的輸出進決策前，必須通過既有 `hard_risk_check` 與 `falsifier` 證偽；PM 裁決不得引用 JSON 外的數字。
+
+### 11.3 回測資料洩漏（look-ahead / 前視）
+
+- **PIT 雙日期欄**：所有基本面與預估資料表帶 `period_end`（指涉期）與 `available_at`（可得知日 = filed/抓取日 + 1 交易日）；回測只讀 `available_at ≤ as_of`。yfinance 三表無 `filed` → 一律 `period_end + 45 天`；季報以 Finnhub as-reported 的 accession/filed 為準。
+- **重編不覆寫**：同一 (ticker, concept, period) 的修正值另存 delta，回測用首次揭露值（Zipline deltas / Qlib PIT 原則）。
+- **快照帳本只往前寫**：預估修正、宇宙成分、估值歷史都是 append-only；回測重放快取的萃取結果，不重抓（避免今天的頁面回填昨天）。
+- **成分股用當時名單**：`engine_backtest` 改吃成分期間表；watchlist 是事後挑的這件事寫進報告限制欄，不假裝解決。
+- **LLM 參數化前視**：任何含 LLM 產物（指引 JSON、委員會裁決）的回測，只在模型知識截止日**之後**的區間評估，或只用確定性欄位；報告標明模型與截止日。
+- **校準權重前視**（VALUATION_PLAN 已揭露）：`calibration` 用現值屬輕微前視，回測報告固定附註。
+- **多重測試**：所有估值因子/參數搜索沿用 DSR 帳本；試過的組合數如實計入。
+
+### 11.4 對使用者三個追問的回覆紀錄
+
+1. **歷史共識來源**：見 §4 補充（查證代理結果）——結論先講：逐日共識歷史沒有免費合規源；「財報日當下的共識」有長歷史免費源可回填，足以做 SUE/PEAD 與冷啟動。
+2. **FinanceToolkit「綁 FMP」的意思**：它預設向 Financial Modeling Prep 取數（需 key、免費層 250 次/日、美股、5 年），Yahoo 模式雖可用但仍拖進 pandas 3 / scikit-learn 依賴。**自己用 pandas 算完全可行且更好**：Piotroski/Altman/Beneish/Sloan/ROIC/DCF 都是三表列的四則運算，不需要 scikit-learn；真正的工作量在列名對映與缺值策略，不在數學。決策：移植公式、不裝套件。
+3. **便宜模型抽指引**：採納。Haiku 抽 + 確定性驗證為主，升級複核只在低信心/對帳不符時觸發。
 
 ## 10. 來源（代理報告摘錄；完整清單見各代理輸出）
 

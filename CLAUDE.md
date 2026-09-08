@@ -15,6 +15,7 @@ Streamlit 金融儀表板（`app.py`，13 頁）+ Telegram 訊號 Bot（`scan_si
 
 1. **公開 repo：金鑰絕不寫進任何被 commit 的檔案。** 只放 GitHub/Streamlit Secrets 或 UI 當場輸入。
    `.gitignore` 已排除 `.env`、`secrets.toml`、`alerts_config.json`。
+   **Actions 日誌同樣公開**：不 print 指令參數、持倉、淨值、chat id（PITFALLS D14；敏感行走 `_log_lines`）。
 2. **開發環境對外網路被 proxy 擋住**：yfinance / SEC EDGAR / Finnhub / Telegram / FRED 本地全連不上。
    **「本地連不上」這件事本身不是 bug、不要修；程式碼內的真錯誤（如逾時處理寫錯）照修。**
    純邏輯離線測（`python3 <module>.py`）；
