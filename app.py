@@ -7,6 +7,7 @@ Colab:  see RBS_Finance_Colab.ipynb (Cell 1-3: Drive, sync, launch)
 from __future__ import annotations
 
 import io
+import json
 import os
 import sys
 import zipfile
@@ -244,6 +245,7 @@ with st.sidebar:
             "🚨 即時警報",
             "📉 模擬交易",
             "🪞 鏡像帳",
+            "🏛️ 公司模型",
             # 工具
             "📦 匯出報告",
         ],
@@ -6327,6 +6329,303 @@ def page_mirror_book():
     st.caption("⚠️ 模式 A：初始化後你的真實買賣不同步；成交=掃描價、無滑價；"
                "此頁唯讀，操作經 Telegram `/mirror`。非投資建議。")
 
+
+# ════════════════════════════════════════════════════════════════════
+# PAGE: Company Model（估值層 P2：公司模型引擎的網頁版——驅動滑桿即時重算、
+#       football field、敏感度、反向 DCF、品質、估值歷史、匯出/匯入橋）
+# ════════════════════════════════════════════════════════════════════
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _cached_model_inputs(ticker: str, today: str) -> dict:
+    """三表（PIT store）+ 市場資料 + 預估快照；1 小時快取。失敗回 {"error"}。"""
+    try:
+        import fin_data as _fd
+        store = _fd.get_financials(ticker, today)
+        periods = _fd.pit_view(store, None, "A")
+        profile = _fd.fetch_profile(ticker) or {}
+        profile["ticker"] = ticker
+        est = None
+        try:
+            import estimates_ledger as _el
+            for cand in (BASE_DIR / "estimates_ledger.json", Path("estimates_ledger.json")):
+                if Path(cand).exists():
+                    est = ((_el.load_ledger(cand).get("tickers") or {}).get(ticker) or {}).get("latest")
+                    break
+        except Exception:
+            est = None
+        return {"periods": periods, "profile": profile, "estimates": est}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def _model_state_bits(ticker: str) -> tuple[dict, list, bool]:
+    """state 內的人工覆蓋與估值歷史（加密區；無 key → 鎖定）。"""
+    try:
+        import state_crypto as _sc
+        for cand in (BASE_DIR / "watchlist_state.json", Path("watchlist_state.json")):
+            if Path(cand).exists():
+                stt = _sc.read_state(cand)
+                models, vh = stt.get("models"), stt.get("val_hist")
+                locked = _sc.is_enc(models) or _sc.is_enc(vh)
+                if locked:
+                    return {}, [], True
+                ov = ((models or {}).get(ticker) or {}).get("overrides") or {}
+                return ov, list((vh or {}).get(ticker) or []), False
+    except Exception:
+        pass
+    return {}, [], False
+
+
+def _set_cmd(ticker: str, ov: dict) -> str:
+    parts = []
+    for k, v in ov.items():
+        if v is None:
+            continue
+        parts.append(f"{k}={v}" if isinstance(v, str) else f"{k}={v:.4g}")
+    return f"/model {ticker} set " + " ".join(parts) if parts else f"/model {ticker}"
+
+
+def page_company_model():
+    st.title("🏛️ 公司模型（估值層）")
+    st.caption("point-in-time 三表 → 驅動推導 → 專業 WACC → 價值中性 DCF（金融股 RIM／地產 DDM 路由）→ "
+               "熊/基/牛 + 蒙地卡羅 + 反向 DCF → 九條審核 → 品質評分。看區間不看單點 · 非投資建議")
+    try:
+        import company_model as cm
+        import quality as ql
+    except ImportError:
+        st.error("找不到 company_model.py / quality.py，請同步最新程式碼並 Reboot。")
+        return
+    import datetime as _dt
+    today = _dt.date.today().isoformat()
+
+    c1, c2, c3 = st.columns([2, 1, 1])
+    with c1:
+        ticker = st.text_input("代碼", value=st.session_state.get("cm_ticker", "NVDA"), key="cm_tk").strip().upper().lstrip("$")
+    with c2:
+        run = st.button("🏛️ 建模", type="primary", key="cm_run")
+    with c3:
+        use_mc = st.checkbox("蒙地卡羅", value=True, key="cm_mc")
+    if run:
+        st.session_state["cm_ticker"] = ticker
+        st.session_state["cm_ready"] = True
+        st.session_state.pop("cm_tweaks", None)
+    if not st.session_state.get("cm_ready") or not ticker:
+        st.info("輸入代碼後按「建模」。Telegram 端對應 `/model TICKER`；此頁的滑桿調整不會回寫，"
+                "調好後複製頁底的 `/model … set …` 指令到 Telegram 才會保存。")
+        return
+    ticker = st.session_state.get("cm_ticker", ticker)
+
+    with st.spinner(f"抓 {ticker} 三表與市場資料…"):
+        inputs = _cached_model_inputs(ticker, today)
+    if inputs.get("error") or not inputs.get("periods"):
+        st.error(f"{ticker} 抓不到年報資料（{inputs.get('error') or 'yfinance/Finnhub 皆無'}）。")
+        return
+    periods, profile, est = inputs["periods"], inputs["profile"], inputs.get("estimates")
+    saved_ov, val_hist, locked = _model_state_bits(ticker)
+    if locked:
+        st.warning("🔒 state 的模型覆蓋/估值歷史已加密但無法解密——Streamlit Secrets 需設 `STATE_ENC_KEY`。以下用預設驅動。")
+
+    route = cm.NON_DCF_SECTORS.get(profile.get("sector"))
+    # ── 驅動調整（只對 DCF 路由開放滑桿；RIM/DDM 用 Telegram set）──────
+    tweaks = dict(st.session_state.get("cm_tweaks") or {})
+    ov = {**saved_ov, **tweaks}
+    if not route:
+        try:
+            d0 = cm.derive_drivers(periods, profile, est, saved_ov)
+        except Exception as e:
+            st.error(f"驅動推導失敗：{e}")
+            return
+        with st.expander("🎛️ 驅動調整（即時重算；不回寫）", expanded=False):
+            a, b, c = st.columns(3)
+            with a:
+                gm = st.slider("成長路徑倍數", 0.3, 1.8, float(tweaks.get("_gm", 1.0)), 0.05, key="cm_gm")
+                opm = st.slider("目標營益率", -0.2, 0.6, float(ov.get("opm_target", d0["opm_target"])), 0.005, key="cm_opm")
+            with b:
+                beta = st.slider("β（原始，Blume 由引擎套）", 0.3, 3.0, float(ov.get("beta", d0.get("beta_raw") or 1.0)), 0.05, key="cm_beta")
+                tgr = st.slider("終端成長", 0.0, 0.05, float(ov.get("tgr", d0["tgr"])), 0.0025, key="cm_tgr")
+            with c:
+                roic_tv = st.slider("終值 ROIC（≥WACC；WACC=價值中性）", float(min(d0["wacc"], 0.30)), 0.40, float(ov.get("roic_tv", d0["roic_tv"])), 0.005, key="cm_roic")
+                sbc_cost = st.checkbox("SBC 視為成本（不加回）", value=True, key="cm_sbc")
+            base_path = d0["rev_g"] if "rev_g" not in saved_ov else [float(x) for x in str(saved_ov["rev_g"]).split(",")]
+            tweaks = {"_gm": gm, "opm_target": opm, "beta": beta, "tgr": tgr, "roic_tv": roic_tv,
+                      "rev_g": ",".join(f"{cm._clip(g * gm, -0.3, 0.6):.4f}" for g in base_path)}
+            st.session_state["cm_tweaks"] = tweaks
+            ov = {**saved_ov, **{k: v for k, v in tweaks.items() if not k.startswith("_")}}
+            st.caption("成長路徑 " + " / ".join(f"{float(x):+.0%}" for x in ov["rev_g"].split(",")) + "（引擎會夾在 −30%～+60%）")
+    cfg = {"sbc_as_cost": st.session_state.get("cm_sbc", True), "mc_n": 1500}
+
+    # ── 兩段：先 WACC 給品質，再帶品質進訊號 ──────────────────────────
+    try:
+        if route:
+            q = ql.quality_summary(periods, profile.get("mkt_cap"), None)
+        else:
+            q = ql.quality_summary(periods, profile.get("mkt_cap"), cm.derive_drivers(periods, profile, est, ov)["wacc"])
+        res = cm.run_model(periods, profile, est, ov, q, cfg, mc=bool(use_mc) and not route)
+    except Exception as e:
+        st.error(f"建模失敗：{e}")
+        return
+    sig, sc = res.get("signal", {}), res.get("scenarios", {})
+    price = (res.get("drivers") or {}).get("price") or profile.get("price")
+
+    if res.get("method") == "not_applicable":
+        st.warning(res.get("note", "不適用"))
+        return
+
+    # ── 指標列 ───────────────────────────────────────────────────────
+    verdict_lab = {"accumulate": "🟢 可累積", "hold": "🟡 持有", "trim": "🟠 減碼", "exit": "🔴 高於牛市", "review": "⚪ 待審"}
+    m1, m2, m3, m4, m5 = st.columns(5)
+    with m1:
+        metric_card("現價", f"{price:,.2f}" if price else "—", delta=f"{profile.get('sector') or ''}")
+    with m2:
+        metric_card("公允（基準）", f"{sc.get('base', 0):,.1f}",
+                    delta=f"MoS {sig.get('mos', 0):+.0%}" if sig.get("mos") is not None else "",
+                    positive=(sig.get("mos") or 0) > 0)
+    with m3:
+        metric_card("熊 ／ 牛", f"{sc.get('bear', 0):,.0f} ／ {sc.get('bull', 0):,.0f}",
+                    delta=f"寬 {sc.get('width'):.1f}x" if sc.get("width") else "")
+    with m4:
+        metric_card("區間位置", f"{sig['range_pos']:.2f}" if sig.get("range_pos") is not None else "—",
+                    delta="0=熊 1=牛")
+    with m5:
+        metric_card("判定", verdict_lab.get(sig.get("verdict"), sig.get("verdict", "—")), delta=sig.get("reason", ""))
+    au = res.get("audit", {})
+    if not au.get("passed", True):
+        st.warning("審核未過（不推 accumulate）：" + "、".join(au.get("failed", [])))
+    if res.get("quality_flags"):
+        st.warning("品質旗標：" + "、".join(ql.FLAG_RULES.get(f, f) for f in res["quality_flags"]))
+
+    tabs = st.tabs(["🏈 Football field", "🌡️ 敏感度", "🔁 反向 DCF / 投影", "🧬 品質", "📈 估值歷史", "📤 匯出 / 匯入"])
+
+    # ── Tab 1 football field ─────────────────────────────────────────
+    with tabs[0]:
+        rows_ff = [("DCF 熊–牛" if not route else f"{res['method'].upper()} 熊–牛", sc.get("bear"), sc.get("bull"))]
+        mc = res.get("mc") or {}
+        if mc.get("p5"):
+            rows_ff.append(("蒙地卡羅 P5–P95", mc["p5"], mc["p95"]))
+            rows_ff.append(("蒙地卡羅 P25–P75", mc["p25"], mc["p75"]))
+        fig = go.Figure()
+        for i, (name, lo_, hi_) in enumerate(rows_ff):
+            if lo_ is None or hi_ is None:
+                continue
+            fig.add_trace(go.Bar(y=[name], x=[hi_ - lo_], base=[lo_], orientation="h", name=name,
+                                 marker_color=["#1E88E5", "#26A69A", "#66BB6A"][i % 3],
+                                 hovertemplate=f"{name}: %{{base:.1f}} – %{{x:.1f}}<extra></extra>"))
+        if sc.get("base") is not None:
+            fig.add_vline(x=sc["base"], line=dict(color="#1E88E5", dash="dot"), annotation_text="基準", annotation_position="top")
+        if price:
+            fig.add_vline(x=price, line=dict(color="#FF9800", width=2), annotation_text="現價", annotation_position="bottom")
+        fig.update_layout(**PLOTLY_LAYOUT, height=300, showlegend=False, xaxis_title="每股價值（USD）", barmode="overlay")
+        st.plotly_chart(fig, use_container_width=True)
+        if mc.get("prob_undervalued") is not None:
+            st.caption(f"蒙地卡羅 n={mc['n']}：低估機率 {mc['prob_undervalued']:.0%}、市價位於分布第 {mc['price_pctile']:.0%} 百分位；"
+                       f"機率加權公允 {sc.get('ev_weighted', 0):,.1f}（25/50/25）")
+
+    # ── Tab 2 敏感度 ─────────────────────────────────────────────────
+    with tabs[1]:
+        sens = res.get("sensitivity")
+        if sens and sens.get("grid"):
+            zz = [[(v if v is not None else float("nan")) for v in row] for row in sens["grid"]]
+            fig = px.imshow(zz, x=[f"g {g:.1%}" for g in sens["g"]], y=[f"WACC {w:.1%}" for w in sens["wacc"]],
+                            text_auto=".0f", color_continuous_scale="RdYlGn", aspect="auto")
+            fig.update_layout(**PLOTLY_LAYOUT, height=360, coloraxis_showscale=False)
+            st.plotly_chart(fig, use_container_width=True)
+            d = res["drivers"]
+            st.caption(f"WACC {d['wacc']:.1%}＝rf {d['rf']:.2%} + β {d['beta']:.2f}×ERP {d['erp']:.1%}（權益）／Rd {d['cost_debt']:.2%}（債）；"
+                       f"β 原始 {d.get('beta_raw') if d.get('beta_raw') is not None else '—'} 經 Blume 收縮。DCF 對 WACC 極敏感——這張表比單點更重要。")
+        else:
+            st.info("此路由（RIM/DDM）不提供 WACC×g 敏感度表。")
+
+    # ── Tab 3 反向 DCF / 投影 ────────────────────────────────────────
+    with tabs[2]:
+        rv = res.get("reverse") or {}
+        if rv.get("implied_cagr") is not None:
+            st.markdown(f"**市價隱含 5 年營收 CAGR {rv['implied_cagr']:+.1%}**（模型 {rv['model_cagr']:+.1%}，差 {rv['gap_pp']:+.1%}）"
+                        + (f"；固定成長下隱含營益率 **{rv['implied_opm']:.1%}**（模型 {rv['model_opm']:.1%}）" if rv.get("implied_opm") is not None else ""))
+            st.caption("Expectations Investing：先問市價在賭什麼，再問你同不同意。")
+        elif rv.get("note"):
+            st.info(f"反向 DCF：{rv['note']}")
+        rows = res.get("rows") or []
+        if rows:
+            pr = pd.DataFrame(rows)[["year", "growth", "revenue", "opm", "ebit", "nopat", "da", "capex", "dnwc", "sbc", "fcf"]]
+            pr.columns = ["年", "成長", "營收", "營益率", "EBIT", "NOPAT", "D&A", "Capex", "ΔNWC", "SBC", "FCFF"]
+            st.dataframe(pr.style.format({"成長": "{:+.1%}", "營益率": "{:.1%}", **{c: "{:,.0f}" for c in ["營收", "EBIT", "NOPAT", "D&A", "Capex", "ΔNWC", "SBC", "FCFF"]}}),
+                         use_container_width=True, hide_index=True)
+            b = res.get("base", {})
+            st.caption(f"終值占 EV {b.get('tv_pct', 0):.0%}｜隱含終值 EV/EBITDA {b.get('implied_tv_ebitda') or 0:.1f}x｜"
+                       f"終值 = NOPAT₁₁×(1−g/ROIC_TV)/(WACC−g)，ROIC_TV {res['drivers']['roic_tv']:.1%}（=WACC 時成長價值中性）")
+        prov = (res.get("drivers") or {}).get("provenance") or {}
+        if prov:
+            st.caption("驅動來源：" + "、".join(f"{k}={v}" for k, v in prov.items()))
+
+    # ── Tab 4 品質 ───────────────────────────────────────────────────
+    with tabs[3]:
+        for ln in ql.quality_text(q, ticker).replace("*", "").splitlines():
+            st.write(ln)
+        rs = q.get("roic_series") or []
+        if len(rs) >= 2:
+            rdf = pd.DataFrame(rs, columns=["期末", "ROIC"])
+            fig = px.line(rdf, x="期末", y="ROIC", markers=True, title="ROIC 趨勢")
+            if q.get("roic_wacc_spread") is not None and res.get("drivers", {}).get("wacc"):
+                fig.add_hline(y=res["drivers"]["wacc"], line=dict(color="#FF9800", dash="dash"), annotation_text="WACC")
+            fig.update_layout(**PLOTLY_LAYOUT, height=280, yaxis_tickformat=".0%")
+            st.plotly_chart(fig, use_container_width=True)
+
+    # ── Tab 5 估值歷史 ───────────────────────────────────────────────
+    with tabs[4]:
+        if len(val_hist) >= 2:
+            vdf = pd.DataFrame(val_hist); vdf["d"] = pd.to_datetime(vdf["d"])
+            fig = go.Figure()
+            for col, name, colr, dash in (("bull", "牛", "#66BB6A", "dot"), ("base", "基準", "#1E88E5", None),
+                                          ("bear", "熊", "#EF5350", "dot"), ("px", "現價", "#FF9800", None)):
+                if col in vdf:
+                    fig.add_trace(go.Scatter(x=vdf["d"], y=vdf[col], name=name, line=dict(color=colr, dash=dash)))
+            fig.update_layout(**PLOTLY_LAYOUT, height=340, title="公允價值歷史 vs 現價（Telegram /model 每次執行記一點，週頻）")
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("估值歷史累積中：每次在 Telegram 執行 `/model` 會記一點（同週覆寫），滿兩點才有曲線。")
+
+    # ── Tab 6 匯出 / 匯入 ────────────────────────────────────────────
+    with tabs[5]:
+        st.markdown("**保存這組假設到 Bot**（此頁不回寫 state）：")
+        persist_ov = {k: v for k, v in ov.items() if k in cm.PARAM_LABELS or k in ("rf",)}
+        st.code(_set_cmd(ticker, persist_ov), language="text")
+        exp = {"ticker": ticker, "as_of": today, "method": res.get("method"), "price": price,
+               "scenarios": {k: sc.get(k) for k in ("bear", "base", "bull", "ev_weighted")},
+               "signal": sig, "audit": au, "drivers": {k: v for k, v in (res.get("drivers") or {}).items() if k != "provenance"},
+               "quality": {k: v for k, v in q.items() if k not in ("roic_series",)}}
+        st.download_button("⬇️ 下載模型 JSON", data=json.dumps(exp, ensure_ascii=False, indent=1, default=str),
+                           file_name=f"{ticker}_model_{today}.json", mime="application/json", key="cm_dl")
+        if res.get("rows"):
+            csv = pd.DataFrame(res["rows"]).to_csv(index=False)
+            st.download_button("⬇️ 下載 FCFF 投影 CSV", data=csv, file_name=f"{ticker}_fcff_{today}.csv", mime="text/csv", key="cm_dl2")
+        st.markdown("---")
+        st.markdown("**匯入你的手工 Excel 模型**（需含 `RBS_Summary` 工作表，A 欄鍵／B 欄值；規格見 VALUATION_PLAN 附錄 A）")
+        up = st.file_uploader("上傳 .xlsx", type=["xlsx"], key="cm_up")
+        if up is not None:
+            try:
+                import openpyxl  # noqa
+                xdf = pd.read_excel(up, sheet_name="RBS_Summary", header=None, engine="openpyxl")
+                kv = {str(r[0]).strip(): r[1] for r in xdf.itertuples(index=False) if pd.notna(r[0])}
+                parts = []
+                mapping = {"fair_base": None, "wacc": "wacc", "tgr": "tgr", "beta": "beta", "opm_target": "opm_target",
+                           "rev_path": "rev_g", "guidance_rev": "guidance_rev"}
+                for k, tk in mapping.items():
+                    if k in kv and tk and pd.notna(kv[k]):
+                        v = kv[k]
+                        if tk == "rev_g":
+                            parts.append(f"rev_g={','.join(x.strip() for x in str(v).split(','))}")
+                        else:
+                            parts.append(f"{tk}={float(v):.4g}")
+                t_in = str(kv.get("ticker") or ticker).upper()
+                st.success(f"讀到 {len(kv)} 個鍵（{t_in}）" + (f"，公允 base={kv.get('fair_base')}" if "fair_base" in kv else ""))
+                st.code(f"/model {t_in} set " + " ".join(parts) if parts else "（沒有可轉換的驅動鍵）", language="text")
+                st.caption("把上面這行貼到 Telegram 即可讓 Bot 用你的假設重建模並保存（加密區）。")
+            except ImportError:
+                st.warning("此環境缺 openpyxl，無法讀 .xlsx。")
+            except Exception as e:
+                st.error(f"匯入失敗：{e}")
+    st.caption("⚠️ 估值層只調部位、不觸發進場；DCF 對 WACC 極敏感，看區間不看單點。教育用途，非投資建議。")
+
 # ════════════════════════════════════════════════════════════════════
 # PAGE: Trading Tools (Position Sizing / Kelly / R:R / Compound)
 # ════════════════════════════════════════════════════════════════════
@@ -6586,6 +6885,7 @@ PAGES = {
     "🛠️ 交易工具":  page_trading_tools,
     "📉 模擬交易":  page_paper_trading,
     "🪞 鏡像帳":    page_mirror_book,
+    "🏛️ 公司模型":  page_company_model,
     "🏦 機構選股":  page_stock_selector,
     "📰 新聞情報":  page_news_sentiment,
     "📦 匯出報告":  page_export,

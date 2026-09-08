@@ -37,13 +37,14 @@ DEFAULTS = {
     "prob": (0.25, 0.50, 0.25),    # bear / base / bull
     "mc_n": 2000, "mc_seed": 7,
 }
-NON_DCF_SECTORS = {"Financial Services": "銀行/保險無法定義 FCFF——用 RIM（剩餘收益）與 P/B–ROE；P1.5 實作",
-                   "Real Estate": "REIT 用 AFFO/DDM；P1.5 實作"}
+NON_DCF_SECTORS = {"Financial Services": "rim", "Real Estate": "ddm"}   # 金融→剩餘收益模型；地產→股利 H-model
+RIM_PERSISTENCE = 0.6        # 終值剩餘收益持續係數 ω（Dechow-Hutton-Sloan 常見 0.6）
+DDM_H_YEARS = 5              # H-model 半衰期（高成長→長期成長線性收斂 2H 年）
 # Damodaran 合成信評利差（大型企業，簡化 10 級）：利息保障倍數 → 違約利差
 SPREAD_TABLE = [(8.5, 0.0075), (6.5, 0.0100), (5.5, 0.0125), (4.25, 0.0160), (3.0, 0.0225),
                 (2.5, 0.0300), (2.25, 0.0400), (2.0, 0.0500), (1.75, 0.0650), (1.5, 0.0800),
                 (-1e9, 0.1100)]
-PARAM_LABELS = {"rev_g": "營收成長路徑", "opm_target": "目標營益率", "beta": "β", "wacc": "WACC",
+PARAM_LABELS = {"payout": "配息率", "roe_target": "目標 ROE", "div_g": "股利成長", "rev_g": "營收成長路徑", "opm_target": "目標營益率", "beta": "β", "wacc": "WACC",
                 "tgr": "終端成長", "tax": "稅率", "guidance_rev": "指引營收", "long_growth": "第 6–10 年成長",
                 "roic_tv": "終值 ROIC", "capex_pct": "Capex/營收", "da_pct": "D&A/營收", "nwc_pct": "NWC/增量營收"}
 
@@ -403,6 +404,129 @@ def reverse_dcf(d: dict, price: float | None = None) -> dict:
             "note": None if k is not None else "市價超出可解範圍（成長乘數 −3~6 內無解）"}
 
 
+# ── 4b. 金融股 RIM / 地產 DDM（產業路由）──────────────────────────────────
+
+def _coe(profile: dict, overrides: dict, cfg: dict) -> tuple[float, float, float | None]:
+    ov = overrides or {}
+    raw = _f(ov.get("beta")) if ov.get("beta") is not None else _f((profile or {}).get("beta"))
+    beta = _clip(raw, 0.3, 3.0) if ov.get("beta") is not None else blume_beta(raw, cfg["beta_floor"], cfg["beta_cap"])
+    rf = _f(ov.get("rf")) if ov.get("rf") is not None else float(cfg["rf"])
+    r = rf + beta * float(cfg["erp"])
+    if ov.get("wacc") is not None:                       # 對 RIM/DDM，wacc 覆蓋即股權成本覆蓋
+        r = _clip(_f(ov["wacc"]), 0.04, 0.30)
+    return r, beta, raw
+
+
+def rim_value(b0: float, roe_path: list[float], r: float, payout: float, persistence: float = RIM_PERSISTENCE) -> dict:
+    """剩餘收益模型：V = B0 + Σ (ROE_t − r)·B_{t−1}/(1+r)^t + 終值（RI_T×ω/(1+r−ω)，再折現）。"""
+    b_prev, pv_ri, ri_last = b0, 0.0, 0.0
+    for t, roe in enumerate(roe_path, 1):
+        ri = (roe - r) * b_prev
+        pv_ri += ri / (1 + r) ** t
+        b_prev = b_prev * (1 + roe * (1 - payout))
+        ri_last = ri
+    n = len(roe_path)
+    tv = ri_last * persistence / (1 + r - persistence) if (1 + r - persistence) > 0 else 0.0
+    pv_tv = tv / (1 + r) ** n
+    v = b0 + pv_ri + pv_tv
+    return {"per_share": v, "book_ps": b0, "pv_ri": pv_ri, "pv_tv": pv_tv,
+            "tv_pct": (pv_tv / v) if v > 0 else None, "pb_implied": (v / b0) if b0 > 0 else None}
+
+
+def rim_model(periods: list[dict], profile: dict, overrides: dict | None = None, cfg: dict | None = None) -> dict:
+    """金融股：ROE 由現值線性淡出至 (ROE_avg + r)/2（10 年），配息率取三年均值（含回購）。"""
+    c = {**DEFAULTS, **(cfg or {})}
+    ov = dict(overrides or {})
+    cur = periods[0]
+    eq = _g(cur, "total_equity")
+    shares = _g(cur, "diluted_shares") or _f((profile or {}).get("shares")) or _g(cur, "shares_out")
+    if not eq or eq <= 0 or not shares:
+        raise ValueError("RIM 需要正的股東權益與股數")
+    b0 = eq / shares
+    roes = []
+    for i, p in enumerate(periods[:4]):
+        ni, e_c = _g(p, "net_income"), _g(p, "total_equity")
+        e_p = _g(periods[i + 1], "total_equity") if i + 1 < len(periods) else None
+        e_avg = ((e_c + e_p) / 2) if (e_c and e_p) else e_c
+        if ni is not None and e_avg and e_avg > 0:
+            roes.append(ni / e_avg)
+    roe_last = roes[0] if roes else 0.08
+    roe_avg = _avg(roes) if roes else roe_last
+    r, beta, raw = _coe(profile, ov, c)
+    pay = []
+    for p in periods[:3]:
+        ni = _g(p, "net_income")
+        if ni and ni > 0:
+            pay.append(_clip((abs(_g(p, "dividends_paid") or 0) + abs(_g(p, "buyback") or 0)) / ni, 0.0, 1.0))
+    payout = _f(ov.get("payout")) if ov.get("payout") is not None else (_avg(pay) if pay else 0.4)
+    roe_target = _f(ov.get("roe_target")) if ov.get("roe_target") is not None else (roe_avg + r) / 2   # 均值回歸至一半價差
+    roe_target = _clip(roe_target, -0.2, 0.5)
+    yrs = 10
+    path = [roe_last + (roe_target - roe_last) * (t / yrs) for t in range(1, yrs + 1)]
+    base = rim_value(b0, path, r, payout)
+    bear = rim_value(b0, [x - 0.03 for x in path], r + 0.01, payout)
+    bull = rim_value(b0, [x + 0.02 for x in path], max(r - 0.005, 0.04), payout)
+    vals = (bear["per_share"], base["per_share"], bull["per_share"])
+    px = _f((profile or {}).get("price"))
+    d = {"method": "rim", "book_ps": b0, "roe_last": roe_last, "roe_avg": roe_avg, "roe_target": roe_target,
+         "coe": r, "beta": beta, "beta_raw": raw, "payout": payout, "price": px, "shares": shares,
+         "pb_now": (px / b0) if (px and b0 > 0) else None, "period_end": cur.get("period_end"),
+         "overrides": {k: v for k, v in ov.items() if v is not None}}
+    sc = {"bear": vals[0], "base": vals[1], "bull": vals[2], "prob": list(DEFAULTS["prob"]),
+          "ev_weighted": sum(pp * v for pp, v in zip(DEFAULTS["prob"], vals)),
+          "width": (vals[2] / vals[0]) if vals[0] > 0 else None}
+    au = {"checks": {"equity_positive": b0 > 0, "roe_target_ge_coe": roe_target >= r - 0.05,
+                     "tv_pct_ok": base["tv_pct"] is None or base["tv_pct"] <= 0.5,
+                     "scenario_width_ok": sc["width"] is not None and sc["width"] >= 1.3},
+          "failed": []}
+    au["failed"] = [k for k, v in au["checks"].items() if not v]
+    au["passed"] = not au["failed"]
+    return {"drivers": d, "base": base, "scenarios": sc, "audit": au}
+
+
+def ddm_value(d0: float, g_s: float, g_l: float, r: float, h: float = DDM_H_YEARS) -> float | None:
+    """H-model：P = D0(1+gL)/(r−gL) + D0·H·(gS−gL)/(r−gL)。"""
+    if r <= g_l:
+        return None
+    return d0 * (1 + g_l) / (r - g_l) + d0 * h * (g_s - g_l) / (r - g_l)
+
+
+def ddm_model(periods: list[dict], profile: dict, overrides: dict | None = None, cfg: dict | None = None) -> dict:
+    """REIT / 高股息：股利 H-model（短期成長 = 3 年股利 CAGR 夾 [0, 8%]，長期 3%，r = 股權成本）。"""
+    c = {**DEFAULTS, **(cfg or {})}
+    ov = dict(overrides or {})
+    cur = periods[0]
+    shares = _g(cur, "diluted_shares") or _f((profile or {}).get("shares")) or _g(cur, "shares_out")
+    divs = [abs(_g(p, "dividends_paid") or 0) for p in periods[:4]]
+    if not shares or not divs or divs[0] <= 0:
+        raise ValueError("DDM 需要正的股利支付與股數")
+    d0 = divs[0] / shares
+    g_s = None
+    if len(divs) >= 3 and divs[-1] > 0:
+        g_s = (divs[0] / divs[-1]) ** (1 / (len(divs) - 1)) - 1
+    g_s = _clip(_f(ov.get("div_g")) if ov.get("div_g") is not None else (g_s if g_s is not None else 0.03), 0.0, 0.08)
+    r, beta, raw = _coe(profile, ov, c)
+    g_l = _clip(_f(ov.get("tgr")) if ov.get("tgr") is not None else 0.03, 0.0, min(0.04, r - 0.015))
+    base_v = ddm_value(d0, g_s, g_l, r)
+    bear_v = ddm_value(d0, max(g_s - 0.01, 0.0), max(g_l - 0.005, 0.0), r + 0.01)
+    bull_v = ddm_value(d0, min(g_s + 0.01, 0.10), min(g_l + 0.005, r - 0.02), max(r - 0.005, 0.04))
+    if base_v is None:
+        raise ValueError("股權成本 ≤ 長期成長，DDM 無解")
+    px = _f((profile or {}).get("price"))
+    d = {"method": "ddm", "dps": d0, "div_g_short": g_s, "div_g_long": g_l, "coe": r, "beta": beta, "beta_raw": raw,
+         "price": px, "yield_now": (d0 / px) if px else None, "shares": shares, "period_end": cur.get("period_end"),
+         "overrides": {k: v for k, v in ov.items() if v is not None}}
+    vals = (bear_v, base_v, bull_v)
+    sc = {"bear": vals[0], "base": vals[1], "bull": vals[2], "prob": list(DEFAULTS["prob"]),
+          "ev_weighted": sum(pp * v for pp, v in zip(DEFAULTS["prob"], vals)) if all(v is not None for v in vals) else None,
+          "width": (vals[2] / vals[0]) if (vals[0] and vals[2]) else None}
+    au = {"checks": {"r_gt_g": r > g_l, "scenario_width_ok": sc["width"] is not None and sc["width"] >= 1.2,
+                     "dividend_positive": d0 > 0}, "failed": []}
+    au["failed"] = [k for k, v in au["checks"].items() if not v]
+    au["passed"] = not au["failed"]
+    return {"drivers": d, "base": {"per_share": base_v}, "scenarios": sc, "audit": au}
+
+
 # ── 5. 審核清單與訊號 ───────────────────────────────────────────────────────
 
 def audit(d: dict, base: dict, sc: dict) -> dict:
@@ -459,9 +583,17 @@ def signal(sc: dict, price: float | None, quality: dict | None = None, audit_pas
 def run_model(periods: list[dict], profile: dict, estimates: dict | None = None, overrides: dict | None = None,
               quality: dict | None = None, cfg: dict | None = None, mc: bool = True) -> dict:
     sector = (profile or {}).get("sector")
-    if sector in NON_DCF_SECTORS:
-        return {"ticker": (profile or {}).get("ticker"), "method": "not_applicable", "sector": sector,
-                "note": NON_DCF_SECTORS[sector], "signal": {"verdict": "review", "reason": "產業路由：DCF 不適用"}}
+    route = NON_DCF_SECTORS.get(sector)
+    if route:
+        try:
+            r = rim_model(periods, profile, overrides, cfg) if route == "rim" else ddm_model(periods, profile, overrides, cfg)
+        except ValueError as e:
+            return {"ticker": (profile or {}).get("ticker"), "method": "not_applicable", "sector": sector,
+                    "note": f"{'RIM' if route == 'rim' else 'DDM'} 無法建模：{e}",
+                    "signal": {"verdict": "review", "reason": "產業路由：資料不足"}}
+        sig = signal(r["scenarios"], r["drivers"].get("price"), quality, r["audit"]["passed"])
+        return {"ticker": (profile or {}).get("ticker"), "method": route, "sector": sector, **r, "signal": sig,
+                "quality_score": (quality or {}).get("score"), "quality_flags": (quality or {}).get("flags", [])}
     d = derive_drivers(periods, profile, estimates, overrides, cfg)
     sc = scenarios(d)
     base = sc["base_detail"]
@@ -493,11 +625,42 @@ def _money(x) -> str:
     return f"{x:,.0f}"
 
 
+def _text_rim_ddm(res: dict, t: str) -> str:
+    d, sc, sig, au = res["drivers"], res["scenarios"], res["signal"], res["audit"]
+    px = d.get("price")
+    verdict_lab = {"accumulate": "🟢 可累積", "hold": "🟡 持有", "trim": "🟠 減碼", "exit": "🔴 高於牛市情境", "review": "⚪ 待審"}
+    if res["method"] == "rim":
+        lines = [f"🏛️ *{t} 公司模型*（金融股：剩餘收益模型 RIM；基期 {d.get('period_end')}）",
+                 f"每股淨值 {d['book_ps']:.2f}｜ROE 近期 {d['roe_last']:.1%}、均值 {d['roe_avg']:.1%} → 10 年淡出至 {d['roe_target']:.1%}",
+                 f"股權成本 {d['coe']:.1%}（β {d['beta']:.2f}）｜配息+回購率 {d['payout']:.0%}"
+                 + (f"｜現 P/B {d['pb_now']:.2f}x" if d.get("pb_now") else "")]
+    else:
+        lines = [f"🏛️ *{t} 公司模型*（地產/高股息：股利 H-model；基期 {d.get('period_end')}）",
+                 f"每股股利 {d['dps']:.2f}｜短期成長 {d['div_g_short']:.1%} → 長期 {d['div_g_long']:.1%}（{DDM_H_YEARS} 年半衰）",
+                 f"股權成本 {d['coe']:.1%}（β {d['beta']:.2f}）" + (f"｜現殖利率 {d['yield_now']:.2%}" if d.get("yield_now") else "")]
+    lines.append(f"公允價值：熊 {sc['bear']:.0f}｜*基 {sc['base']:.0f}*｜牛 {sc['bull']:.0f}"
+                 + (f"｜機率加權 {sc['ev_weighted']:.0f}" if sc.get("ev_weighted") else "")
+                 + (f"｜現價 {px:.0f}（MoS {_pct(sig.get('mos'), 0)}）" if px else ""))
+    if sig.get("range_pos") is not None:
+        lines.append(f"區間位置 {sig['range_pos']:.2f}（0=熊 1=牛）")
+    lines.append(f"判定 {verdict_lab.get(sig['verdict'], sig['verdict'])}：{sig.get('reason', '')}")
+    if not au["passed"]:
+        lines.append("審核未過：" + "、".join(k.replace("_", "·") for k in au["failed"]))
+    if res.get("quality_flags"):
+        lines.append("品質旗標：" + "、".join(x.replace("_", "·") for x in res["quality_flags"]))
+    if d.get("overrides"):
+        lines.append("人工覆蓋：" + "、".join(f"{PARAM_LABELS.get(k, k).replace('_', '·')}={v}" for k, v in d["overrides"].items()))
+    lines.append("估值層只調部位、不觸發進場；看區間不看單點；非投資建議")
+    return "\n".join(lines)
+
+
 def model_text(res: dict, ticker: str = "") -> str:
     """Telegram legacy Markdown（單 *、無底線）。"""
     t = ticker or res.get("ticker") or ""
     if res.get("method") == "not_applicable":
         return f"🏛️ *{t} 公司模型*\n{res.get('note')}\n{res['signal']['reason']}；非投資建議"
+    if res.get("method") in ("rim", "ddm"):
+        return _text_rim_ddm(res, t)
     d, b, sc, rv, sig, au = res["drivers"], res["base"], res["scenarios"], res["reverse"], res["signal"], res["audit"]
     px = d.get("price")
     lines = [f"🏛️ *{t} 公司模型*（FCFF DCF；基期 {d.get('period_end')}）"]
@@ -630,11 +793,28 @@ if __name__ == "__main__":
     assert signal({"bear": 80, "base": 130, "bull": 200}, 210, {"score": 0.6}, True)["verdict"] == "exit"
     assert signal({"bear": 80, "base": 130, "bull": 200}, 180, {"score": 0.6}, True)["verdict"] == "trim"
     assert signal({"bear": 80, "base": 130, "bull": 200}, 120, {"score": -0.5}, True)["verdict"] == "hold"   # 低品質門檻 50%
-    assert run_model(periods, {**profile, "sector": "Financial Services"})["method"] == "not_applicable"
+    # 產業路由：金融 → RIM（有正權益與淨利）；地產 → DDM（有股利）；資料不足 → not_applicable
+    bank = [{"period_end": "2025-12-31", "freq": "A", "net_income": 50e9, "total_equity": 330e9, "diluted_shares": 2.9e9,
+             "dividends_paid": -14e9, "buyback": -20e9},
+            {"period_end": "2024-12-31", "freq": "A", "net_income": 48e9, "total_equity": 320e9, "diluted_shares": 2.95e9,
+             "dividends_paid": -13e9, "buyback": -18e9},
+            {"period_end": "2023-12-31", "freq": "A", "net_income": 40e9, "total_equity": 300e9, "diluted_shares": 3.0e9,
+             "dividends_paid": -12e9, "buyback": -10e9}]
+    rb = run_model(bank, {"ticker": "BANK", "price": 200, "beta": 1.1, "shares": 2.9e9, "sector": "Financial Services"})
+    assert rb["method"] == "rim" and rb["scenarios"]["bear"] < rb["scenarios"]["base"] < rb["scenarios"]["bull"]
+    assert rb["drivers"]["book_ps"] > 100 and 0.3 < rb["drivers"]["payout"] < 1.0 and rb["signal"]["verdict"] in ("accumulate", "hold", "trim", "exit", "review")
+    v_hi = rim_value(100, [0.20] * 10, 0.10, 0.5)["per_share"]; v_lo = rim_value(100, [0.10] * 10, 0.10, 0.5)["per_share"]
+    assert abs(v_lo - 100) < 1e-6 and v_hi > 100                     # ROE = r → 價值 = 淨值；ROE > r → 溢價
+    reit = [{"period_end": f"20{25 - i}-12-31", "freq": "A", "net_income": 1e9, "total_equity": 10e9, "diluted_shares": 1e9,
+             "dividends_paid": -(2.0e9 * 1.04 ** (-i))} for i in range(4)]
+    rd = run_model(reit, {"ticker": "REIT", "price": 50, "beta": 0.8, "shares": 1e9, "sector": "Real Estate"})
+    assert rd["method"] == "ddm" and abs(rd["drivers"]["div_g_short"] - 0.04) < 1e-3 and rd["scenarios"]["bear"] < rd["scenarios"]["bull"]
+    assert run_model([{"period_end": "2025-12-31", "freq": "A", "revenue": 1e9}], {"ticker": "X", "sector": "Financial Services"})["method"] == "not_applicable"
+    assert model_text(rb, "BANK").count("*") % 2 == 0 and "_" not in model_text(rd, "REIT")
     print("✅ 5 審核清單 + 訊號判定 + 產業路由")
 
     # 6) 文字輸出 Markdown 安全
-    txt = model_text(res, "VRT"); txt2 = model_text(run_model(periods, {**profile, "sector": "Real Estate"}), "O")
+    txt = model_text(res, "VRT"); txt2 = model_text(run_model(periods, {**profile, "sector": "Real Estate"}), "O")   # 無股利 → not_applicable 文字
     for tx in (txt, txt2):
         assert tx.count("*") % 2 == 0 and "_" not in tx, tx
     print(txt)

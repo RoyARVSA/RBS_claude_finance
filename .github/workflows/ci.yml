@@ -50,7 +50,7 @@ jobs:
                    falsifier fund_eval trade_engine alpha_overlay market_weather \
                    shadow_book behavior_check attribution state_crypto net_guard \
                    indicators mirror_book engine_backtest estimates_ledger universe \
-                   fin_data quality company_model \
+                   fin_data quality company_model factor_eval \
                    earnings_review; do
             echo "── $m ──"
             python3 "$m.py"
