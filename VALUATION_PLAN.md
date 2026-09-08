@@ -60,7 +60,7 @@ DCF（2026-30 取自 Model、2031-35 以 8% 成長 / 24% OPM 淡出；TV Gordon 
 | # | 發現 | 影響方向 | 量級（就地估算） |
 |---|---|---|---|
 | 1 | **β 2.08 是原始迴歸 β**，未做 Blume 收縮（0.67β+0.33=1.72）或同業/基本面 β | 低估價值 | β 1.72 → WACC ≈13.1% → 由敏感度表內插約 $143；β 1.4 → WACC ≈11.5% → 約 $170 |
-| 2 | 期末折現（`1/(1+WACC)^n`，n=1..10），未用期中慣例 | 低估 | 約 +7%（×(1+WACC)^0.5） |
+| 2 | 期末折現（`1/(1+WACC)^n`，n=1..10），未用期中慣例 | 低估 | 約 +3–5%（業界慣例估計；WACC 越高越接近上緣） |
 | 3 | 股數用**發行在外 382.6m** 而非**稀釋加權 390.7m** | 高估 | 約 −2% |
 | 4 | 淡出期 NWC = 18% × 增量營收；模型自身歷史 NWC/營收 6-13%，且 2025 CCC 只有 29 天（遞延收入預收撐住） | 低估 | 淡出期 FCF 少約 4-6 億/年 |
 | 5 | 稅率 25% vs FY2025 有效 23.5%（含估值備抵釋放，正常化 25% 合理）——OK，只是註明 | 中性 | — |
@@ -241,6 +241,62 @@ DCF（2026-30 取自 Model、2031-35 以 8% 成長 / 24% OPM 淡出；TV Gordon 
 
 網頁讀取後生成：`/model VRT set fair 117.7 bear 95 bull 170 wacc 0.148 tgr 0.03 kpi backlog_cov>=0.7 gpm>=0.37`。
 
-## 附錄 B — 事實查證（資料源與文獻）
+## 附錄 B — 事實查證（資料源與文獻，2026-09-07 查證代理）
 
-（查證代理報告，見下方由代理補入；未查證項目以「待驗證」標示，實作前必須確認。）
+> 證據等級：**A 節最強**（直接拆 yfinance 1.5.2 wheel 原始碼）；B/C/E 為官方頁面的搜尋摘要（開發環境 proxy 擋住 finnhub/sec.gov 直連），實作 P0 時在 GitHub Actions 環境再實測一次。
+
+### B.1 yfinance 1.5.2 前瞻資料 — 全部存在、免費無 key（走 quoteSummary `earningsTrend` / `financialData`）
+
+| 屬性 | 型別 | index / 欄位 |
+|---|---|---|
+| `revenue_estimate` | DataFrame | index `0q +1q 0y +1y`；`numberOfAnalysts avg low high yearAgoRevenue growth` |
+| `earnings_estimate` | DataFrame | 同 index；`numberOfAnalysts avg low high yearAgoEps growth` |
+| `eps_trend` | DataFrame | 同 index；`current 7daysAgo 30daysAgo 60daysAgo 90daysAgo` ← **預估修正動能的直接來源** |
+| `eps_revisions` | DataFrame | 同 index；`upLast7days upLast30days downLast7days downLast30days` |
+| `growth_estimates` | DataFrame | index 多 `+5y -5y`；欄實際為 `stockTrend industryTrend sectorTrend indexTrend`（docstring 寫法不同，以程式碼為準） |
+| `analyst_price_targets` | **dict** | `current low high mean median` |
+| `recommendations_summary` | DataFrame | = `recommendations` 別名；`period strongBuy buy hold sell strongSell` |
+| `earnings_history` | DataFrame | index 季度；`epsEstimate epsActual epsDifference surprisePercent` |
+
+注意：欄位是 Yahoo JSON key 攤平，缺欄就不存在 → 一律 `.get`；只取最近 4 期。
+財報列名（`pretty=True`，Title Case、縮寫全大寫）：損益表 `Total Revenue / Operating Income / EBIT / Tax Provision / Pretax Income / Diluted Average Shares / Reconciled Depreciation`（**損益表沒有 `Depreciation And Amortization`**，D&A 要從現金流量表拿）；資產負債表 `Total Debt / Cash And Cash Equivalents / Ordinary Shares Number / Accounts Receivable / Inventory / Accounts Payable / Current Deferred Revenue / Net PPE`；現金流量表 `Depreciation And Amortization / Capital Expenditure / Stock Based Compensation / Free Cash Flow / Operating Cash Flow`。Yahoo 最多 4 年 / 5 季。
+
+**對規劃的影響**：P0 的營運資金天數（AR/Inventory/AP/Deferred Revenue 都有）、PP&E 法（Net PPE + Capex + D&A）、SBC 成本化、共識營收/EPS 錨、預估修正動能——**全部可由 yfinance 免費取得**，不需要付費源。
+
+### B.2 Finnhub 免費層
+
+| 端點 | 結論 |
+|---|---|
+| `/stock/price-target`、`/stock/revenue-estimate`、`/stock/eps-estimate` | **Premium**（官方 docs 標示）→ 分析師預估**不走 Finnhub**，用 yfinance |
+| `/stock/recommendation`、`/stock/metric?metric=all`、`/stock/financials-reported`、`/calendar/earnings`（含 epsEstimate/revenueEstimate） | 免費（部分確認；as-reported 在免費層可能有範圍限制）→ 只當 metric / 財報備援 |
+| 限流 | 60 次/分 + 30 次/秒，超限 429（現行 finnhub_data.py 節流設計仍適用） |
+
+### B.3 SEC XBRL companyfacts
+
+- 結構 `facts.us-gaap.<Concept>.units.USD[]`，每筆 `start end val accn fy fp form filed frame`。
+- Concept 需 fallback 鏈：`Revenues` → `RevenueFromContractWithCustomerExcludingAssessedTax` → `...IncludingAssessedTax`；Capex `PaymentsToAcquirePropertyPlantAndEquipment` → `PaymentsForCapitalImprovements`。
+- **`filed` 可做 point-in-time**：同一 (concept, period) 會在 10-K/10-Q/修正案重複出現，回測取 `filed ≤ as_of` 的首次揭露；用 `fp` + `start/end` 區分季/年避免重複計算。
+- 限流 10 req/s、必須帶識別 User-Agent；**GitHub 機房 IP 被 SEC 封鎖（PITFALLS B10）** → 只作本地/網頁端與回測資料集建置，不進 cron 主路徑。
+
+### B.4 文獻與方法（實作時引用）
+
+1. 價值×動能負相關、組合互補：Asness, Moskowitz & Pedersen, "Value and Momentum Everywhere", *Journal of Finance* 68(3), 2013.
+2. 盈餘預估修正/盈餘驚奇的中期漂移：Chan, Jegadeesh & Lakonishok, "Momentum Strategies", *JF* 51(5), 1996（極端 SUE 組六個月價差約 7.5%；分析師修正反應遲緩）；實務框架 Zacks Rank（Agreement/Magnitude/Upside/Surprise）。
+3. β 收縮：Blume, "Betas and Their Regression Tendencies", *JF* 1975；Bloomberg adjusted β = 0.67×raw + 0.33。
+4. 反向 DCF：Mauboussin & Rappaport, *Expectations Investing*（2021 修訂版）；Damodaran 市場隱含法。
+5. 期中折現：折現期 0.5, 1.5, 2.5…；對 EV 影響約 +3–5%（valuation.py 已採用）。
+6. Backlog / book-to-bill 為營收領先指標：發行人 10-K 慣用表述（如 Parsons）；SEMI 半導體指標通論。
+
+### B.5 VRT 公開數字核對（模型 rOrders 表）
+
+| 項目 | 結論 |
+|---|---|
+| FY2025 營收 ≈ $10.2bn、年底 backlog $15.0bn（+109%）、Q4 book-to-bill ≈ 2.9x | **確認**（2026-02-11 新聞稿） |
+| FY2026 指引路徑：2/11 初始 $13.25–13.75bn → 4/22 上調 $13.5–14.0bn → 7/29 再上調 +$250M、中點 $14.0bn | **確認**中點與上調幅度；模型寫的 $13.8–14.2bn 區間僅二手來源可見，與中點一致 |
+| Q2 2026 backlog | 公開摘要未揭露 → 模型不應假設 2026 年中 backlog 數字（現行模型也沒有，OK） |
+
+### B.6 查證後對計畫的三個修正
+
+1. **前瞻資料源定案為 yfinance**（共識營收/EPS、`eps_trend` 90 天修正軌跡、`eps_revisions` 上下修計數、目標價區間）；Finnhub 只做 metric/財報備援；SEC XBRL 只做回測 PIT 資料集。
+2. P1 的 D&A 取自現金流量表列 `Depreciation And Amortization`，不要在損益表找。
+3. §1.3 #2 期中折現的量級由「約 +7%」修正為「約 +3–5%」。
