@@ -161,6 +161,20 @@ def main() -> int:
                 state["last_weekly"] = f"{_nw.isocalendar().year}-W{_nw.isocalendar().week}"
                 ss.save_state(state)
 
+            # 1.7 分析師預估快照帳本（限額輪替；與排程版 Step 1.7 同步）
+            if nowt - last_scan >= SCAN_INTERVAL and hasattr(ss, "refresh_estimates"):
+                try:
+                    ss.refresh_estimates(state)
+                except Exception as e:
+                    print(f"Estimates error: {e}")
+                # 1.8 選股池月頻重建（閉市輪）
+                if hasattr(ss, "maybe_rebuild_universe"):
+                    try:
+                        if ss.maybe_rebuild_universe(state):
+                            ss.save_state(state)
+                    except Exception as e:
+                        print(f"Universe error: {e}")
+
             # 2. 定時自動掃描
             if nowt - last_scan >= SCAN_INTERVAL:
                 _auto_scan(state)

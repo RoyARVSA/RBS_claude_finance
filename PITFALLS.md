@@ -217,6 +217,18 @@
   `git checkout --theirs watchlist_state.json`（在分支 merge main 時）。
 
 ---
+- **2026-09 補**：`estimates_ledger.json` 與 `data/universe/*.json` 同屬 cron 產物（本地跑 `scan_signals`/`bot_daemon`/`/universe rebuild` 也會生成）——開發分支一樣**不要 commit**，衝突時同樣取 main。
+
+### D14. 公開 repo 的 Actions 日誌也是公開的——print 指令參數等於把實倉貼上網
+
+- **症狀**：state 加密做得再好，`print(f"Command: {cmd} {args} …")` 會把 `/mirror init 932 DRAM:23:54.08 …`
+  （使用者真實持倉與現金）、`/thesis`、`/set` 參數，以及引擎「收養既有持倉 X（均價）」、
+  鏡像帳「BUY X x10」逐行印進 GitHub Actions 日誌；公開 repo 的日誌任何人可讀（保留 90 天）。
+- **原因**：加密只覆蓋落檔，沒覆蓋 stdout；日誌是第二條外洩路徑。
+- **修法**（2026-09-08）：`_log_cmd`/`_log_lines` 預設只印指令名、參數個數、行數與遮罩後的 chat id；
+  `RBS_VERBOSE_LOGS=1` 才完整輸出（本地除錯用，**不要**設進 Actions env）。
+- **規則**：新增任何 `print` 前問一句「這行出現在公開網頁上可以嗎」——持倉、股數、淨值、
+  論點、指令參數、chat id、API 回應原文一律不行；代碼、評分、公開行情可以。
 
 ## E. 統計 / 回測
 

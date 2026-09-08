@@ -50,6 +50,8 @@ Telegram 指令（傳給 Bot）：
   /today [帳戶 風險%]     – 當日交易計畫：VWAP/ORB/RVOL 訂單票（別名 /plan）
   /plantest [apply|clear] – 當日計畫 60 日歷史回測；apply 套用校準（每週亦自動跑）
   /plantest opt [apply]   – 參數尋優（ORB 分鐘×停損 ATR×目標 R:R，walk-forward 把關）
+  /universe [rebuild]     – 選股池快照（寬宇宙→品質/流動性/動能篩→候選前 N；月頻自動重建）
+  /est [TICKER]           – 分析師預估快照（共識/修正動能/目標價/評等/SUE 歷史）；無參數看排行
   /engtest [期間]          – 整台引擎歷史重放（現行參數；次日開盤成交、含成本、對照 SPY）
   /engtest opt [期間] [apply] – 引擎參數學習：108 組 × 三段 walk-forward + DSR；clear 還原
   /weekly                 – 立即生成每週深度週報（每週日 ET 18:00 後自動推送）
@@ -83,6 +85,7 @@ import yfinance as yf
 
 STATE_FILE = Path(__file__).parent / "watchlist_state.json"
 JOURNAL_FILE = Path(__file__).parent / "trade_journal.json"
+ESTIMATES_FILE = Path(__file__).parent / "estimates_ledger.json"   # 分析師預估快照帳本（公開資料衍生，明文）
 
 DEFAULT_WATCHLIST = [
     "AAPL", "MSFT", "NVDA", "GOOGL", "AMZN",
@@ -142,6 +145,21 @@ SET_CLAMPS = {
     "briefing_hour_et":    (0.0, 23.5),
     "earnings_alert_days": (0.0, 30.0),
     "atr_mult":            (0.5, 5.0),
+    # 預估快照帳本 / 選股池（對抗驗證 M4：無夾制時 /set est_ttl_hours 0 會每輪整份 watchlist 打 quoteSummary）
+    "est_refresh_per_run": (0.0, 20.0),
+    "est_ttl_hours":       (1.0, 168.0),
+    "est_sue_per_run":     (0.0, 25.0),
+    "est_sue_refresh_days": (7.0, 365.0),
+    "uni_min_mcap":        (1e8, 1e12),
+    "uni_min_avgvol":      (1e4, 1e8),
+    "uni_min_price":       (1.0, 1000.0),
+    "uni_min_roe":         (-1.0, 1.0),
+    "uni_min_current":     (0.0, 10.0),
+    "uni_max_de":          (0.0, 50.0),
+    "uni_min_margin":      (-1.0, 1.0),
+    "uni_top_n":           (5.0, 300.0),
+    "uni_pages":           (1.0, 4.0),
+    "uni_rebuild_day":     (1.0, 28.0),
     # 引擎鍵的風險上限（trade_engine 只夾 trail/guard/max_positions，
     # 這兩鍵在引擎端無夾制——/set eng_risk_pct 50 曾可讓單檔吃滿買力）
     "eng_risk_pct":        (0.0005, 0.05),
@@ -411,6 +429,8 @@ def _cmd_help() -> str:
         "`/today [帳戶 風險%]`（或 `/plan`）— 當日交易計畫：VWAP/ORB 進場票（進場/停損/停利/股數）\n"
         "`/plantest [apply|clear]` — 當日計畫 60 日回測；apply 套用校準（每週自動跑，`/set plan_autocal_enabled off` 關）\n"
         "`/plantest opt [apply]` — 參數尋優：ORB×停損×R:R 掃 27 組，holdout 段把關通過才推薦\n"
+        "`/universe [rebuild]` — 選股池快照：yf.screen 寬宇宙（市值≥20 億、均量≥100 萬）→ 品質/流動性/12-1 動能篩 → 候選前 N；每月自動重建、快照落 data/universe/（P0 只顯示不接引擎）\n"
+        "`/est [TICKER]` — 分析師預估快照：共識/修正動能/目標價/評等/財報驚奇史（每輪自動輪替刷新；無參數看 watchlist 上修下修排行）\n"
         "`/engtest [3m|6m|1y|2y]` — 整台引擎歷史重放：現行參數過去 N 個月會賺多少（次日開盤成交、含成本、對照 SPY）\n"
         "`/engtest opt [1y] [apply]` — 引擎參數學習：進場門檻×停損×追蹤×分批×死錢 108 組，三段 walk-forward + DSR，holdout 通過才推薦；apply 套用、`/engtest clear` 還原\n"
         "`/weekly` — 立即生成每週深度週報（指數/強弱/計分板/RRG/下週行事曆）\n"
@@ -864,7 +884,7 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
 
         # 安全：只接受授權聊天室（任何人都找得到 bot username；未授權者可下 /closeall 等指令）
         if src_chat != str(chat_id):
-            print(f"Ignored message from unauthorized chat {src_chat}")
+            print(f"Ignored message from unauthorized chat {_mask_chat(src_chat)}")
             continue
 
         if not text.startswith("/"):
@@ -874,7 +894,7 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
         cmd = parts[0].lower().split("@")[0]  # handle /cmd@botname format
         args = parts[1:]
 
-        print(f"Command: {cmd} {args} from chat {src_chat}")
+        _log_cmd(cmd, args, src_chat)
         reply = ""
 
         if cmd == "/help":
@@ -993,7 +1013,8 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
             bool_keys = {"macd_enabled", "bb_enabled", "atr_enabled", "scan_market_only",
                          "cooldown_enabled", "regime_filter_enabled",
                          "position_sizing_enabled", "briefing_enabled", "mtf_enabled",
-                         "autotrade_enabled", "weekly_enabled", "plan_autocal_enabled"}
+                         "autotrade_enabled", "weekly_enabled", "plan_autocal_enabled",
+                         "est_enabled", "uni_enabled"}
             float_keys = {"rsi_oversold", "rsi_overbought", "price_change_pct",
                           "vol_spike_ratio", "cooldown_hours",
                           "account_size", "risk_pct", "atr_mult", "briefing_hour_et",
@@ -1005,6 +1026,18 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                 try:
                     import trade_engine as te
                     eng_ok = key[4:] in te.ENGINE_DEFAULTS
+                except Exception:
+                    pass
+            elif key.startswith("est_"):
+                try:
+                    import estimates_ledger as el
+                    eng_ok = key in el.DEFAULTS and key != "est_enabled"
+                except Exception:
+                    pass
+            elif key.startswith("uni_"):
+                try:
+                    import universe as un
+                    eng_ok = key in un.DEFAULTS and key != "uni_enabled"
                 except Exception:
                     pass
             elif key.startswith("ao_"):
@@ -1041,7 +1074,9 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
             else:
                 reply = (f"❌ 未知參數：{key}\n可用：{', '.join(bool_keys | float_keys)}\n"
                          "引擎參數用 `eng_` 前綴（如 `/set eng_trail_pct 0.1`）、"
-                         "資訊疊加用 `ao_` 前綴（如 `/set ao_earnings_veto_days 5`）")
+                         "資訊疊加用 `ao_` 前綴（如 `/set ao_earnings_veto_days 5`）、"
+                         "預估快照用 `est_` 前綴（如 `/set est_refresh_per_run 6`）、"
+                         "選股池用 `uni_` 前綴（如 `/set uni_top_n 80`）")
 
         elif cmd == "/scan":
             reply = "🔍 掃描中，請稍候約 30 秒…"
@@ -1422,6 +1457,33 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                     lines.append(f"{icon} {t}　{e.get('side','').upper()} {e.get('symbol')} "
                                  f"x{e.get('qty')}　評分 {sc_s}")
                 reply = "\n".join(lines)
+
+        elif cmd in ("/est", "/estimates"):
+            # 分析師預估快照帳本：單檔明細 / watchlist 修正動能排行
+            try:
+                import estimates_ledger as el
+                led = el.load_ledger(ESTIMATES_FILE)
+                if args:
+                    reply = el.est_text(args[0].upper(), led)
+                else:
+                    reply = el.movers_text(led, list(state.get("watchlist") or []))
+            except Exception as e:
+                reply = f"❌ 預估快照讀取失敗：{e}"
+
+        elif cmd == "/universe":
+            # 選股池快照：檢視 / 立即重建（月頻自動）
+            try:
+                import universe as un
+                if args and args[0].lower() == "rebuild":
+                    _tg_send(token, src_chat or chat_id, "🌐 重建選股池（yf.screen 三頁 + 一年行情批次），約 1 分鐘…")
+                    save_state(state)                       # 長操作前落盤 offset
+                    line = maybe_rebuild_universe(state, 0.0, force=True)
+                    changed = bool(line)
+                    reply = un.universe_text(un.load_latest_snapshot()) if line else "❌ 重建失敗（行情/篩選器不可用），稍後再試"
+                else:
+                    reply = un.universe_text(un.load_latest_snapshot())
+            except Exception as e:
+                reply = f"❌ 選股池讀取失敗：{e}"
 
         elif cmd == "/engtest":
             # 引擎歷史重放（單組參數）/ opt 參數學習（walk-forward + DSR）/ clear 還原
@@ -1855,6 +1917,92 @@ def apply_cooldown(results: list[dict], state: dict, now: datetime | None = None
             del hist[tk]
 
     return results, suppressed
+
+
+# ── 日誌節制（公開 repo 的 GitHub Actions 日誌人人可看）────────────────────
+# 指令參數（/mirror init 的實倉與現金、/thesis 論點、/set 參數）、引擎收養持倉、
+# 鏡像帳買賣行，預設只印摘要；RBS_VERBOSE_LOGS=1（本地除錯）才完整輸出。
+# 加密 state 擋得住 repo 瀏覽，擋不住自己 print 上網——PITFALLS D14。
+_VERBOSE_LOGS = os.environ.get("RBS_VERBOSE_LOGS", "").strip() == "1"
+
+
+def _mask_chat(chat) -> str:
+    c = str(chat or "")
+    return f"…{c[-3:]}" if len(c) > 3 else "?"
+
+
+def _log_cmd(cmd: str, args: list, src_chat) -> None:
+    if _VERBOSE_LOGS:
+        print(f"Command: {cmd} {args} from chat {_mask_chat(src_chat)}")
+    else:
+        print(f"Command: {cmd} ({len(args)} args redacted) from chat {_mask_chat(src_chat)}")
+
+
+def _log_lines(prefix: str, lines: list) -> None:
+    """引擎/鏡像帳的逐行說明只在 verbose 時印，否則只印行數。"""
+    if not lines:
+        return
+    if _VERBOSE_LOGS:
+        for ln in lines:
+            print(f"{prefix}: {ln}")
+    else:
+        print(f"{prefix}: {len(lines)} 行（含持倉細節，日誌已略；RBS_VERBOSE_LOGS=1 顯示）")
+
+
+def refresh_estimates(state: dict, elapsed_s: float = 0.0) -> None:
+    """
+    每輪限額輪替刷新分析師預估快照 + Alpha Vantage SUE 回填（estimates_ledger.py）。
+    閉市輪也跑——用閒置輪累積「逐日共識」自有歷史（免費資料拿不到的東西，
+    VALUATION_LANDSCAPE §4.1）。獨立檔案、公開資料衍生；任何失敗不影響主流程。
+    """
+    th = state.get("thresholds") or {}
+    if not th.get("est_enabled", True) or elapsed_s > 120:
+        return
+    try:
+        import estimates_ledger as el
+        cfg = {k: th[k] for k in el.DEFAULTS if k in th}
+        # 只用 watchlist：帳本是明文公開檔，加入引擎/鏡像帳持倉代碼等於揭露持股；
+        # 引擎候選本就來自 watchlist，覆蓋不會少
+        syms = [x for x in dict.fromkeys(state.get("watchlist") or []) if x]
+        led = el.load_ledger(ESTIMATES_FILE)
+        now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        n1 = el.refresh(led, syms, now_iso, cfg)
+        n2 = el.backfill_sue(led, syms, now_iso[:10], cfg)
+        if el.save_ledger(ESTIMATES_FILE, led):
+            print(f"Estimates: 快照 {len(n1)} 檔、SUE {len(n2)} 檔 → {ESTIMATES_FILE.name}")
+    except Exception as e:
+        print(f"Estimates: 刷新失敗，跳過 {e}")
+
+
+def maybe_rebuild_universe(state: dict, elapsed_s: float = 0.0, force: bool = False) -> str | None:
+    """
+    月頻重建選股池（universe.py）：yf.screen 寬宇宙 → 品質/流動性/動能篩 → 快照落檔
+    data/universe/YYYY-MM.json + state["universe"] 摘要。用閒置輪跑（elapsed 小才做）。
+    回一行摘要（無敏感內容）或 None。任何失敗不影響主流程。
+    """
+    th = state.get("thresholds") or {}
+    try:
+        import universe as un
+        cfg = {k: th[k] for k in un.DEFAULTS if k in th}
+        today = datetime.now(ET).strftime("%Y-%m-%d")
+        if not force and (elapsed_s > 60 or not un.should_rebuild(state, today, cfg)):
+            return None
+        if not force and market_status().get("open"):
+            return None                              # 用閉市輪跑，不拖延開盤掃描
+        try:
+            snap = un.rebuild(state, today, cfg, themes=un.theme_map())
+        except Exception as e:
+            un.note_failure(state, today)            # 同日失敗兩次 → 明天再試（對抗驗證 E2）
+            print(f"Universe: 重建失敗（{type(e).__name__}），已記退避")
+            return None
+        c = snap.get("counts", {})
+        line = (f"Universe: 寬宇宙 {c.get('broad', 0)} → 品質 {c.get('passed_quality', 0)} → "
+                f"候選 {c.get('top', 0)}（{snap['as_of']}）")
+        print(line)
+        return line
+    except Exception as e:
+        print(f"Universe: 重建失敗，跳過 {e}")
+        return None
 
 
 def market_regime(state: dict | None = None) -> dict | None:
@@ -2761,8 +2909,7 @@ def run_autotrade(state: dict, results: list[dict]) -> str | None:
             scored, positions, equity, bp,
             state.get("engine"), regime, config, today)
         state["engine"] = eng_state
-        for n in notes:
-            print(f"Engine: {n}")
+        _log_lines("Engine", notes)
     except Exception as e:
         print(f"Autotrade: trade_engine 失敗，退回舊決策邏輯 {e}")
         notes = []
@@ -2783,8 +2930,7 @@ def run_autotrade(state: dict, results: list[dict]) -> str | None:
             state, scored, config,
             _mr_rg.get("regime") if _mr_rg else None,
             datetime.now(ET).strftime("%Y-%m-%d"))
-        for ln in mirror_lines:
-            print(f"Mirror: {ln}")
+        _log_lines("Mirror", mirror_lines)
     except Exception as e:
         print(f"Mirror: 鏡像帳失敗，跳過 {e}")
         mirror_lines = []
@@ -2891,6 +3037,13 @@ def main() -> int:
             print(f"Weekly report error: {e}")
         _now_w = datetime.now(ET)
         state["last_weekly"] = f"{_now_w.isocalendar().year}-W{_now_w.isocalendar().week}"
+        save_state(state)
+
+    # Step 1.7: 分析師預估快照帳本（每輪 ≤ est_refresh_per_run 檔；閉市輪也跑）
+    refresh_estimates(state, time.monotonic() - _t0)
+
+    # Step 1.8: 選股池月頻重建（閒置輪；P0 只快照與顯示，不接引擎）
+    if maybe_rebuild_universe(state, time.monotonic() - _t0):
         save_state(state)
 
     # Step 2: Check mute & market hours
