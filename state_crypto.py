@@ -40,7 +40,8 @@ import os
 SENSITIVE_KEYS = ("theses", "shadow", "engine", "thresholds",
                   "plan_calib", "reflections", "calibration",
                   "mirror",    # 鏡像帳：使用者真實布建與資金量，絕不落明文
-                  "eng_opt")   # /engtest apply 的參數紀錄（策略參數）
+                  "eng_opt",   # /engtest apply 的參數紀錄（策略參數）
+                  "models", "val_hist")   # 公司模型人工覆蓋與估值歷史（使用者的研究判斷）
 
 _MAGIC = "__enc__"
 

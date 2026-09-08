@@ -72,6 +72,7 @@ Streamlit 網頁應用 + 獨立的訊號掃描 Bot（GitHub Actions 排程版 / 
 - **參數尋優**：`/plantest opt` 掃 ORB 分鐘 × 停損 ATR 倍數 × 目標 R:R 共 27 組參數，訓練段排序、**驗證段沒明確勝過現行預設就不推薦**（防過擬合）；`opt apply` 一鍵套用推薦參數＋對應校準
 - **分析師預估快照帳本**：`/est [TICKER]`——免費資料拿不到「逐日共識歷史」，所以 Bot 每輪用閒置名額輪替把 yfinance 的 EPS 共識 / 7–90 天修正 / 上下修家數 / 目標價與 Finnhub 評等家數存成週頻列（append-only，`estimates_ledger.json`），從第一天起累積自有 point-in-time 歷史；輸出修正動能分（冷啟動用 yfinance 90 天回看）與 Alpha Vantage 回填的財報驚奇史（beat 率、SUE）。**只顯示與論點監測、不進部位**——估值層（見 VALUATION_PLAN.md）的第一塊地基
 - **選股池（Universe）層**：`/universe`——不再只看固定 watchlist：每月用 `yf.screen` 三次呼叫建 500–750 檔寬宇宙（美股、市值 ≥ 20 億、3 月均量 ≥ 100 萬、價 ≥ $5），品質門檻在篩選器端做（ROE/流動比/負債比/淨利率；金融與地產以 sector 白名單排除、另路由）+ 12-1 動能排序取候選前 N；快照帶 `as_of`/`available_at`（T+1 可見）每次重建一檔落在 `data/universe/YYYY-MM-DD.json`，加上 S&P 500 成分歷史期間表（1996 起），讓回測能用「當天成分」而非今日名單（消除倖存者偏差）。**P0 只快照與顯示，不接引擎**——宇宙只決定引擎看得到誰，進場仍看技術評分、出場仍走價格機制
+- **公司模型引擎（估值層 P1）**：`/model TICKER`——把使用者手工三表模型的驅動層泛化到任意代碼：point-in-time 三表（每期帶可得知日，重編不覆寫）、共識/指引覆蓋前兩年成長、專業級 WACC（Blume 收縮 β、利息保障→合成信評利差、市值權重）、5+5 年 FCFF 含 SBC 成本化、**價值中性終值**（再投資率 = g/ROIC，終值 ROIC 預設收斂至 WACC）、熊/基/牛三情境（熊＝論點錯了的世界）+ 蒙地卡羅 + 敏感度、**反向 DCF**（市價隱含 5 年營收 CAGR 與營益率）、九條模型審核（任一不過＝待審、不推買訊）、品質與會計風險（Piotroski F、Altman Z/Z''、Beneish M、Sloan 應計、FCF 轉換、SBC、稀釋、ROIC−WACC 價差）→ MoS 分層門檻（品質好 25%／一般 35%／差 50%）與區間位置判定。`set` 覆蓋任何驅動、估值歷史加密保存。折現引擎以使用者的 VRT Excel 為回歸基準（並發現其終值折現期錯誤）。**P1 只顯示與監測，不接引擎**
 - **引擎歷史重放與參數學習**：`/engtest [3m|6m|1y|2y]` 把**整台波段引擎**（進場門檻、停損/追蹤/分批/死錢、保險絲、regime 三態）逐日重放過去 N 個月——每日評分只用當日以前 K 棒、t 日決策 t+1 開盤成交、單邊 0.05% 成本、對照 SPY 買進持有，回答「如果用現行參數過去會賺多少」；`/engtest opt [apply]` 掃 進場門檻×停損倍數×追蹤回落×分批R×死錢天數 108 組，三段 walk-forward（訓練排序/驗證挑選/holdout 只看一次把關）+ DSR 扣多重測試幸運上限——這是「從歷史學規則」的誠實版（參數搜索，非深度 RL：日 K 樣本太少會學到雜訊）；`clear` 還原
 - **假設反駁器**：`/falsify` 對投資故事跑 8 類反駁測試——block bootstrap 漂移顯著性（誠實處理重疊視窗）、日期穩健性、晚進場、成本存活、事件日 CAR、regime/利率週期切分、動能混淆兩因子回歸、跨市場泛化——外加 **DSR 多重假設帳本**（試了幾個才挑到這個→折減）。**只能證偽、不能證實**，報告頁首永遠印這句話
 - **投資論點追蹤**：`/thesis` 記錄每檔的論點/支柱/風險/催化劑與**失效價**，掃描自動監測失效與達標即推播；逾 90 天未複查晨報提醒（「不可否證的不是論點」）
@@ -180,6 +181,9 @@ behavior_check.py       交易行為體檢：追高/頻率/出場品質/持有�
 shadow_book.py          Shadow 對照帳本：舊決策邏輯平行記帳 vs 新引擎
 mirror_book.py          鏡像帳：引擎接管使用者實倉起點的虛擬帳戶(模式 A)
 engine_backtest.py      引擎歷史重放 + 參數學習（walk-forward 三段 + DSR，/engtest）
+fin_data.py             point-in-time 三表取數（yfinance 主、Finnhub as-reported 備援、first-seen 合併、data/fin/）
+quality.py              品質/會計風險：Piotroski、Altman、Beneish、Sloan、ROIC 價差、旗標與否決
+company_model.py        公司模型引擎：驅動推導、專業 WACC、價值中性 DCF、三情境/MC/敏感度、反向 DCF、審核、訊號（/model）
 universe.py             選股池層：yf.screen 寬宇宙 → 品質/流動性/動能篩 → PIT 快照 + 成分歷史（/universe）
 estimates_ledger.py     分析師預估快照帳本：週頻 append-only、修正動能、Alpha Vantage SUE 回填（/est）
 attribution.py          機制歸因報告：各機制實測損益/勝率/賣後追蹤(FIFO)

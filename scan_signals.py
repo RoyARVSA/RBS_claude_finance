@@ -50,6 +50,7 @@ Telegram 指令（傳給 Bot）：
   /today [帳戶 風險%]     – 當日交易計畫：VWAP/ORB/RVOL 訂單票（別名 /plan）
   /plantest [apply|clear] – 當日計畫 60 日歷史回測；apply 套用校準（每週亦自動跑）
   /plantest opt [apply]   – 參數尋優（ORB 分鐘×停損 ATR×目標 R:R，walk-forward 把關）
+  /model TICKER [set k=v|clear] – 公司模型（三情境 DCF/反向 DCF/品質評分；set 覆蓋驅動）
   /universe [rebuild]     – 選股池快照（寬宇宙→品質/流動性/動能篩→候選前 N；月頻自動重建）
   /est [TICKER]           – 分析師預估快照（共識/修正動能/目標價/評等/SUE 歷史）；無參數看排行
   /engtest [期間]          – 整台引擎歷史重放（現行參數；次日開盤成交、含成本、對照 SPY）
@@ -70,6 +71,7 @@ Telegram 指令（傳給 Bot）：
 from __future__ import annotations
 
 import json
+import math
 import os
 import sys
 import time
@@ -429,6 +431,7 @@ def _cmd_help() -> str:
         "`/today [帳戶 風險%]`（或 `/plan`）— 當日交易計畫：VWAP/ORB 進場票（進場/停損/停利/股數）\n"
         "`/plantest [apply|clear]` — 當日計畫 60 日回測；apply 套用校準（每週自動跑，`/set plan_autocal_enabled off` 關）\n"
         "`/plantest opt [apply]` — 參數尋優：ORB×停損×R:R 掃 27 組，holdout 段把關通過才推薦\n"
+        "`/model TICKER [set k=v…|clear]` — 公司模型：專業 WACC（Blume β/合成信評）、5+5 年 FCFF、價值中性終值、熊/基/牛 + 蒙地卡羅、反向 DCF、九條審核、品質評分（Piotroski/Altman/Beneish）；set 覆蓋驅動（opm_target/beta/wacc/tgr/rev_g=a,b,c/guidance_rev…）\n"
         "`/universe [rebuild]` — 選股池快照：yf.screen 寬宇宙（市值≥20 億、均量≥100 萬）→ 品質/流動性/12-1 動能篩 → 候選前 N；每月自動重建、快照落 data/universe/（P0 只顯示不接引擎）\n"
         "`/est [TICKER]` — 分析師預估快照：共識/修正動能/目標價/評等/財報驚奇史（每輪自動輪替刷新；無參數看 watchlist 上修下修排行）\n"
         "`/engtest [3m|6m|1y|2y]` — 整台引擎歷史重放：現行參數過去 N 個月會賺多少（次日開盤成交、含成本、對照 SPY）\n"
@@ -1470,6 +1473,52 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
             except Exception as e:
                 reply = f"❌ 預估快照讀取失敗：{e}"
 
+        elif cmd == "/model":
+            # 公司模型：/model T｜/model T set k=v…｜/model T clear｜/model（清單）
+            try:
+                today = datetime.now(ET).strftime("%Y-%m-%d")
+                if not args:
+                    vh = state.get("val_hist") or {}
+                    if not vh:
+                        reply = ("🏛️ 尚無公司模型。`/model NVDA` 建模（三情境 DCF、反向 DCF、品質評分）；"
+                                 "`/model NVDA set opm_target=0.24 beta=1.4 rev_g=0.3,0.25,0.2` 覆蓋驅動；"
+                                 "`/model NVDA clear` 還原")
+                    else:
+                        lines = ["🏛️ *公司模型清單*（最近一次）"]
+                        for tkr, rows in sorted(vh.items()):
+                            r = rows[-1] if rows else {}
+                            mos = r.get("mos")
+                            lines.append(f"・{tkr} {r.get('d', '')}：基 {r.get('base') or 0:.0f}"
+                                         f"（熊 {r.get('bear') or 0:.0f}／牛 {r.get('bull') or 0:.0f}）"
+                                         f"{'' if mos is None else f' MoS {mos:+.0%}'} {r.get('verdict', '')}")
+                        lines.append("非投資建議")
+                        reply = "\n".join(lines)
+                else:
+                    tkr = args[0].upper().lstrip("$")
+                    sub = args[1].lower() if len(args) > 1 else ""
+                    if sub == "clear":
+                        had = (state.get("models") or {}).pop(tkr, None)
+                        changed = bool(had)
+                        reply = f"🧹 已清除 {tkr} 的人工覆蓋" if had else f"{tkr} 沒有人工覆蓋"
+                    else:
+                        if sub == "set":
+                            ov, bad = parse_model_overrides(args[2:])
+                            if bad:
+                                reply = (f"❌ 無效參數：{' '.join(bad)}\n可用："
+                                         + "、".join(MODEL_OVERRIDE_KEYS) + "（rev_g 用逗號路徑）")
+                                ov = None
+                            if ov:
+                                m = state.setdefault("models", {}).setdefault(tkr, {})
+                                m["overrides"] = {**(m.get("overrides") or {}), **ov}
+                                m["updated"] = today
+                                changed = True
+                        if not (sub == "set" and not ov):
+                            _tg_send(token, src_chat or chat_id, f"🏛️ {tkr} 建模中（抓三表/市場資料，約 20–40 秒）…")
+                            reply, _res = run_company_model(state, tkr, today)
+                            changed = True                      # val_hist 已更新
+            except Exception as e:
+                reply = f"❌ 公司模型失敗：{e}"
+
         elif cmd == "/universe":
             # 選股池快照：檢視 / 立即重建（月頻自動）
             try:
@@ -2003,6 +2052,95 @@ def maybe_rebuild_universe(state: dict, elapsed_s: float = 0.0, force: bool = Fa
     except Exception as e:
         print(f"Universe: 重建失敗，跳過 {e}")
         return None
+
+
+MODEL_OVERRIDE_KEYS = ("rev_g", "opm_target", "beta", "wacc", "tgr", "tax", "guidance_rev",
+                       "long_growth", "roic_tv", "capex_pct", "da_pct", "nwc_pct", "rf")
+
+
+def run_company_model(state: dict, ticker: str, today: str) -> tuple[str, dict | None]:
+    """
+    /model 主體：fin_data（PIT 三表）+ 市場資料 + 預估快照 + 品質評分 → company_model。
+    人工覆蓋存 state["models"][T]["overrides"]（加密區）；估值歷史 state["val_hist"][T]（週頻、cap 80）。
+    回 (文字, 結果 dict|None)。任何失敗回錯誤文字，不拋。
+    """
+    import fin_data as fd
+    import quality as ql
+    import company_model as cm
+    ticker = ticker.upper().lstrip("$")
+    store = fd.get_financials(ticker, today)
+    periods = fd.pit_view(store, None, "A")
+    if not periods:
+        return f"❌ {ticker} 抓不到年報資料（yfinance/Finnhub 皆無），無法建模", None
+    profile = fd.fetch_profile(ticker) or {}
+    profile["ticker"] = ticker
+    est = None
+    try:
+        import estimates_ledger as el
+        est = ((el.load_ledger(ESTIMATES_FILE).get("tickers") or {}).get(ticker) or {}).get("latest")
+    except Exception:
+        pass
+    ov = ((state.get("models") or {}).get(ticker) or {}).get("overrides") or {}
+    if profile.get("sector") in cm.NON_DCF_SECTORS:
+        res = cm.run_model(periods, profile)
+        return cm.model_text(res, ticker), res
+    # 兩段：先推 WACC 給品質評分（ROIC 價差），再帶品質進訊號
+    try:
+        d0 = cm.derive_drivers(periods, profile, est, ov)
+        wacc = d0["wacc"]
+    except Exception as e:
+        return f"❌ {ticker} 驅動推導失敗：{e}", None
+    q = ql.quality_summary(periods, profile.get("mkt_cap"), wacc)
+    res = cm.run_model(periods, profile, est, ov, q)
+    # 估值歷史（週頻、同週覆寫）
+    try:
+        vh = state.setdefault("val_hist", {}).setdefault(ticker, [])
+        sc, sig = res.get("scenarios", {}), res.get("signal", {})
+        row = {"d": today, "px": profile.get("price"), "bear": sc.get("bear"), "base": sc.get("base"),
+               "bull": sc.get("bull"), "mos": sig.get("mos"), "verdict": sig.get("verdict")}
+        wk = lambda ds: datetime.strptime(ds[:10], "%Y-%m-%d").isocalendar()[:2]
+        if vh and wk(vh[-1]["d"]) == wk(today):
+            vh[-1] = row
+        else:
+            vh.append(row)
+        del vh[:-80]
+    except Exception:
+        pass
+    txt = cm.model_text(res, ticker) + "\n\n" + ql.quality_text(q, ticker)
+    if len(txt) > 3800:
+        txt = txt[:3800] + "…"
+    return txt, res
+
+
+def parse_model_overrides(tokens: list[str]) -> tuple[dict, list[str]]:
+    """`k=v` 對 → {k: float | "a,b,c"}；未知鍵/壞值回 bad 清單。"""
+    out, bad = {}, []
+    for t in tokens:
+        if "=" not in t:
+            bad.append(t)
+            continue
+        k, v = t.split("=", 1)
+        k = k.strip().lower()
+        if k not in MODEL_OVERRIDE_KEYS:
+            bad.append(t)
+            continue
+        if k == "rev_g":
+            try:
+                parts = [float(x) for x in v.split(",") if x.strip()]
+                if not parts or len(parts) > 10:
+                    raise ValueError
+                out[k] = ",".join(f"{x:.4f}" for x in parts)
+            except ValueError:
+                bad.append(t)
+        else:
+            try:
+                fv = float(v)
+                if not math.isfinite(fv):
+                    raise ValueError
+                out[k] = fv
+            except ValueError:
+                bad.append(t)
+    return out, bad
 
 
 def market_regime(state: dict | None = None) -> dict | None:

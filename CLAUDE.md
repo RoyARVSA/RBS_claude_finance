@@ -46,6 +46,7 @@ Streamlit 金融儀表板（`app.py`，13 頁）+ Telegram 訊號 Bot（`scan_si
 | Alpaca 模擬交易 | `trade_engine.py`（Lean 式分層引擎 `decide`：訊號只管進場、出場走停損/追蹤/分批/死錢、保險絲三態；state["engine"] 簿記）+ `alpha_overlay.py`（Alpha 層資訊疊加：內部人/選擇權/空單/財報 veto/恐貪縮倉，state["alpha_cache"] 限額輪替）+ `alpaca_trader.py`（REST client + bracket 單；`decide_orders` 為 legacy 退回路徑）|
 | 當日交易計畫與其回測 | `trade_plan.py`（/today 訂單票）/ `plan_backtest.py`（60 日重放 + walk-forward 校準，存 `state["plan_calib"]`）|
 | 估值 / 財報 / 論點 / 反駁器 | `valuation.py`（DCF+Comps）/ `earnings_review.py`（/preview）/ `thesis.py`（/thesis 失效價監測）/ `falsifier.py`（/falsify 只證偽不證實＋DSR 帳本）——皆移植自 Anthropic financial-services 方法論 |
+| 估值層模型（P1） | `fin_data.py`（PIT 三表、first-seen、data/fin/）+ `quality.py`（Piotroski/Altman/Beneish/Sloan/ROIC）+ `company_model.py`（/model：驅動推導→專業 WACC→價值中性 DCF→三情境/MC/反向 DCF→九條審核→訊號；人工覆蓋 state["models"]、歷史 state["val_hist"] 皆加密）|
 | 估值層資料地基（P0） | `universe.py`（/universe：寬宇宙→品質/動能篩→PIT 快照 data/universe/、成分歷史期間表）+ `estimates_ledger.py`（/est：yfinance 預估快照週頻帳本 + 修正動能 + Alpha Vantage SUE 回填；獨立檔 `estimates_ledger.json` 由 workflow commit；規劃見 `VALUATION_PLAN.md` / `VALUATION_LANDSCAPE.md`）|
 | 情緒 / 台指籌碼 / 再平衡 | `sentiment_fg.py`（雙恐懼貪婪）/ `taifex.py`（三大法人期權）/ `rebalance.py`（HRP 等權重配置）|
 
