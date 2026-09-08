@@ -55,7 +55,7 @@ def piotroski(periods: list[dict]) -> dict:
         return {"score": None, "max": 9, "items": {}, "missing": ["need_2_years"]}
     c, p = periods[0], periods[1]
     ta_c, ta_p = _g(c, "total_assets"), _g(p, "total_assets")
-    roa_c = _div(_g(c, "net_income"), _avg(ta_c, ta_p))
+    roa_c = _div(_g(c, "net_income"), ta_c)          # 兩期同用期末 TA（分母一致，對抗驗證 C1）
     roa_p = _div(_g(p, "net_income"), ta_p)
     items = {
         "roa_pos": None if roa_c is None else int(roa_c > 0),
@@ -82,7 +82,7 @@ def piotroski(periods: list[dict]) -> dict:
     gm_c, gm_p = _div(_g(c, "gross_profit"), _g(c, "revenue")), _div(_g(p, "gross_profit"), _g(p, "revenue"))
     if gm_c is not None and gm_p is not None:
         items["margin_up"] = int(gm_c > gm_p)
-    to_c = _div(_g(c, "revenue"), _avg(ta_c, ta_p))
+    to_c = _div(_g(c, "revenue"), ta_c)
     to_p = _div(_g(p, "revenue"), ta_p)
     if to_c is not None and to_p is not None:
         items["turnover_up"] = int(to_c > to_p)
@@ -218,7 +218,7 @@ def invested_capital(p: dict) -> float | None:
     eq, d, cash = _g(p, "total_equity"), _g(p, "total_debt"), (_g(p, "cash_and_sti") if _g(p, "cash_and_sti") is not None else _g(p, "cash"))
     if eq is None:
         return None
-    return eq + (d or 0) - (cash or 0)
+    return eq + (_g(p, "minority_interest") or 0) + (d or 0) - (cash or 0)   # 債為全體 → 權益加回少數股權
 
 
 def roic_series(periods: list[dict], tax_rate: float | None = None) -> list[tuple[str, float]]:

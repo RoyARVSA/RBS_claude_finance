@@ -308,7 +308,8 @@ def ttm(store: dict, as_of: str | None = None) -> dict | None:
     for f in YF_FIELDS:
         vals = [q.get(f) for q in last4]
         if f in FLOW_FIELDS:
-            out[f] = sum(v for v in vals if v is not None) if any(v is not None for v in vals) else None
+            known = [v for v in vals if v is not None]
+            out[f] = sum(known) if len(known) == 4 else None    # 缺任一季不硬算（對抗驗證 B3）
         else:
             out[f] = next((v for v in vals if v is not None), None)
     return out
@@ -400,8 +401,9 @@ def get_financials(ticker: str, today: str, base_dir: Path | None = None, key: s
     merged = 0
     if annual or quarterly:
         merged += merge_first_seen(store, annual + quarterly, today)
-    n_annual = len(pit_view(store, None, "A"))
-    if n_annual < 2:
+    ann = pit_view(store, None, "A")
+    thin = (not ann) or ann[0].get("revenue") is None or ann[0].get("cfo") is None
+    if len(ann) < 2 or thin:                          # 年期不足或關鍵欄缺 → 備援（對抗驗證 B4）
         k = key if key is not None else os.environ.get("FINNHUB_API_KEY", "").strip()
         ff = fetch_fh_fn or (lambda t: fetch_finnhub(t, k, "annual"))
         try:

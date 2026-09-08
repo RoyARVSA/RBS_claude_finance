@@ -4,7 +4,7 @@ company_model.py – 公司模型引擎（估值層 P1；純邏輯、離線可�
 把使用者手工 VRT 三表模型的「驅動層」泛化到任意代碼（VALUATION_PLAN §1、LANDSCAPE §5–6）：
   1. derive_drivers：由 fin_data 年期別 + 市場資料 + 分析師共識推預設驅動（3 年均值、共識覆蓋前兩年、
      線性淡出）；使用者 /model set 覆蓋任何驅動
-  2. project：5 年顯性 + 5 年淡出的 FCFF（EBIT→NOPAT +D&A −Capex −ΔNWC −SBC[視為成本]）
+  2. project：5 年顯性 + 5 年淡出的 FCFF（EBIT→NOPAT +D&A −Capex −ΔNWC；SBC 視為成本＝不加回）
   3. 專業級 WACC：rf 即時/預設、ERP 常數、Blume 收縮 β（0.67β+0.33）、Rd = rf + 合成信評利差
      （利息保障倍數→利差）、市值權重（重用 valuation.calc_wacc）
   4. DCF：期中折現；終值 = NOPAT₁₁ × (1 − g/ROIC_TV) / (WACC − g)，ROIC_TV 預設收斂至 WACC
@@ -112,14 +112,27 @@ def derive_drivers(periods: list[dict], profile: dict | None = None, estimates: 
 
     # 前兩年成長：指引 > 共識 > 歷史
     est = (estimates or {}).get("est") or {}
-    g1 = _f(((est.get("0y") or {}).get("rev_growth")))
-    g2 = _f(((est.get("+1y") or {}).get("rev_growth")))
+    e0, e1 = est.get("0y") or {}, est.get("+1y") or {}
+    g1 = g2 = None
+    # 共識用「水準」推導：0y 營收共識 / 基期營收 − 1；與 Yahoo 的 growth 欄差 >5pp 代表快照與
+    # 年報的會計年度錯位（FY 滾動前後一週內），改用 +1y 或退回歷史（對抗驗證 Med-3）
+    lvl0, lvl1 = _f(e0.get("rev_avg")), _f(e1.get("rev_avg"))
+    gr0, gr1 = _f(e0.get("rev_growth")), _f(e1.get("rev_growth"))
+    if lvl0 and lvl0 > 0:
+        cand = lvl0 / rev - 1
+        if gr0 is None or abs(cand - gr0) <= 0.05:
+            g1, g2 = cand, ((lvl1 / lvl0 - 1) if lvl1 and lvl1 > 0 else gr1)
+            prov["g1"] = "consensus"
+        elif lvl1 and lvl1 > 0 and abs(lvl1 / rev - 1 - (gr0 or 0)) <= 0.05:
+            g1, g2 = lvl1 / rev - 1, None                         # 快照已滾到下一 FY：用 +1y 當第一年
+            prov["g1"] = "consensus(+1y aligned)"
+    if g1 is None and lvl0 is None and gr0 is not None:
+        g1, g2 = gr0, gr1                                            # 只有成長率無水準：較弱證據，仍優於歷史
+        prov["g1"] = "consensus(growth only)"
     if ov.get("guidance_rev"):
         g1 = _f(ov["guidance_rev"]) / rev - 1
         prov["g1"] = "guidance"
-    elif g1 is not None:
-        prov["g1"] = "consensus"
-    else:
+    elif g1 is None:
         g1 = yoy if yoy is not None else 0.05
         prov["g1"] = "history"
     prov["g2"] = "consensus" if g2 is not None else "fade"
@@ -143,9 +156,14 @@ def derive_drivers(periods: list[dict], profile: dict | None = None, estimates: 
     opm_hist = [_g(p, "operating_income") / _g(p, "revenue") for p in periods[:3]
                 if _g(p, "operating_income") is not None and _g(p, "revenue")]
     opm_last = opm_hist[0] if opm_hist else 0.10
-    opm_target = _f(ov.get("opm_target")) if ov.get("opm_target") is not None else max(opm_last, _avg(opm_hist) or opm_last)
+    opm_avg = _avg(opm_hist) if opm_hist else opm_last
+    if ov.get("opm_target") is not None:
+        opm_target, prov["opm_target"] = _f(ov["opm_target"]), "override"
+    elif opm_last > opm_avg:
+        opm_target, prov["opm_target"] = (opm_last + opm_avg) / 2, "mid(last, 3y avg)"   # 不把高點永久化（Med-1）
+    else:
+        opm_target, prov["opm_target"] = opm_avg, "3y avg"                              # 下滑者假設回到均值
     opm_target = _clip(opm_target, -0.5, 0.6)
-    prov["opm_target"] = "override" if ov.get("opm_target") is not None else "max(last, 3y avg)"
 
     # 稅率
     et = [_g(p, "tax_provision") / _g(p, "pretax_income") for p in periods[:3]
@@ -184,13 +202,20 @@ def derive_drivers(periods: list[dict], profile: dict | None = None, estimates: 
         wacc = w["wacc"]
     else:
         wacc = rf + beta * erp
+    clamped = {}
     if ov.get("wacc") is not None:
         wacc = _clip(_f(ov["wacc"]), 0.04, 0.30)
         prov["wacc"] = "override"
     tgr = _clip(_f(ov.get("tgr")), 0.0, 0.05) if ov.get("tgr") is not None else float(c["terminal_growth"])
-    tgr = min(tgr, wacc - 0.02)
+    if tgr > wacc - 0.02:
+        tgr = wacc - 0.02
+        if ov.get("tgr") is not None:
+            clamped["tgr"] = tgr
     roic_tv = _f(ov.get("roic_tv")) if ov.get("roic_tv") is not None else (c["roic_tv"] if c["roic_tv"] else wacc)
-    roic_tv = max(roic_tv, wacc)                    # 終值 ROIC 不得低於 WACC（否則成長毀值）
+    if roic_tv < wacc:                                # 終值 ROIC 不得低於 WACC（否則成長毀值）
+        roic_tv = wacc
+        if ov.get("roic_tv") is not None:
+            clamped["roic_tv"] = roic_tv
 
     return {"ticker": pf.get("ticker"), "base_revenue": rev, "period_end": cur.get("period_end"),
             "rev_g": [round(x, 4) for x in path], "long_growth": long_g, "opm_last": opm_last,
@@ -201,7 +226,8 @@ def derive_drivers(periods: list[dict], profile: dict | None = None, estimates: 
             "price": _f(pf.get("price")), "mkt_cap": mkt_cap, "sector": pf.get("sector"),
             "hist_cagr": cagr, "hist_yoy": yoy, "sbc_as_cost": bool(c["sbc_as_cost"]),
             "years": years, "fade_years": int(c["fade_years"]), "mid_year": bool(c["mid_year"]),
-            "provenance": prov, "overrides": {k: v for k, v in ov.items() if v is not None}}
+            "provenance": prov, "overrides": {k: v for k, v in ov.items() if v is not None},
+            "clamped": clamped}
 
 
 # ── 2. 投影 ─────────────────────────────────────────────────────────────────
@@ -222,8 +248,10 @@ def project(d: dict) -> list[dict]:
         nopat = ebit * (1 - d["tax"])
         da, capex = rev * d["da_pct"], rev * d["capex_pct"]
         dnwc = (rev - prev) * d["nwc_pct"]
-        sbc = rev * d["sbc_pct"] if d.get("sbc_as_cost") else 0.0
-        fcf = nopat + da - capex - dnwc - sbc
+        # GAAP 營業利益已扣 SBC 費用：sbc_as_cost=True 表「不加回」（視為真實成本）；
+        # False 才把 SBC 當非現金加回（對抗驗證 High-1：原本再扣一次＝重複扣除）
+        sbc = rev * d["sbc_pct"]
+        fcf = nopat + da - capex - dnwc + (0.0 if d.get("sbc_as_cost") else sbc)
         rows.append({"year": yr, "growth": g, "revenue": rev, "opm": opm, "ebit": ebit, "nopat": nopat,
                      "da": da, "capex": capex, "dnwc": dnwc, "sbc": sbc, "fcf": fcf})
     return rows
@@ -264,14 +292,14 @@ def value_drivers(d: dict, **tweak) -> dict:
 # ── 4. 情境 / 蒙地卡羅 / 敏感度 / 反向 DCF ────────────────────────────────
 
 def scenarios(d: dict, prob=None) -> dict:
-    """bear：成長減半、目標營益率 −3pp、WACC +1pp；bull：成長 ×1.25、+2pp、−0.5pp（不對稱、有界）。"""
+    """bear：成長 −50%|g|、目標營益率 −3pp、WACC +1pp；bull：成長 +25%|g|、+2pp、−0.5pp（不對稱、有界；|g| 讓負成長不反轉）。"""
     p = prob or DEFAULTS["prob"]
     lo, hi = DEFAULTS["growth_floor"], DEFAULTS["growth_cap"]
-    bear = value_drivers(d, rev_g=[_clip(g * 0.5, lo, hi) for g in d["rev_g"]],
+    bear = value_drivers(d, rev_g=[_clip(g - 0.5 * abs(g), lo, hi) for g in d["rev_g"]],   # 衝擊用 |g|（Med-2）
                          opm_target=d["opm_target"] - 0.03, wacc=d["wacc"] + 0.01,
                          tgr=min(d["tgr"], d["wacc"] + 0.01 - 0.02), roic_tv=max(d["roic_tv"], d["wacc"] + 0.01))
     base = value_drivers(d)
-    bull = value_drivers(d, rev_g=[_clip(g * 1.25, lo, hi) for g in d["rev_g"]],
+    bull = value_drivers(d, rev_g=[_clip(g + 0.25 * abs(g), lo, hi) for g in d["rev_g"]],
                          opm_target=d["opm_target"] + 0.02, wacc=max(d["wacc"] - 0.005, d["tgr"] + 0.02))
     vals = [x["per_share"] for x in (bear, base, bull)]
     ev_w = sum(pp * v for pp, v in zip(p, vals)) if all(v is not None for v in vals) else None
@@ -293,7 +321,7 @@ def monte_carlo(d: dict, n: int | None = None, seed: int | None = None) -> dict:
         wacc = max(d["wacc"] + rng.gauss(0, 0.01), 0.05)
         tgr = min(rng.uniform(0.015, 0.035), wacc - 0.02)
         try:
-            v = value_drivers(d, rev_g=[_clip(g * gm, lo, hi) for g in d["rev_g"]],
+            v = value_drivers(d, rev_g=[_clip(g + (gm - 1.0) * abs(g), lo, hi) for g in d["rev_g"]],
                               opm_target=d["opm_target"] + opm_shift, wacc=wacc, tgr=tgr,
                               roic_tv=max(d["roic_tv"], wacc))["per_share"]
         except Exception:
@@ -368,7 +396,7 @@ def reverse_dcf(d: dict, price: float | None = None) -> dict:
             return value_drivers(d, opm_target=m)["per_share"]
         except Exception:
             return None
-    m = solve(val_m, -0.5, 0.8)
+    m = solve(val_m, -0.5, 0.6)
     return {"implied_cagr": implied_cagr, "model_cagr": base_cagr,
             "gap_pp": (implied_cagr - base_cagr) if implied_cagr is not None else None,
             "implied_opm": m, "model_opm": d["opm_target"],
@@ -501,7 +529,10 @@ def model_text(res: dict, ticker: str = "") -> str:
     if res.get("quality_flags"):
         lines.append("品質旗標：" + "、".join(x.replace("_", "·") for x in res["quality_flags"]))
     if d.get("overrides"):
-        lines.append("人工覆蓋：" + "、".join(f"{PARAM_LABELS.get(k, k).replace('_', '·')}={v}" for k, v in d["overrides"].items()))
+        cl = d.get("clamped") or {}
+        lines.append("人工覆蓋：" + "、".join(
+            f"{PARAM_LABELS.get(k, k).replace('_', '·')}={v}" + (f"（已夾至 {cl[k]:.1%}）" if k in cl else "")
+            for k, v in d["overrides"].items()))
     lines.append("估值層只調部位、不觸發進場；DCF 對 WACC 極敏感，看區間不看單點；非投資建議")
     return "\n".join(x for x in lines if x)
 
@@ -541,10 +572,33 @@ if __name__ == "__main__":
     assert abs(d["beta"] - (0.67 * 2.08 + 0.33)) < 1e-9 and d["wacc"] < 0.1483 and d["tgr"] < d["wacc"]
     assert d["roic_tv"] >= d["wacc"] and d["net_debt"] == 2913 - 1828
     d_est = derive_drivers(periods, profile, estimates={"est": {"0y": {"rev_growth": 0.37}, "+1y": {"rev_growth": 0.29}}})
-    assert d_est["provenance"]["g1"] == "consensus" and abs(d_est["rev_g"][1] - 0.29) < 1e-4
+    assert d_est["provenance"]["g1"].startswith("consensus") and abs(d_est["rev_g"][1] - 0.29) < 1e-4
     d_gd = derive_drivers(periods, profile, overrides={"guidance_rev": 14000, "opm_target": 0.24, "beta": 1.4, "tgr": 0.03})
     assert d_gd["provenance"]["g1"] == "guidance" and abs(d_gd["rev_g"][0] - (14000 / 10229 - 1)) < 1e-4 and d_gd["beta"] == 1.4
     assert synthetic_spread(50) < synthetic_spread(2.1) < synthetic_spread(0.5)
+    # 共識水準推導：0y 營收共識 14,000 → g1 = 36.9%；快照錯位（0y 其實是基期那年）→ 用 +1y 對齊
+    d_lvl = derive_drivers(periods, profile, estimates={"est": {"0y": {"rev_avg": 14000, "rev_growth": 0.37},
+                                                                 "+1y": {"rev_avg": 18110, "rev_growth": 0.29}}})
+    assert d_lvl["provenance"]["g1"] == "consensus" and abs(d_lvl["rev_g"][0] - (14000 / 10229 - 1)) < 1e-3
+    assert abs(d_lvl["rev_g"][1] - (18110 / 14000 - 1)) < 1e-3
+    d_mis = derive_drivers(periods, profile, estimates={"est": {"0y": {"rev_avg": 10229, "rev_growth": 0.277},
+                                                                 "+1y": {"rev_avg": 13060, "rev_growth": 0.277}}})
+    assert d_mis["provenance"]["g1"].startswith("consensus(+1y") and abs(d_mis["rev_g"][0] - (13060 / 10229 - 1)) < 1e-3
+    # High-1：SBC 不重複扣——SBC 由 0 → 15% 營收，FCF 不變（sbc_as_cost=True 即 GAAP EBIT 已含）
+    hi_sbc = [dict(p, sbc=p["revenue"] * 0.15) for p in periods]
+    v0 = value_drivers(derive_drivers(periods, profile))["per_share"]
+    v1 = value_drivers(derive_drivers(hi_sbc, profile))["per_share"]
+    assert abs(v0 - v1) < 1e-6, (v0, v1)
+    v2 = value_drivers(derive_drivers(hi_sbc, profile, cfg={"sbc_as_cost": False}))["per_share"]
+    assert v2 > v1                                                    # 加回 SBC 才會變高
+    # Med-1：營益率目標——最新高於均值時取中點，不鎖高點
+    assert d["provenance"]["opm_target"] == "mid(last, 3y avg)" and d["opm_last"] > d["opm_target"] > 0.12
+    # Med-2：負成長公司 bear < base < bull 且寬度合理
+    shrink = [dict(p) for p in periods]; shrink[0]["revenue"], shrink[1]["revenue"], shrink[2]["revenue"] = 6000, 7500, 9000
+    d_neg = derive_drivers(shrink, {**profile, "price": 30})
+    assert d_neg["rev_g"][0] < 0
+    sc_neg = scenarios(d_neg)
+    assert sc_neg["bear"] < sc_neg["base"] < sc_neg["bull"] and sc_neg["width"] > 1.3, sc_neg
     print(f"✅ 2 驅動推導（WACC {d['wacc']:.1%}、β Blume {d['beta']:.2f}、Rd {d['cost_debt']:.2%}）")
 
     # 3) 投影/DCF/情境：單調性（WACC↑價值↓、成長↑價值↑）、bear<base<bull、寬度、終值價值中性

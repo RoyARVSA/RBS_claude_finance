@@ -1496,7 +1496,9 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                 else:
                     tkr = args[0].upper().lstrip("$")
                     sub = args[1].lower() if len(args) > 1 else ""
-                    if sub == "clear":
+                    if sub in ("set", "clear") and "models" in (state.get("__enc_locked__") or {}):
+                        reply = "❌ 加密區塊未解鎖（STATE_ENC_KEY 異常），暫停模型覆蓋寫入"
+                    elif sub == "clear":
                         had = (state.get("models") or {}).pop(tkr, None)
                         changed = bool(had)
                         reply = f"🧹 已清除 {tkr} 的人工覆蓋" if had else f"{tkr} 沒有人工覆蓋"
@@ -2107,8 +2109,12 @@ def run_company_model(state: dict, ticker: str, today: str) -> tuple[str, dict |
     except Exception:
         pass
     txt = cm.model_text(res, ticker) + "\n\n" + ql.quality_text(q, ticker)
-    if len(txt) > 3800:
-        txt = txt[:3800] + "…"
+    if len(txt) > 3800:                                # 在換行處截斷、補齊落單的 *（Telegram 400 防護）
+        cut = txt.rfind("\n", 0, 3800)
+        txt = txt[: cut if cut > 0 else 3800]
+        if txt.count("*") % 2:
+            txt += "*"
+        txt += "\n…"
     return txt, res
 
 
