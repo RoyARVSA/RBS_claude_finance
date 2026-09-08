@@ -223,6 +223,16 @@ DCF（2026-30 取自 Model、2031-35 以 8% 成長 / 24% OPM 淡出；TV Gordon 
 
 ---
 
+## 9. 2026-09-08 修訂（開源生態對照研究後）
+
+五組研究代理的完整對照與差異化規劃見 **[VALUATION_LANDSCAPE.md](VALUATION_LANDSCAPE.md)**。對本文的修訂：
+
+- **§3 架構**新增「Universe 層」（四層：Benchmark / Core / Theme / Broad，三段管線月頻重建）與「PIT 快照帳本」——估值層要進回測，先修現行 `engine_backtest` 用今日名單的倖存者偏差。
+- **§4 階段計畫由 LANDSCAPE §8 取代**（P0–P6）：P0 加入預估修正每日快照帳本與成分歷史；P1 加入 `quality.py`（Piotroski/Altman/Beneish/Sloan）、反向 DCF 三向求解、產業路由（金融股 RIM）、九條審核清單；P2 加入 `factor_eval.py`（alphalens 式 IC 驗證）；P3 部位乘數改以 Black-Litterman 觀點整合為主、乘數為退路；P4 新增 `guidance.py` 指引/KPI 萃取。
+- **§5 引擎接口**維持有界與失效安全原則；新增「審核未過 → verdict=review，Bot 不推播買訊」。
+- **§8 拍板決策**更新為 LANDSCAPE §9（新增第 6、7 項：不引入 FinanceToolkit 依賴、LLM 萃取用 Haiku 抽 + Sonnet 校）。
+- 資料源定案：yfinance 共識/修正快照 + Finnhub 三支免費端點（recommendation / earnings calendar / financials-reported）+ 自建歷史；SEC 只作回測資料集；Alpha Vantage 可選。
+
 ## 附錄 A — `RBS_Summary` 工作表規格（Excel 匯入橋）
 
 在你的模型加一張名為 `RBS_Summary` 的表，A 欄鍵、B 欄值（全部用公式連到模型，不要手打）：
