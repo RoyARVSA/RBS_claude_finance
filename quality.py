@@ -269,17 +269,19 @@ FLAG_RULES = {
 
 
 def quality_summary(periods: list[dict], mkt_cap: float | None = None, wacc: float | None = None,
-                    manufacturing: bool = False) -> dict:
-    """全套品質評分 + 旗標 + 有界品質分（-1..1，只由可算項目構成）。"""
+                    manufacturing: bool = False, financial: bool = False) -> dict:
+    """全套品質評分 + 旗標 + 有界品質分（-1..1，只由可算項目構成）。
+    financial=True（銀行/保險）：跳過 Altman、Sloan 應計、FCF 轉換、利息保障、ROIC——
+    這些對金融業無意義（CFO/利息費用/流動比皆為營運本體，對抗驗證 A5）。"""
     f = piotroski(periods)
-    z = altman(periods, mkt_cap, manufacturing)
+    z = altman(periods, mkt_cap, manufacturing) if not financial else {"z": None, "model": None, "zone": None, "skipped": "financial"}
     b = beneish(periods)
-    acc = sloan_accrual(periods)
-    conv = fcf_conversion(periods)
+    acc = sloan_accrual(periods) if not financial else None
+    conv = fcf_conversion(periods) if not financial else None
     sbc = sbc_pct(periods)
     dil = dilution_yoy(periods)
-    cov = interest_coverage(periods)
-    rs = roic_series(periods)
+    cov = interest_coverage(periods) if not financial else None
+    rs = roic_series(periods) if not financial else []
     roic = rs[-1][1] if rs else None
     spread = (roic - wacc) if (roic is not None and wacc is not None) else None
     flags = []
@@ -316,13 +318,14 @@ def quality_summary(periods: list[dict], mkt_cap: float | None = None, wacc: flo
     return {"piotroski": f, "altman": z, "beneish": b, "sloan_accrual": acc, "fcf_conversion_3y": conv,
             "sbc_pct_rev": sbc, "dilution_yoy": dil, "interest_coverage": cov,
             "roic": roic, "roic_series": rs, "roic_slope": slope(rs), "roic_wacc_spread": spread,
-            "flags": flags, "veto": veto, "score": score, "years": len(periods)}
+            "flags": flags, "veto": veto, "score": score, "years": len(periods), "financial": financial}
 
 
 def quality_text(q: dict, ticker: str = "") -> str:
     """Telegram legacy Markdown（單 *、無底線）。"""
     f, z, b = q.get("piotroski", {}), q.get("altman", {}), q.get("beneish", {})
-    lines = [f"🧬 *{ticker} 品質與會計風險*（{q.get('years', 0)} 年資料）"]
+    lines = [f"🧬 *{ticker} 品質與會計風險*（{q.get('years', 0)} 年資料"
+             + ("；金融業模式：略過 Altman/應計/FCF 轉換/利息保障/ROIC" if q.get("financial") else "") + "）"]
     if f.get("score") is not None:
         lines.append(f"Piotroski F {f['score']}/{f.get('n_known', 9)}"
                      + (f"（{9 - f.get('n_known', 9)} 項缺資料）" if f.get("n_known", 9) < 9 else ""))
@@ -403,6 +406,21 @@ if __name__ == "__main__":
     assert az["model"] == "Z" and az["zone"] == "distress"
     assert "altman_distress" in quality_summary(dist, mkt_cap=100, manufacturing=True)["flags"]
     print(f"✅ 4 Altman 製造業 Z={az['z']:.2f}（危險區）")
+
+    # 金融業模式：CFO 為負/利息費用大 不再產生 fcf_conv_low / coverage_low / altman 旗標
+    def bank_yr(pe, ni, cfo, ie, eq, ta, ca, cl, debt, sh):
+        return {"period_end": pe, "freq": "A", "revenue": 100000, "net_income": ni, "cfo": cfo, "fcf": cfo,
+                "interest_expense": ie, "operating_income": 60000, "ebit": 60000, "total_equity": eq, "total_assets": ta,
+                "current_assets": ca, "current_liabilities": cl, "total_debt": debt, "cash": 200000,
+                "diluted_shares": sh, "retained_earnings": eq * 0.7, "receivables": 0, "inventory": 0, "payables": 0,
+                "gross_profit": 60000, "sga": 30000, "da": 2000, "net_ppe": 20000, "tax_provision": 10000, "pretax_income": 55000,
+                "sbc": 1000}
+    bank = [bank_yr("2025-12-31", 45000, -20000, 80000, 300000, 2000000, 400000, 1500000, 400000, 2900),
+            bank_yr("2024-12-31", 43000, 30000, 75000, 290000, 1900000, 380000, 1450000, 380000, 2950)]
+    qf = quality_summary(bank, financial=True)
+    assert not any(x in qf["flags"] for x in ("fcf_conv_low", "coverage_low", "altman_distress")) and qf["veto"] is False
+    assert qf["altman"]["z"] is None and qf["fcf_conversion_3y"] is None and qf["financial"] is True
+    print("✅ 5 金融業模式（略過無意義項、不誤否決）")
 
     # 文字輸出 Markdown 安全
     for qq, name in ((q, "GOOD"), (qb, "BAD"), (qt, "THIN")):

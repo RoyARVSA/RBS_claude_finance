@@ -431,7 +431,7 @@ def _cmd_help() -> str:
         "`/today [帳戶 風險%]`（或 `/plan`）— 當日交易計畫：VWAP/ORB 進場票（進場/停損/停利/股數）\n"
         "`/plantest [apply|clear]` — 當日計畫 60 日回測；apply 套用校準（每週自動跑，`/set plan_autocal_enabled off` 關）\n"
         "`/plantest opt [apply]` — 參數尋優：ORB×停損×R:R 掃 27 組，holdout 段把關通過才推薦\n"
-        "`/model TICKER [set k=v…|clear]` — 公司模型：專業 WACC（Blume β/合成信評）、5+5 年 FCFF、價值中性終值、熊/基/牛 + 蒙地卡羅、反向 DCF、九條審核、品質評分（Piotroski/Altman/Beneish）；set 覆蓋驅動（opm_target/beta/wacc/tgr/rev_g=a,b,c/guidance_rev…）\n"
+        "`/model TICKER [set k=v…|clear]` — 公司模型：專業 WACC（Blume β/合成信評）、5+5 年 FCFF、價值中性終值、熊/基/牛 + 蒙地卡羅、反向 DCF、九條審核、品質評分（Piotroski/Altman/Beneish）；set 覆蓋驅動（opm_target/beta/wacc/tgr/rev_g=a,b,c/guidance_rev…；金融 RIM 用 payout/roe_target、地產 DDM 用 div_g）\n"
         "`/universe [rebuild]` — 選股池快照：yf.screen 寬宇宙（市值≥20 億、均量≥100 萬）→ 品質/流動性/12-1 動能篩 → 候選前 N；每月自動重建、快照落 data/universe/（P0 只顯示不接引擎）\n"
         "`/est [TICKER]` — 分析師預估快照：共識/修正動能/目標價/評等/財報驚奇史（每輪自動輪替刷新；無參數看 watchlist 上修下修排行）\n"
         "`/engtest [3m|6m|1y|2y]` — 整台引擎歷史重放：現行參數過去 N 個月會賺多少（次日開盤成交、含成本、對照 SPY）\n"
@@ -2057,7 +2057,8 @@ def maybe_rebuild_universe(state: dict, elapsed_s: float = 0.0, force: bool = Fa
 
 
 MODEL_OVERRIDE_KEYS = ("rev_g", "opm_target", "beta", "wacc", "tgr", "tax", "guidance_rev",
-                       "long_growth", "roic_tv", "capex_pct", "da_pct", "nwc_pct", "rf")
+                       "long_growth", "roic_tv", "capex_pct", "da_pct", "nwc_pct", "rf",
+                       "payout", "roe_target", "div_g")        # 後三個給金融 RIM / 地產 DDM
 
 
 def run_company_model(state: dict, ticker: str, today: str) -> tuple[str, dict | None]:
@@ -2083,16 +2084,16 @@ def run_company_model(state: dict, ticker: str, today: str) -> tuple[str, dict |
     except Exception:
         pass
     ov = ((state.get("models") or {}).get(ticker) or {}).get("overrides") or {}
-    if profile.get("sector") in cm.NON_DCF_SECTORS:
-        res = cm.run_model(periods, profile)
-        return cm.model_text(res, ticker), res
-    # 兩段：先推 WACC 給品質評分（ROIC 價差），再帶品質進訊號
-    try:
-        d0 = cm.derive_drivers(periods, profile, est, ov)
-        wacc = d0["wacc"]
-    except Exception as e:
-        return f"❌ {ticker} 驅動推導失敗：{e}", None
-    q = ql.quality_summary(periods, profile.get("mkt_cap"), wacc)
+    route = cm.NON_DCF_SECTORS.get(profile.get("sector"))
+    # 兩段：先推 WACC 給品質評分（ROIC 價差），再帶品質進訊號；金融/地產路由同一流程
+    #（人工覆蓋、品質、估值歷史一律生效——對抗驗證 High）
+    wacc = None
+    if not route:
+        try:
+            wacc = cm.derive_drivers(periods, profile, est, ov)["wacc"]
+        except Exception as e:
+            return f"❌ {ticker} 驅動推導失敗：{e}", None
+    q = ql.quality_summary(periods, profile.get("mkt_cap"), wacc, financial=(route == "rim"))
     res = cm.run_model(periods, profile, est, ov, q)
     # 估值歷史（週頻、同週覆寫）
     try:
@@ -2143,6 +2144,8 @@ def parse_model_overrides(tokens: list[str]) -> tuple[dict, list[str]]:
                 fv = float(v)
                 if not math.isfinite(fv):
                     raise ValueError
+                if k == "payout":
+                    fv = min(max(fv, 0.0), 1.0)
                 out[k] = fv
             except ValueError:
                 bad.append(t)

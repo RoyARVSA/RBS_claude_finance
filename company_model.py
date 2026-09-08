@@ -44,7 +44,7 @@ DDM_H_YEARS = 5              # H-model 半衰期（高成長→長期成長線�
 SPREAD_TABLE = [(8.5, 0.0075), (6.5, 0.0100), (5.5, 0.0125), (4.25, 0.0160), (3.0, 0.0225),
                 (2.5, 0.0300), (2.25, 0.0400), (2.0, 0.0500), (1.75, 0.0650), (1.5, 0.0800),
                 (-1e9, 0.1100)]
-PARAM_LABELS = {"payout": "配息率", "roe_target": "目標 ROE", "div_g": "股利成長", "rev_g": "營收成長路徑", "opm_target": "目標營益率", "beta": "β", "wacc": "WACC",
+PARAM_LABELS = {"payout": "配息+回購率", "roe_target": "目標 ROE", "div_g": "股利成長", "rev_g": "營收成長路徑", "opm_target": "目標營益率", "beta": "β", "wacc": "WACC",
                 "tgr": "終端成長", "tax": "稅率", "guidance_rev": "指引營收", "long_growth": "第 6–10 年成長",
                 "roic_tv": "終值 ROIC", "capex_pct": "Capex/營收", "da_pct": "D&A/營收", "nwc_pct": "NWC/增量營收"}
 
@@ -409,7 +409,7 @@ def reverse_dcf(d: dict, price: float | None = None) -> dict:
 def _coe(profile: dict, overrides: dict, cfg: dict) -> tuple[float, float, float | None]:
     ov = overrides or {}
     raw = _f(ov.get("beta")) if ov.get("beta") is not None else _f((profile or {}).get("beta"))
-    beta = _clip(raw, 0.3, 3.0) if ov.get("beta") is not None else blume_beta(raw, cfg["beta_floor"], cfg["beta_cap"])
+    beta = _clip(raw, 0.3, 3.0) if (ov.get("beta") is not None and raw is not None) else blume_beta(raw, cfg["beta_floor"], cfg["beta_cap"])
     rf = _f(ov.get("rf")) if ov.get("rf") is not None else float(cfg["rf"])
     r = rf + beta * float(cfg["erp"])
     if ov.get("wacc") is not None:                       # 對 RIM/DDM，wacc 覆蓋即股權成本覆蓋
@@ -475,7 +475,7 @@ def rim_model(periods: list[dict], profile: dict, overrides: dict | None = None,
     sc = {"bear": vals[0], "base": vals[1], "bull": vals[2], "prob": list(DEFAULTS["prob"]),
           "ev_weighted": sum(pp * v for pp, v in zip(DEFAULTS["prob"], vals)),
           "width": (vals[2] / vals[0]) if vals[0] > 0 else None}
-    au = {"checks": {"equity_positive": b0 > 0, "roe_target_ge_coe": roe_target >= r - 0.05,
+    au = {"checks": {"equity_positive": b0 > 0, "roe_target_not_deep_negative": roe_target >= r - 0.05,
                      "tv_pct_ok": base["tv_pct"] is None or base["tv_pct"] <= 0.5,
                      "scenario_width_ok": sc["width"] is not None and sc["width"] >= 1.3},
           "failed": []}
@@ -497,19 +497,25 @@ def ddm_model(periods: list[dict], profile: dict, overrides: dict | None = None,
     ov = dict(overrides or {})
     cur = periods[0]
     shares = _g(cur, "diluted_shares") or _f((profile or {}).get("shares")) or _g(cur, "shares_out")
-    divs = [abs(_g(p, "dividends_paid") or 0) for p in periods[:4]]
-    if not shares or not divs or divs[0] <= 0:
+    # 每股股利（各期用各期股數；REIT 常年增發，用總額會把增發算成成長——對抗驗證 B3）
+    dps = []
+    for p in periods[:4]:
+        tot = abs(_g(p, "dividends_paid") or 0)
+        sh = _g(p, "diluted_shares") or _g(p, "shares_out") or shares
+        dps.append((tot / sh) if (tot > 0 and sh) else 0.0)
+    if not shares or not dps or dps[0] <= 0:
         raise ValueError("DDM 需要正的股利支付與股數")
-    d0 = divs[0] / shares
+    d0 = dps[0]
     g_s = None
-    if len(divs) >= 3 and divs[-1] > 0:
-        g_s = (divs[0] / divs[-1]) ** (1 / (len(divs) - 1)) - 1
+    if len(dps) >= 3 and dps[-1] > 0:
+        g_s = (dps[0] / dps[-1]) ** (1 / (len(dps) - 1)) - 1
     g_s = _clip(_f(ov.get("div_g")) if ov.get("div_g") is not None else (g_s if g_s is not None else 0.03), 0.0, 0.08)
     r, beta, raw = _coe(profile, ov, c)
     g_l = _clip(_f(ov.get("tgr")) if ov.get("tgr") is not None else 0.03, 0.0, min(0.04, r - 0.015))
     base_v = ddm_value(d0, g_s, g_l, r)
     bear_v = ddm_value(d0, max(g_s - 0.01, 0.0), max(g_l - 0.005, 0.0), r + 0.01)
-    bull_v = ddm_value(d0, min(g_s + 0.01, 0.10), min(g_l + 0.005, r - 0.02), max(r - 0.005, 0.04))
+    r_bull = max(r - 0.005, 0.04)
+    bull_v = ddm_value(d0, min(g_s + 0.01, 0.10), max(g_l, min(g_l + 0.005, r_bull - 0.015)), r_bull)   # bull 的長期 g 不低於 base
     if base_v is None:
         raise ValueError("股權成本 ≤ 長期成長，DDM 無解")
     px = _f((profile or {}).get("price"))
@@ -650,6 +656,8 @@ def _text_rim_ddm(res: dict, t: str) -> str:
         lines.append("品質旗標：" + "、".join(x.replace("_", "·") for x in res["quality_flags"]))
     if d.get("overrides"):
         lines.append("人工覆蓋：" + "、".join(f"{PARAM_LABELS.get(k, k).replace('_', '·')}={v}" for k, v in d["overrides"].items()))
+    if res["method"] == "ddm":
+        lines.append("未檢視 FFO/AFFO 覆蓋率（yfinance 無此欄）；股利可持續性請另查")
     lines.append("估值層只調部位、不觸發進場；看區間不看單點；非投資建議")
     return "\n".join(lines)
 
@@ -809,6 +817,12 @@ if __name__ == "__main__":
              "dividends_paid": -(2.0e9 * 1.04 ** (-i))} for i in range(4)]
     rd = run_model(reit, {"ticker": "REIT", "price": 50, "beta": 0.8, "shares": 1e9, "sector": "Real Estate"})
     assert rd["method"] == "ddm" and abs(rd["drivers"]["div_g_short"] - 0.04) < 1e-3 and rd["scenarios"]["bear"] < rd["scenarios"]["bull"]
+    reit2 = [{"period_end": f"20{25 - i}-12-31", "freq": "A", "net_income": 1e9, "total_equity": 10e9,
+              "diluted_shares": 1e9 * 1.05 ** (-i), "dividends_paid": -(2.0e9 * 1.05 ** (-i))} for i in range(4)]   # DPS 持平、股數年增 5%
+    rd2 = run_model(reit2, {"ticker": "REIT2", "price": 50, "beta": 0.8, "shares": 1e9, "sector": "Real Estate"})
+    assert abs(rd2["drivers"]["div_g_short"]) < 1e-6                                     # 增發不算股利成長（B3）
+    low_r = run_model(reit, {"ticker": "REIT", "price": 50, "beta": 0.8, "shares": 1e9, "sector": "Real Estate"}, overrides={"wacc": 0.05, "tgr": 0.04})
+    assert low_r["method"] == "ddm" and low_r["scenarios"]["bull"] > low_r["scenarios"]["base"]
     assert run_model([{"period_end": "2025-12-31", "freq": "A", "revenue": 1e9}], {"ticker": "X", "sector": "Financial Services"})["method"] == "not_applicable"
     assert model_text(rb, "BANK").count("*") % 2 == 0 and "_" not in model_text(rd, "REIT")
     print("✅ 5 審核清單 + 訊號判定 + 產業路由")

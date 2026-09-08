@@ -6457,7 +6457,7 @@ def page_company_model():
     # ── 兩段：先 WACC 給品質，再帶品質進訊號 ──────────────────────────
     try:
         if route:
-            q = ql.quality_summary(periods, profile.get("mkt_cap"), None)
+            q = ql.quality_summary(periods, profile.get("mkt_cap"), None, financial=(route == "rim"))
         else:
             q = ql.quality_summary(periods, profile.get("mkt_cap"), cm.derive_drivers(periods, profile, est, ov)["wacc"])
         res = cm.run_model(periods, profile, est, ov, q, cfg, mc=bool(use_mc) and not route)
