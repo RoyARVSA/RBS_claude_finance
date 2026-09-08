@@ -42,6 +42,7 @@
 | `SEC_USER_AGENT` | **建議** | SEC 內部人交易（Form 4）的 User-Agent。SEC 公平使用政策要求「`名字 email`」格式，**GitHub Actions 的雲端 IP 配預設 UA 容易被 SEC WAF 拒（403）→ 內部人資料靜默缺席**。設成如 `你的名字 your-email@example.com`（用你真實信箱）可解；免申請、只是自我識別 |
 | `ALPACA_KEY_ID` | 選填 | Alpaca **paper** trading key（模擬自動交易；**不設則不下單**） |
 | `ALPACA_SECRET_KEY` | 選填 | Alpaca paper secret |
+| `ALPHA_VANTAGE_KEY` | 選填 | Alpha Vantage **免費 key**（alphavantage.co/support 填 email 即得，不需 premium）。只用 `EARNINGS` 端點回填每季「公告日共識 vs 實際」的財報驚奇歷史（長壽股回溯至 1996）；免費層 25 次/日由程式計數、用罄自動停；不設則 `/est` 少「財報驚奇」一段 |
 | `STATE_ENC_KEY` | **建議** | 敏感區塊加密金鑰（自訂任意長隨機字串）。設了之後，投資論點/帳戶淨值/引擎簿記/策略參數在 commit 前加密，公開 repo 只見密文。**須同步設進 Streamlit Secrets**（網頁端才能解讀）。⚠️ **key 遺失＝加密資料永久無法還原**；**換 key＝舊密文鎖死，輪替前務必先在舊 key 環境解密取回**（key 設定後解不開會發 TG 告警）。防瀏覽級保護（HMAC-SHA256 keystream），過去已 commit 的明文歷史仍在 git 內 |
 
 > 🤖 **Alpaca 模擬交易**：預設**關閉**，須 Telegram 傳 `/autotrade on` 才會下單，
@@ -74,7 +75,7 @@
 | 警報 | `/alert AAPL 200`（到價通知，觸發自動移除）、`/alert`（清單）、`/alert del AAPL` |
 | AI | `/committee NVDA`（`/cmt`）— 機構決策會議：分析師×4→多空對辯→交易員→風控→投資經理，裁決自動記入計分板（需 `LLM_API_KEY`，約 1-3 分鐘） |
 | 風控 | `/risk [帳戶 風險%]`、`/protections`、`/calibrate` |
-| 模擬交易 | `/autotrade on\|off`、`/alpha`（資訊疊加層現況）、`/positions`、`/pnl`、`/journal [N]`、`/checkup`（行為體檢：追高/頻率/太早出場/持有期）、`/attrib`（機制歸因：各出場/進場機制損益/勝率/賣後追蹤）、`/shadow`（舊邏輯 vs 新引擎對照）、`/mirror [init 現金 代碼:股數:成本…\|reset]`（鏡像帳：引擎接管你的實倉起點自主模擬；`/attrib mirror`、`/checkup mirror` 看鏡像帳版歸因/體檢）、`/engtest [3m\|6m\|1y\|2y]`（整台引擎歷史重放：現行參數過去 N 個月報酬/回撤/機制分佈，次日開盤成交含成本、對照 SPY）、`/engtest opt [期間] [apply]`（引擎參數學習：108 組 × 三段 walk-forward + DSR，holdout 通過才推薦；apply 寫入 eng_* 參數、`/engtest clear` 還原）、`/rebalance [hrp\|max_sharpe\|min_vol\|erc\|equal]`（持倉再平衡顧問）、`/closeall` |
+| 模擬交易 | `/autotrade on\|off`、`/alpha`（資訊疊加層現況）、`/positions`、`/pnl`、`/journal [N]`、`/checkup`（行為體檢：追高/頻率/太早出場/持有期）、`/attrib`（機制歸因：各出場/進場機制損益/勝率/賣後追蹤）、`/shadow`（舊邏輯 vs 新引擎對照）、`/mirror [init 現金 代碼:股數:成本…\|reset]`（鏡像帳：引擎接管你的實倉起點自主模擬；`/attrib mirror`、`/checkup mirror` 看鏡像帳版歸因/體檢）、`/universe [rebuild]`（選股池快照：yf.screen 寬宇宙→品質/流動性/12-1 動能→候選前 N；每月自動重建、快照落 `data/universe/`；P0 只顯示）、`/est [TICKER]`（分析師預估快照：共識/修正動能/目標價/評等/財報驚奇史；每輪自動輪替刷新到 `estimates_ledger.json`，無參數看上修下修排行）、`/engtest [3m\|6m\|1y\|2y]`（整台引擎歷史重放：現行參數過去 N 個月報酬/回撤/機制分佈，次日開盤成交含成本、對照 SPY）、`/engtest opt [期間] [apply]`（引擎參數學習：108 組 × 三段 walk-forward + DSR，holdout 通過才推薦；apply 寫入 eng_* 參數、`/engtest clear` 還原）、`/rebalance [hrp\|max_sharpe\|min_vol\|erc\|equal]`（持倉再平衡顧問）、`/closeall` |
 | 估值 | `/dcf AAPL [成長%]` — DCF 內在價值（FCF→WACC→期中折現→終值→隱含股價；可覆蓋成長率假設） |
 | 情緒/籌碼 | `/fg`（雙恐懼貪婪：美股 CNN+加密，晨報自動附一行）、`/taifex`（台指期三大法人淨未平倉 + 選擇權 P/C 比）、`/weather`（市場氣象台：廣度/信用利差/VIX 期限/曲線/銅金五因子體質分，大盤濾網 v2） |
 | 論點/財報 | `/thesis [TICKER 多\|空 論點 / pillar / risk / cat / target / stop / conv / note / close]`（論點追蹤，失效價自動監測）、`/preview TICKER`（財報前瞻/覆盤自動判定） |

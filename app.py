@@ -52,7 +52,7 @@ st.set_page_config(
 import os as _os_boot
 for _k in ("FINNHUB_API_KEY", "FRED_API_KEY", "LLM_API_KEY", "LLM_BASE_URL",
            "LLM_MODEL", "ALPACA_KEY_ID", "ALPACA_SECRET_KEY", "SEC_USER_AGENT",
-           "STATE_ENC_KEY"):
+           "STATE_ENC_KEY", "ALPHA_VANTAGE_KEY"):
     if not _os_boot.environ.get(_k):
         try:
             _v = st.secrets.get(_k)

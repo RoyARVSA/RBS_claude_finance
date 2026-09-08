@@ -73,6 +73,8 @@ jobs:
           ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
           # 敏感區塊加密（可選；設了之後論點/淨值/引擎簿記/策略參數以密文 commit）
           STATE_ENC_KEY: ${{ secrets.STATE_ENC_KEY }}
+          # Alpha Vantage 免費 key（可選；財報驚奇 SUE 歷史回填，25 次/日由程式計數）
+          ALPHA_VANTAGE_KEY: ${{ secrets.ALPHA_VANTAGE_KEY }}
         run: python scan_signals.py
 
       - name: Commit updated state + trade journal
@@ -82,6 +84,8 @@ jobs:
           # 分開 add：git add 對多個 pathspec 是原子的，任一檔不存在會整批中止
           git add watchlist_state.json 2>/dev/null || true
           git add trade_journal.json 2>/dev/null || true
+          git add estimates_ledger.json 2>/dev/null || true
+          git add data/universe 2>/dev/null || true
           git diff --staged --quiet && echo "No state changes." || \
             git commit -m "chore: update bot state + trade journal [skip ci]"
 
@@ -93,6 +97,8 @@ jobs:
           # 最新，重放本輪 state 檔再 commit。state 是本輪剛產生的最新真相，覆蓋合理。
           cp watchlist_state.json /tmp/ws.json 2>/dev/null || true
           cp trade_journal.json  /tmp/tj.json 2>/dev/null || true
+          cp estimates_ledger.json /tmp/el.json 2>/dev/null || true
+          rm -rf /tmp/uni && cp -r data/universe /tmp/uni 2>/dev/null || true
           for i in 1 2 3; do
             git push origin HEAD && exit 0
             echo "push 失敗，同步遠端後重放 state ($i)…"
@@ -101,9 +107,13 @@ jobs:
             git reset --hard "origin/${GITHUB_REF_NAME}"
             cp /tmp/ws.json watchlist_state.json 2>/dev/null || true
             cp /tmp/tj.json trade_journal.json  2>/dev/null || true
+            cp /tmp/el.json estimates_ledger.json 2>/dev/null || true
+            mkdir -p data && rm -rf data/universe && cp -r /tmp/uni data/universe 2>/dev/null || true
             # 分開 add：多 pathspec 是原子的，任一檔缺席會整批中止（上方步驟同理）
             git add watchlist_state.json 2>/dev/null || true
             git add trade_journal.json  2>/dev/null || true
+            git add estimates_ledger.json 2>/dev/null || true
+            git add data/universe 2>/dev/null || true
             git diff --staged --quiet || \
               git commit -m "chore: update bot state + trade journal [skip ci]"
           done

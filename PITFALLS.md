@@ -217,6 +217,7 @@
   `git checkout --theirs watchlist_state.json`（在分支 merge main 時）。
 
 ---
+- **2026-09 補**：`estimates_ledger.json` 與 `data/universe/*.json` 同屬 cron 產物（本地跑 `scan_signals`/`bot_daemon`/`/universe rebuild` 也會生成）——開發分支一樣**不要 commit**，衝突時同樣取 main。
 
 ### D14. 公開 repo 的 Actions 日誌也是公開的——print 指令參數等於把實倉貼上網
 
