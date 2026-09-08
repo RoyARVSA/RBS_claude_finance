@@ -54,6 +54,9 @@
 
 ## 🧭 第三層：方向性 roadmap（實驗驅動，讓數據決定）
 
+> 📐 **估值層（公司財務前瞻 → 資金佈建）的完整規劃見 [VALUATION_PLAN.md](VALUATION_PLAN.md)**（2026-09-07，源自使用者 VRT 三表模型的解剖；分 P0–P5、預設關閉、holdout 通過才接進引擎）。
+
+
 - **追蹤停損改 3×ATR Chandelier 制**：文獻回測 PF 1.61 vs 固定 8% 的 1.28——用 shadow_book 開平行帳跑 60 日再決定（演算法）
 - **alpha 各源消融實驗**：scoreboard 加 overlay on/off 雙軌，90 日比命中率；PCR 符號（options_w 方向）一併檢驗（演算法）
 - **氣象台門檻/遲滯網格化**：歷史重放分數 vs SPY 未來 20 日報酬分桶（餵 falsifier T6 思路）（演算法）
