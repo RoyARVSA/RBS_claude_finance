@@ -6409,6 +6409,8 @@ def page_company_model():
         st.session_state["cm_ticker"] = ticker
         st.session_state["cm_ready"] = True
         st.session_state.pop("cm_tweaks", None)
+        for _k in ("cm_gm", "cm_opm", "cm_beta", "cm_tgr", "cm_roic", "cm_sbc"):   # 換代碼不殘留上一檔滑桿值
+            st.session_state.pop(_k, None)
     if not st.session_state.get("cm_ready") or not ticker:
         st.info("輸入代碼後按「建模」。Telegram 端對應 `/model TICKER`；此頁的滑桿調整不會回寫，"
                 "調好後複製頁底的 `/model … set …` 指令到 Telegram 才會保存。")
@@ -6436,23 +6438,41 @@ def page_company_model():
             st.error(f"驅動推導失敗：{e}")
             return
         with st.expander("🎛️ 驅動調整（即時重算；不回寫）", expanded=False):
+            _cl = lambda v, lo, hi: float(min(max(v, lo), hi))
             a, b, c = st.columns(3)
             with a:
                 gm = st.slider("成長路徑倍數", 0.3, 1.8, float(tweaks.get("_gm", 1.0)), 0.05, key="cm_gm")
-                opm = st.slider("目標營益率", -0.2, 0.6, float(ov.get("opm_target", d0["opm_target"])), 0.005, key="cm_opm")
+                opm = st.slider("目標營益率", -0.2, 0.6, _cl(ov.get("opm_target", d0["opm_target"]), -0.2, 0.6), 0.005, key="cm_opm")
             with b:
-                beta = st.slider("β（原始，Blume 由引擎套）", 0.3, 3.0, float(ov.get("beta", d0.get("beta_raw") or 1.0)), 0.05, key="cm_beta")
-                tgr = st.slider("終端成長", 0.0, 0.05, float(ov.get("tgr", d0["tgr"])), 0.0025, key="cm_tgr")
+                # 預設顯示引擎已 Blume 收縮後的 β；使用者改動才成為覆蓋（覆蓋值引擎不再收縮）
+                beta = st.slider("β（Blume 收縮後；改動即為覆蓋值）", 0.3, 3.0, _cl(ov.get("beta", d0["beta"]), 0.3, 3.0), 0.05, key="cm_beta")
+                tgr = st.slider("終端成長", 0.0, 0.05, _cl(ov.get("tgr", d0["tgr"]), 0.0, 0.05), 0.0025, key="cm_tgr")
             with c:
-                roic_tv = st.slider("終值 ROIC（≥WACC；WACC=價值中性）", float(min(d0["wacc"], 0.30)), 0.40, float(ov.get("roic_tv", d0["roic_tv"])), 0.005, key="cm_roic")
+                roic_lo = float(min(d0["wacc"], 0.30))
+                roic_tv = st.slider("終值 ROIC（≥WACC；WACC=價值中性）", roic_lo, 0.40, _cl(ov.get("roic_tv", d0["roic_tv"]), roic_lo, 0.40), 0.005, key="cm_roic")
                 sbc_cost = st.checkbox("SBC 視為成本（不加回）", value=True, key="cm_sbc")
             base_path = d0["rev_g"] if "rev_g" not in saved_ov else [float(x) for x in str(saved_ov["rev_g"]).split(",")]
-            tweaks = {"_gm": gm, "opm_target": opm, "beta": beta, "tgr": tgr, "roic_tv": roic_tv,
-                      "rev_g": ",".join(f"{cm._clip(g * gm, -0.3, 0.6):.4f}" for g in base_path)}
+            # 只有偏離預設的才算覆蓋（避免把 rev_g/roic_tv 全部凍結、日後新財報與共識不再套用）
+            changed = {}
+            if abs(gm - 1.0) > 1e-9:
+                changed["rev_g"] = ",".join(f"{cm._clip(g * gm, -0.3, 0.6):.4f}" for g in base_path)
+            if abs(opm - float(ov.get("opm_target", d0["opm_target"]))) > 0.0026 or "opm_target" in saved_ov:
+                changed["opm_target"] = round(opm, 4)
+            if abs(beta - float(ov.get("beta", d0["beta"]))) > 0.026 or "beta" in saved_ov:
+                changed["beta"] = round(beta, 3)
+            if abs(tgr - float(ov.get("tgr", d0["tgr"]))) > 0.0013 or "tgr" in saved_ov:
+                changed["tgr"] = round(tgr, 4)
+            if abs(roic_tv - float(ov.get("roic_tv", d0["roic_tv"]))) > 0.0026 or "roic_tv" in saved_ov:
+                changed["roic_tv"] = round(roic_tv, 4)
+            tweaks = {"_gm": gm, **changed}
             st.session_state["cm_tweaks"] = tweaks
-            ov = {**saved_ov, **{k: v for k, v in tweaks.items() if not k.startswith("_")}}
-            st.caption("成長路徑 " + " / ".join(f"{float(x):+.0%}" for x in ov["rev_g"].split(",")) + "（引擎會夾在 −30%～+60%）")
-    cfg = {"sbc_as_cost": st.session_state.get("cm_sbc", True), "mc_n": 1500}
+            ov = {**saved_ov, **changed}
+            path_show = [float(x) for x in ov["rev_g"].split(",")] if "rev_g" in ov else base_path
+            st.caption("成長路徑 " + " / ".join(f"{x:+.0%}" for x in path_show) + "（引擎會夾在 −30%～+60%）"
+                       + ("｜無人工覆蓋（全用引擎預設）" if not ov else f"｜覆蓋中：{'、'.join(ov.keys())}"))
+    else:
+        sbc_cost = True
+    cfg = {"sbc_as_cost": bool(sbc_cost), "mc_n": 1500}
 
     # ── 兩段：先 WACC 給品質，再帶品質進訊號 ──────────────────────────
     try:
@@ -6537,6 +6557,8 @@ def page_company_model():
 
     # ── Tab 3 反向 DCF / 投影 ────────────────────────────────────────
     with tabs[2]:
+        if route:
+            st.info("此路由（RIM/DDM）不做 FCFF 投影與反向 DCF；覆蓋用 Telegram：金融 `payout=` / `roe_target=`，地產 `div_g=`。")
         rv = res.get("reverse") or {}
         if rv.get("implied_cagr") is not None:
             st.markdown(f"**市價隱含 5 年營收 CAGR {rv['implied_cagr']:+.1%}**（模型 {rv['model_cagr']:+.1%}，差 {rv['gap_pp']:+.1%}）"
@@ -6609,15 +6631,23 @@ def page_company_model():
                 parts = []
                 mapping = {"fair_base": None, "wacc": "wacc", "tgr": "tgr", "beta": "beta", "opm_target": "opm_target",
                            "rev_path": "rev_g", "guidance_rev": "guidance_rev"}
+                import re as _re
                 for k, tk in mapping.items():
                     if k in kv and tk and pd.notna(kv[k]):
                         v = kv[k]
-                        if tk == "rev_g":
-                            parts.append(f"rev_g={','.join(x.strip() for x in str(v).split(','))}")
-                        else:
-                            parts.append(f"{tk}={float(v):.4g}")
-                t_in = str(kv.get("ticker") or ticker).upper()
-                st.success(f"讀到 {len(kv)} 個鍵（{t_in}）" + (f"，公允 base={kv.get('fair_base')}" if "fair_base" in kv else ""))
+                        try:
+                            if tk == "rev_g":
+                                vals = [float(x) for x in str(v).split(",") if x.strip()]
+                                if vals:
+                                    parts.append("rev_g=" + ",".join(f"{x:.4f}" for x in vals[:10]))
+                            else:
+                                parts.append(f"{tk}={float(v):.4g}")
+                        except (TypeError, ValueError):
+                            continue                                  # 公式字串/文字一律跳過，不執行
+                t_in = _re.sub(r"[^A-Z0-9.\-]", "", str(kv.get("ticker") or ticker).upper())[:10] or ticker
+                fb = kv.get("fair_base")
+                fb_s = f"，公允 base={float(fb):.2f}" if isinstance(fb, (int, float)) and pd.notna(fb) else ""
+                st.success(f"讀到 {len(kv)} 個鍵（{t_in}）{fb_s}")
                 st.code(f"/model {t_in} set " + " ".join(parts) if parts else "（沒有可轉換的驅動鍵）", language="text")
                 st.caption("把上面這行貼到 Telegram 即可讓 Bot 用你的假設重建模並保存（加密區）。")
             except ImportError:
