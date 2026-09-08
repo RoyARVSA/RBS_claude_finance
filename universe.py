@@ -7,7 +7,7 @@ point-in-time 紀律」。本專案原本只有固定 watchlist：(1) 引擎只�
 
   Layer 3 Broad   ：yf.screen（美股、市值 ≥ 20 億、3 月均量 ≥ 100 萬股、價 ≥ $5）→ 500–750 檔，3 次呼叫
   Layer 2 Theme   ：stock_db 主題（AI 光學/連接/化合物半導體/HBM/電力散熱 …）
-  Layer 1 Core    ：watchlist（∪ 持倉——持倉永遠保留，出場只走價格機制）
+  Layer 1 Core    ：watchlist（持倉代碼不進快照——快照是公開明文檔；持倉本身仍永遠保留、出場只走價格機制）
   Stage 2 Screen  ：品質（ROE、流動比、負債比、淨利率）+ 流動性（ADV$）+ 12-1 動能 → 候選前 N
   成分歷史        ：S&P 500（fja05680，1996 起）、NDX（yfiua 月快照）期間表 → 回測任一天用「當天成分」
 
@@ -15,7 +15,7 @@ point-in-time 紀律」。本專案原本只有固定 watchlist：(1) 引擎只�
 出場仍由價格機制；**持倉不因掉出宇宙而被賣**。P0 只做快照 + 顯示，不接引擎。
 
 PIT 欄位：每份快照帶 `as_of`（資料日）與 `available_at`（as_of + 1 交易日，Lean T+1 規則）；
-快照 append-only 落在 data/universe/YYYY-MM.json（公開資料衍生，明文）。
+快照 append-only 落在 data/universe/YYYY-MM-DD.json（每次重建一檔；公開資料衍生，明文）。
 純邏輯離線可測；抓取層需網路。教育用途，非投資建議。
 """
 
@@ -65,6 +65,31 @@ def next_trading_day(d: str) -> str:
 
 # ── 1. Stage 1：寬宇宙（解析為純邏輯）───────────────────────────────────────
 
+def build_screen_conditions(cfg: dict, EQ) -> list:
+    """yf.screen 條件（純建構，離線可驗）：流動性 + **品質篩在 screener 端做**
+    （對抗驗證 B2：本地 quality_gate 對沒抓到的欄位不擋，形同虛設）。
+    Yahoo 的比率欄位為百分比；sector 用 is-in 白名單排除金融/地產，不依賴回傳欄。"""
+    c = {**DEFAULTS, **(cfg or {})}
+    try:
+        from yfinance.const import EQUITY_SCREENER_EQ_MAP as _M
+        sectors = [x for x in _M.get("sector", {}) if x not in EXCLUDE_SECTORS]
+    except Exception:
+        sectors = []
+    conds = [
+        EQ("eq", ["region", "us"]),
+        EQ("gt", ["intradaymarketcap", float(c["uni_min_mcap"])]),
+        EQ("gt", ["avgdailyvol3m", float(c["uni_min_avgvol"])]),
+        EQ("gt", ["intradayprice", float(c["uni_min_price"])]),
+        EQ("gt", ["returnonequity.lasttwelvemonths", float(c["uni_min_roe"]) * 100]),
+        EQ("gt", ["currentratio.lasttwelvemonths", float(c["uni_min_current"])]),
+        EQ("lt", ["totaldebtequity.lasttwelvemonths", float(c["uni_max_de"]) * 100]),
+        EQ("gt", ["netincomemargin.lasttwelvemonths", float(c["uni_min_margin"]) * 100]),
+    ]
+    if sectors:
+        conds.append(EQ("is-in", ["sector", *sectors]))
+    return conds
+
+
 def parse_screen_quotes(payload: dict | None) -> list[dict]:
     """yf.screen 回應（finance.result[0]）→ 標準列。缺欄一律 None。"""
     if not isinstance(payload, dict):
@@ -92,8 +117,8 @@ def stage1_filter(rows: list[dict], cfg: dict | None = None) -> list[dict]:
     seen, out = set(), []
     for r in rows:
         t = r.get("ticker") or ""
-        if not t or t in seen or "." in t or "-" in t and t.endswith(("-WT", "-U", "-R")):
-            continue
+        if not t or t in seen or "." in t or t.endswith(("-WT", "-UN", "-RT", "-U", "-R", "-WS")):
+            continue                                   # 權證/單位/rights（Yahoo 後綴 -WT/-UN/-RT）
         if (r.get("mcap") or 0) < float(c["uni_min_mcap"]):
             continue
         if (r.get("avgvol") or 0) < float(c["uni_min_avgvol"]):
@@ -160,7 +185,7 @@ def stage2_rank(rows: list[dict], mom: dict, cfg: dict | None = None) -> tuple[l
             reasons["no_price_history"] = reasons.get("no_price_history", 0) + 1
             continue
         passed.append({**r, **m, "adv_usd": (r.get("avgvol") or 0) * (r.get("price") or 0)})
-    passed.sort(key=lambda x: -(x["mom_12_1"] or -9))
+    passed.sort(key=lambda x: -(x["mom_12_1"] if x["mom_12_1"] is not None else -9))
     top = passed[: int(c["uni_top_n"])]
     for i, r in enumerate(top, 1):
         r["rank"] = i
@@ -243,11 +268,13 @@ def build_snapshot(as_of: str, broad: list[dict], top: list[dict], stats: dict,
 
 
 def save_snapshot(snap: dict, base_dir: Path | None = None) -> Path:
-    """data/universe/YYYY-MM.json（同月覆寫——月頻重建的最新版）。"""
+    """data/universe/YYYY-MM-DD.json（每次重建一檔，append-only；同日重建覆寫同檔）。"""
     base = Path(base_dir or UNIVERSE_DIR)
     base.mkdir(parents=True, exist_ok=True)
-    p = base / f"{snap['as_of'][:7]}.json"
-    p.write_text(json.dumps(snap, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    p = base / f"{snap['as_of'][:10]}.json"
+    tmp = p.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(snap, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    tmp.replace(p)                                  # 原子寫
     return p
 
 
@@ -273,7 +300,16 @@ def should_rebuild(state: dict, today: str, cfg: dict | None = None) -> bool:
         return False
     last = str((state.get("universe") or {}).get("as_of") or "")
     d = datetime.strptime(today[:10], "%Y-%m-%d").date()
+    fail = state.get("universe_fail") or {}
+    if fail.get("date") == today[:10] and int(fail.get("n") or 0) >= 2:
+        return False                                # 今日已失敗兩次 → 明天再試（對抗驗證 E2）
     return d.day >= int(c["uni_rebuild_day"]) and last[:7] != today[:7]
+
+
+def note_failure(state: dict, today: str) -> None:
+    f = state.get("universe_fail") or {}
+    n = int(f.get("n") or 0) + 1 if f.get("date") == today[:10] else 1
+    state["universe_fail"] = {"date": today[:10], "n": n}
 
 
 def universe_text(snap: dict | None, state_summary: dict | None = None) -> str:
@@ -284,7 +320,8 @@ def universe_text(snap: dict | None, state_summary: dict | None = None) -> str:
     c = snap.get("counts", {})
     rej = snap.get("rejected", {})
     lines = [f"🌐 *選股池快照*（資料日 {snap['as_of']}，回測可用日 {snap.get('available_at')}）",
-             f"寬宇宙 {c.get('broad', 0)} 檔 → 品質通過 {c.get('passed_quality', 0)} → 動能前 {c.get('top', 0)}"]
+             f"篩選器通過（市值/均量/價/ROE/流動比/負債/淨利率/非金融地產）{c.get('broad', 0)} 檔"
+             f" → 有一年行情 {c.get('passed_quality', 0)} → 12-1 動能前 {c.get('top', 0)}"]
     if rej:
         lines.append("淘汰：" + "、".join(f"{k.replace('_', '·')} {v}" for k, v in sorted(rej.items(), key=lambda kv: -kv[1])))
     top = snap.get("top") or []
@@ -308,12 +345,7 @@ def fetch_broad(cfg: dict | None = None) -> list[dict]:
     """yf.screen 三次翻頁（每頁 250）。任何一頁失敗就用已拿到的。"""
     import yfinance as yf
     c = {**DEFAULTS, **(cfg or {})}
-    q = yf.EquityQuery("and", [
-        yf.EquityQuery("eq", ["region", "us"]),
-        yf.EquityQuery("gt", ["intradaymarketcap", float(c["uni_min_mcap"])]),
-        yf.EquityQuery("gt", ["avgdailyvol3m", float(c["uni_min_avgvol"])]),
-        yf.EquityQuery("gt", ["intradayprice", float(c["uni_min_price"])]),
-    ])
+    q = yf.EquityQuery("and", build_screen_conditions(c, yf.EquityQuery))
     rows = []
     for page in range(int(c["uni_pages"])):
         try:
@@ -328,7 +360,7 @@ def fetch_broad(cfg: dict | None = None) -> list[dict]:
     return stage1_filter(rows, c)
 
 
-def fetch_closes_batch(tickers: list[str], period: str = "1y") -> dict:
+def fetch_closes_batch(tickers: list[str], period: str = "14mo") -> dict:   # 14 個月：確保 ≥252 根（B3）
     from behavior_check import fetch_closes
     out = {}
     for i in range(0, len(tickers), 200):          # 分批，避免單請求過大
@@ -356,8 +388,12 @@ def rebuild(state: dict, today: str, cfg: dict | None = None, themes: dict | Non
     core = list(state.get("watchlist") or [])
     tickers = [r["ticker"] for r in broad]
     closes = (fetch_closes_fn or fetch_closes_batch)(tickers) if tickers else {}
+    if not broad or not closes:
+        raise RuntimeError("empty universe（篩選器或行情不可用；不落檔、不更新 state）")   # 對抗驗證 E2
     mom = momentum_metrics(closes)
     top, stats = stage2_rank(broad, mom, c)
+    if not top:
+        raise RuntimeError("empty candidates（無一檔有足夠行情）")
     snap = build_snapshot(today, broad, top, stats, themes, core)
     path = save_snapshot(snap, base_dir)
     state["universe"] = {"as_of": snap["as_of"], "available_at": snap["available_at"],
@@ -402,7 +438,20 @@ if __name__ == "__main__":
     s1 = stage1_filter(rows)
     assert [r["ticker"] for r in s1] == ["AAA", "BANK"], [r["ticker"] for r in s1]
     assert parse_screen_quotes(None) == [] and parse_screen_quotes({"quotes": "x"}) == []
-    print("✅ 1 Stage 1 解析與門檻（去重/市值/量/價/缺值）")
+    assert stage1_filter([{"ticker": "SPAC-UN", "mcap": 5e9, "avgvol": 2e6, "price": 50},
+                          {"ticker": "X-RT", "mcap": 5e9, "avgvol": 2e6, "price": 50},
+                          {"ticker": "BRK-B", "mcap": 5e9, "avgvol": 2e6, "price": 50}])[0]["ticker"] == "BRK-B"
+    try:
+        import yfinance as yf
+        conds = build_screen_conditions({}, yf.EquityQuery)          # 欄位/運算子離線驗證
+        q = yf.EquityQuery("and", conds); d = q.to_dict()
+        assert d["operator"] == "AND" and len(conds) >= 8
+        assert any(x.operator == "IS-IN" and x.operands[0] == "sector" and "Financial Services" not in x.operands
+                   for x in conds)
+        print("   （yfinance EquityQuery 建構通過：品質篩在 screener 端、sector 白名單）")
+    except ImportError:
+        pass
+    print("✅ 1 Stage 1 解析與門檻（去重/市值/量/價/缺值/後綴）")
 
     # 2) 動能：無前視（竄改最後 5 日不改 12-1 動能）、樣本不足跳過
     idx = pd.bdate_range("2025-06-02", periods=300)
@@ -426,6 +475,11 @@ if __name__ == "__main__":
             {**base, "ticker": "NOPX"}]
     top, stats = stage2_rank(cand, mom, {"uni_top_n": 1})
     assert [r["ticker"] for r in top] == ["UP"] and top[0]["rank"] == 1
+    flat = pd.Series([100.0] * 300, index=idx)
+    slide = pd.Series(np.linspace(200.0, 100.0, 300), index=idx)         # 確定性下跌
+    t0, _ = stage2_rank([{**base, "ticker": "FLAT"}, {**base, "ticker": "SLIDE"}],
+                        momentum_metrics({"FLAT": flat, "SLIDE": slide}))
+    assert [r["ticker"] for r in t0] == ["FLAT", "SLIDE"]               # 0% 動能排在負動能之前（B4）
     assert stats["passed_quality"] == 2 and stats["rejected"] == {"roe": 1, "sector_route": 1, "no_price_history": 1}, stats
     print("✅ 3 Stage 2 品質/排序/top_n")
 
@@ -447,7 +501,17 @@ if __name__ == "__main__":
     snap = rebuild(st, "2026-09-04", {"uni_top_n": 5}, themes={"AI電力/散熱": ["VRT", "GEV"]},
                    fetch_broad_fn=lambda c: cand, fetch_closes_fn=lambda t: {"UP": up, "DN": dn}, base_dir=tmpd)
     assert snap["available_at"] == "2026-09-07" and snap["counts"]["broad"] == 5           # 週五 → 下週一
-    assert (tmpd / "2026-09.json").exists() and st["universe"]["top"] == ["UP", "DN"]
+    assert (tmpd / "2026-09-04.json").exists() and st["universe"]["top"] == ["UP", "DN"]
+    # E2：空篩選/空行情 → 拋錯、不落檔、state 不變；連續失敗兩次 → 當日退避
+    st2 = {"watchlist": [], "thresholds": {}}
+    for bad in (lambda c: [], lambda c: cand):
+        try:
+            rebuild(st2, "2026-10-01", {}, fetch_broad_fn=bad, fetch_closes_fn=lambda t: {}, base_dir=tmpd)
+            raise AssertionError("should raise")
+        except RuntimeError:
+            note_failure(st2, "2026-10-01")
+    assert "universe" not in st2 and not (tmpd / "2026-10-01.json").exists()
+    assert should_rebuild(st2, "2026-10-01") is False and should_rebuild(st2, "2026-10-02") is True
     assert load_latest_snapshot(tmpd)["as_of"] == "2026-09-04"
     assert should_rebuild(st, "2026-09-20") is False and should_rebuild(st, "2026-10-01") is True
     assert should_rebuild({"universe": {}}, "2026-10-01", {"uni_enabled": False}) is False

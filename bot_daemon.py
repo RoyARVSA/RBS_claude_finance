@@ -167,6 +167,13 @@ def main() -> int:
                     ss.refresh_estimates(state)
                 except Exception as e:
                     print(f"Estimates error: {e}")
+                # 1.8 選股池月頻重建（閉市輪）
+                if hasattr(ss, "maybe_rebuild_universe"):
+                    try:
+                        if ss.maybe_rebuild_universe(state):
+                            ss.save_state(state)
+                    except Exception as e:
+                        print(f"Universe error: {e}")
 
             # 2. 定時自動掃描
             if nowt - last_scan >= SCAN_INTERVAL:

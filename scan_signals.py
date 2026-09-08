@@ -1987,7 +1987,14 @@ def maybe_rebuild_universe(state: dict, elapsed_s: float = 0.0, force: bool = Fa
         today = datetime.now(ET).strftime("%Y-%m-%d")
         if not force and (elapsed_s > 60 or not un.should_rebuild(state, today, cfg)):
             return None
-        snap = un.rebuild(state, today, cfg, themes=un.theme_map())
+        if not force and market_status().get("open"):
+            return None                              # 用閉市輪跑，不拖延開盤掃描
+        try:
+            snap = un.rebuild(state, today, cfg, themes=un.theme_map())
+        except Exception as e:
+            un.note_failure(state, today)            # 同日失敗兩次 → 明天再試（對抗驗證 E2）
+            print(f"Universe: 重建失敗（{type(e).__name__}），已記退避")
+            return None
         c = snap.get("counts", {})
         line = (f"Universe: 寬宇宙 {c.get('broad', 0)} → 品質 {c.get('passed_quality', 0)} → "
                 f"候選 {c.get('top', 0)}（{snap['as_of']}）")

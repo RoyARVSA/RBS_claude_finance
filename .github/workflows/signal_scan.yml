@@ -108,7 +108,8 @@ jobs:
             cp /tmp/ws.json watchlist_state.json 2>/dev/null || true
             cp /tmp/tj.json trade_journal.json  2>/dev/null || true
             cp /tmp/el.json estimates_ledger.json 2>/dev/null || true
-            mkdir -p data && rm -rf data/universe && cp -r /tmp/uni data/universe 2>/dev/null || true
+            # 只有本輪備份存在才覆蓋（否則會把 reset --hard 拉進來的遠端快照刪掉，對抗驗證 D3）
+            if [ -d /tmp/uni ]; then mkdir -p data && rm -rf data/universe && cp -r /tmp/uni data/universe; fi
             # 分開 add：多 pathspec 是原子的，任一檔缺席會整批中止（上方步驟同理）
             git add watchlist_state.json 2>/dev/null || true
             git add trade_journal.json  2>/dev/null || true
