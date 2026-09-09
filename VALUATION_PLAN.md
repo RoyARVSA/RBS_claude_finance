@@ -247,8 +247,8 @@ DCF（2026-30 取自 Model、2031-35 以 8% 成長 / 24% OPM 淡出；TV Gordon 
 | 整合層 | ✅ | `playbook.py`、`/playbook`、網頁「🧭 佈局計畫」、閒置輪每 7 天輪替建模、週報摘要 |
 | P3 接資金佈建 | ✅ 程式就緒、**預設關閉** | `trade_engine` val 欄位（乘數/加碼閘/傾斜）、`engine_backtest` PIT val_ctx + 估值層 A/B、`/set val_enabled`、`/rebalance bl`（Black-Litterman） |
 | P4 指引萃取 | ✅ 首版 | `guidance.py`、`/guidance`（AV 逐字稿 + LLM 定位轉錄 + 程式驗證） |
-| P5 宇宙擴大（主題層 Stage 3、/screen） | ⏳ 下一步 | — |
-| P6 治理月報（verdict 命中率、審核未過清單、因子 IC） | ⏳ 下一步 | — |
+| P5 宇宙擴大（主題層 Stage 3、/screen） | ✅ | `screener.py`、`/screen`、每週閉市輪刷新；只建議不自動加入 |
+| P6 治理月報 | ✅ | `val_report.py`、`/valreport`、每月自動推播（事後命中／穩定度／MoS IC／覆蓋） |
 
 **啟用順序（維持原拍板）**：先讓 val_hist 與預估帳本累積 → `/engtest opt` 看估值層 A/B 是否過 holdout →
 才 `/set val_enabled on`。在此之前估值層只在 `/playbook`、`/model`、網頁顯示。

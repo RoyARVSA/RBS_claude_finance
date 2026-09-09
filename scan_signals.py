@@ -50,6 +50,8 @@ Telegram 指令（傳給 Bot）：
   /today [帳戶 風險%]     – 當日交易計畫：VWAP/ORB/RVOL 訂單票（別名 /plan）
   /plantest [apply|clear] – 當日計畫 60 日歷史回測；apply 套用校準（每週亦自動跑）
   /plantest opt [apply]   – 參數尋優（ORB 分鐘×停損 ATR×目標 R:R，walk-forward 把關）
+  /screen                 – 候選篩選（選股池 ∪ 主題 − watchlist；Stage 3 限額；只建議）
+  /valreport              – 估值治理月報（覆蓋/事後命中/穩定度/因子 IC/指引覆蓋；每月自動）
   /guidance TICKER [季別] – 指引/KPI 萃取（AV 逐字稿 + LLM 定位轉錄 + 程式驗證）
   /playbook [build N]     – 佈局計畫（整合各層 → 分層/四象限/權重帶；build 逐批建模）
   /model TICKER [set k=v|clear] – 公司模型（三情境 DCF/反向 DCF/品質評分；set 覆蓋驅動）
@@ -433,6 +435,8 @@ def _cmd_help() -> str:
         "`/today [帳戶 風險%]`（或 `/plan`）— 當日交易計畫：VWAP/ORB 進場票（進場/停損/停利/股數）\n"
         "`/plantest [apply|clear]` — 當日計畫 60 日回測；apply 套用校準（每週自動跑，`/set plan_autocal_enabled off` 關）\n"
         "`/plantest opt [apply]` — 參數尋優：ORB×停損×R:R 掃 27 組，holdout 段把關通過才推薦\n"
+        "`/screen` — 候選篩選：選股池動能前 N ∪ AI 主題 − watchlist，逐批補品質/修正動能（≤8 檔/次、每週閉市輪自動刷新），綜合分排名；只建議、`/add` 後才進建模與佈局\n"
+        "`/valreport` — 估值治理月報：覆蓋/過期/待審、各判定的事後命中率、公允價穩定度、MoS 因子 IC、指引覆蓋（每月自動推播；`/set valreport_enabled off` 關）\n"
         "`/guidance TICKER [季別]` — 指引/KPI 萃取：Alpha Vantage 逐字稿 → 便宜 LLM 只做定位轉錄 → 程式驗證（原文逐字回對、數字 regex 回對、修訂 raise/lower 由程式判定、與財報對帳）；通過的項目存加密區供論點監測\n"
         "`/set val_enabled on` — 估值層接引擎（預設關）：val_hist 的 MoS → 部位乘數 0.5–1.25×、價高於牛市不加碼、MoS>30% 提早加碼、排序傾斜 ±0.1；先用 `/engtest opt` 看估值層開/關 A/B 是否過 holdout\n"
         "`/rebalance bl` — Black-Litterman：公允價值→期望報酬觀點、信心=情境寬度，先驗等權、單檔上限 25%\n"
@@ -1023,7 +1027,7 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                          "cooldown_enabled", "regime_filter_enabled",
                          "position_sizing_enabled", "briefing_enabled", "mtf_enabled",
                          "autotrade_enabled", "weekly_enabled", "plan_autocal_enabled",
-                         "est_enabled", "uni_enabled", "model_auto_refresh", "val_enabled"}
+                         "est_enabled", "uni_enabled", "model_auto_refresh", "val_enabled", "valreport_enabled"}
             float_keys = {"rsi_oversold", "rsi_overbought", "price_change_pct",
                           "vol_spike_ratio", "cooldown_hours",
                           "account_size", "risk_pct", "atr_mult", "briefing_hour_et",
@@ -1531,6 +1535,26 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                                 reply = gd.guidance_text(res, tk)
                 except Exception as e:
                     reply = f"❌ 指引萃取失敗：{e}"
+
+        elif cmd == "/screen":
+            # 候選篩選：選股池 ∪ 主題層 − watchlist；Stage 3 限額；只建議不自動加入
+            try:
+                import screener as scn
+                _tg_send(token, src_chat or chat_id, "🔎 篩選候選（Stage 3 每次最多 8 檔，約 1 分鐘）…")
+                save_state(state)
+                res = maybe_refresh_screen(state, 0.0, force=True)
+                changed = bool(res)
+                reply = scn.screen_text(res) if res else "❌ 篩選失敗（選股池未建或行情不可用）；先 `/universe rebuild`"
+            except Exception as e:
+                reply = f"❌ 候選篩選失敗：{e}"
+
+        elif cmd == "/valreport":
+            # 估值層治理月報：覆蓋/過期/待審、verdict 事後命中、公允價穩定度、MoS 因子 IC、指引覆蓋
+            try:
+                _tg_send(token, src_chat or chat_id, "📋 整理估值治理月報（含因子 IC 需抓一年行情）…")
+                reply = build_valreport(state, datetime.now(ET).strftime("%Y-%m-%d"), with_ic=True)
+            except Exception as e:
+                reply = f"❌ 月報失敗：{e}"
 
         elif cmd == "/playbook":
             # 佈局計畫：整合選股池/預估修正/公司模型/品質/技術評分/regime/持倉/論點 → 分層 + 權重帶（參考）
@@ -2339,6 +2363,49 @@ def refresh_models(state: dict, elapsed_s: float = 0.0, max_n: int = 2, max_age_
     if done:
         print(f"Models: 更新 {len(done)} 檔估值歷史")
     return done
+
+
+def maybe_refresh_screen(state: dict, elapsed_s: float = 0.0, force: bool = False) -> dict | None:
+    """候選篩選（screener）：閉市閒置輪每 7 天刷新一次（Stage 3 ≤ 8 檔/次）；/screen 可 force。"""
+    th = state.get("thresholds") or {}
+    try:
+        import screener as scn
+        import universe as un
+        today = datetime.now(ET).strftime("%Y-%m-%d")
+        if not force and (elapsed_s > 60 or market_status().get("open") or not scn.should_refresh(state, today)):
+            return None
+        cfg = {k: th[k] for k in scn.DEFAULTS if k in th}
+        res = scn.run_screen(state, today, un.load_latest_snapshot(), un.theme_map(), cfg, force=force)
+        print(f"Screen: 候選池 {res['pool']}、本輪分析 {len(res['fetched'])} 檔")
+        return res
+    except Exception as e:
+        print(f"Screen: 刷新失敗，跳過 {e}")
+        return None
+
+
+def _should_send_valreport(state: dict) -> bool:
+    """每月一次治理月報：每月第一個交易日之後的第一個閉市輪（與週報同風格：記 last_valreport=YYYY-MM）。"""
+    th = state.get("thresholds") or {}
+    if not th.get("valreport_enabled", True):
+        return False
+    now = datetime.now(ET)
+    if now.day < 2 or market_status().get("open"):
+        return False
+    return str(state.get("last_valreport") or "") != now.strftime("%Y-%m")
+
+
+def build_valreport(state: dict, today: str, with_ic: bool = False) -> str:
+    """治理月報文字：現價來自 last_scores；IC 需行情（with_ic 時抓 watchlist 一年收盤）。"""
+    import val_report as vr
+    px_now = {t: (v or {}).get("price") for t, v in (state.get("last_scores") or {}).items()}
+    closes = None
+    if with_ic:
+        try:
+            from behavior_check import fetch_closes
+            closes = fetch_closes(list(state.get("watchlist") or []), period="1y")
+        except Exception:
+            closes = None
+    return vr.report_text(vr.build_report(state, today, px_now, closes))
 
 
 def market_regime(state: dict | None = None) -> dict | None:
@@ -3410,6 +3477,19 @@ def main() -> int:
 
     # Step 1.9: 公司模型輪替更新（閉市閒置輪；每輪 ≤2 檔、7 天一輪；供 /playbook 佈局計畫）
     if refresh_models(state, time.monotonic() - _t0):
+        save_state(state)
+
+    # Step 1.10: 候選篩選每週刷新（閉市閒置輪）+ 每月估值治理月報
+    if maybe_refresh_screen(state, time.monotonic() - _t0):
+        save_state(state)
+    if _should_send_valreport(state):
+        try:
+            msg = build_valreport(state, datetime.now(ET).strftime("%Y-%m-%d"), with_ic=True)
+            if msg and TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
+                _tg_send(TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, msg)
+        except Exception as e:
+            print(f"Valreport error: {e}")
+        state["last_valreport"] = datetime.now(ET).strftime("%Y-%m")
         save_state(state)
 
     # Step 2: Check mute & market hours
