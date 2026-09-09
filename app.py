@@ -246,6 +246,7 @@ with st.sidebar:
             "📉 模擬交易",
             "🪞 鏡像帳",
             "🏛️ 公司模型",
+            "🧭 佈局計畫",
             # 工具
             "📦 匯出報告",
         ],
@@ -6656,6 +6657,161 @@ def page_company_model():
                 st.error(f"匯入失敗：{e}")
     st.caption("⚠️ 估值層只調部位、不觸發進場；DCF 對 WACC 極敏感，看區間不看單點。教育用途，非投資建議。")
 
+
+# ════════════════════════════════════════════════════════════════════
+# PAGE: Playbook（佈局計畫整合層：把各分頁的產出串成一份分層計畫）
+# ════════════════════════════════════════════════════════════════════
+
+def _playbook_inputs() -> tuple[dict, dict | None, dict | None, dict, dict, bool]:
+    """state（解密）、預估帳本、選股池快照、品質（data/fin 離線算）、主題；locked 表加密未解。"""
+    import state_crypto as _sc
+    stt, locked = {}, False
+    for cand in (BASE_DIR / "watchlist_state.json", Path("watchlist_state.json")):
+        if Path(cand).exists():
+            stt = _sc.read_state(cand)
+            locked = any(_sc.is_enc(stt.get(k)) for k in ("engine", "val_hist", "theses", "models"))
+            break
+    ledger = None
+    try:
+        import estimates_ledger as _el
+        for cand in (BASE_DIR / "estimates_ledger.json", Path("estimates_ledger.json")):
+            if Path(cand).exists():
+                ledger = _el.load_ledger(cand)
+                break
+    except Exception:
+        pass
+    universe, themes = None, {}
+    try:
+        import universe as _un
+        universe = _un.load_latest_snapshot(BASE_DIR / "data" / "universe") or _un.load_latest_snapshot()
+        themes = _un.theme_map()
+    except Exception:
+        pass
+    qmap = {}
+    try:
+        import fin_data as _fd
+        import quality as _ql
+        vh = {} if locked else (stt.get("val_hist") or {})
+        for t in stt.get("watchlist") or []:
+            store = _fd.load_store(t, BASE_DIR / "data" / "fin")
+            if not store.get("periods"):
+                store = _fd.load_store(t)
+            periods = _fd.pit_view(store, None, "A")
+            if len(periods) >= 2:
+                fin = bool(vh.get(t)) and (vh[t][-1].get("method") == "rim")
+                qmap[t] = _ql.quality_summary(periods, None, None, financial=fin)
+    except Exception:
+        pass
+    return stt, ledger, universe, qmap, themes, locked
+
+
+def page_playbook():
+    st.title("🧭 佈局計畫")
+    st.caption("整合層：選股池 → 分析師修正 → 公司模型 → 品質 → 技術評分 → 大盤 regime → 持倉 → 論點，"
+               "收成一份分層計畫。全部為參考、不下單、不改引擎 · 非投資建議")
+    try:
+        import playbook as pb
+    except ImportError:
+        st.error("找不到 playbook.py，請同步最新程式碼並 Reboot。")
+        return
+    import datetime as _dt
+    today = _dt.date.today().isoformat()
+    with st.spinner("彙整各層資料…"):
+        stt, ledger, universe, qmap, themes, locked = _playbook_inputs()
+    if locked:
+        st.warning("🔒 state 的加密區（持倉/估值歷史/論點）無法解密——Streamlit Secrets 需設 `STATE_ENC_KEY`；"
+                   "以下只用明文成分（技術評分、預估修正、選股池、品質）。")
+        stt = {k: v for k, v in stt.items() if k in ("watchlist", "weather", "last_scores")}
+    if not stt.get("watchlist"):
+        st.info("state 尚無 watchlist（Bot 未跑過或檔案不存在）。")
+        return
+    plan = pb.build_plan(stt, today, ledger, qmap, universe, themes)
+
+    reg_lab = {"risk_on": "🟢 偏多", "neutral": "🟡 中性", "risk_off": "🔴 偏空", None: "— 未知"}
+    c1, c2, c3, c4, c5 = st.columns(5)
+    with c1:
+        metric_card("大盤 regime", reg_lab.get(plan["regime"], "—"), delta="市場氣象台")
+    with c2:
+        metric_card("現金目標", f"{plan['cash_target']:.0%}", delta="依 regime")
+    with c3:
+        metric_card("覆蓋", f"{plan['n']} 檔", delta=f"{plan['coverage']:.0%} 已建模")
+    with c4:
+        metric_card("累積候選", f"{len(plan['tiers']['累積候選'])}", delta="等技術訊號觸發")
+    with c5:
+        metric_card("迴避／減碼", f"{len(plan['tiers']['迴避'])} ／ {len(plan['tiers']['減碼'])}")
+
+    # ── 四象限散點：x = 價格/動能（技術與修正的均值），y = 估值 MoS ──────────
+    pts = []
+    for r in plan["rows"]:
+        moms = [x for x in ((r.get("tech")), (r.get("rev") or {}).get("score")) if x is not None]
+        mos = (r.get("val") or {}).get("mos")
+        if moms and mos is not None:
+            pts.append({"代碼": r["ticker"], "動能": sum(moms) / len(moms), "MoS": mos, "層級": r["tier"],
+                        "conviction": r.get("conviction") or 0.3, "象限": r.get("quadrant")})
+    if pts:
+        pdf = pd.DataFrame(pts)
+        fig = px.scatter(pdf, x="動能", y="MoS", color="層級", size="conviction", text="代碼", hover_data=["象限"],
+                         color_discrete_map={"累積候選": "#66BB6A", "持有": "#1E88E5", "減碼": "#FFA726",
+                                             "迴避": "#EF5350", "觀察": "#9E9E9E"},
+                         title="四象限：估值（MoS） × 價格/動能")
+        fig.add_hline(y=0, line=dict(color="#9E9E9E", dash="dot"))
+        fig.add_vline(x=0, line=dict(color="#9E9E9E", dash="dot"))
+        fig.update_traces(textposition="top center")
+        fig.update_layout(**PLOTLY_LAYOUT, height=440, yaxis_tickformat="+.0%")
+        st.plotly_chart(fig, use_container_width=True)
+        st.caption("右上＝論點對·價格對（持有/累積）；左上＝論點對·價格錯（等訊號，先查會計）；"
+                   "右下＝論點錯·價格對（別被獲利留住）；左下＝雙錯（迴避）。")
+    else:
+        st.info("散點需要「已建模 + 有技術評分」的標的；先在 Telegram 用 `/playbook build` 逐批建模。")
+
+    # ── 各層級表格 ────────────────────────────────────────────────────
+    for tier in pb.TIER_ORDER:
+        rs = plan["tiers"].get(tier) or []
+        if not rs:
+            continue
+        section(f"{pb.TIER_EMOJI[tier]} {tier}（{len(rs)}）")
+        rows = []
+        for r in rs:
+            v, q, rv = r.get("val") or {}, r.get("quality") or {}, r.get("rev") or {}
+            rows.append({"代碼": r["ticker"], "conviction": r.get("conviction"), "成分": f"{len(r.get('components', []))}/4",
+                         "MoS": v.get("mos"), "區間位置": v.get("range_pos"), "判定": v.get("verdict"),
+                         "技術": r.get("tech"), "修正動能": rv.get("score"), "品質": q.get("score"),
+                         "權重帶": (f"{r['weight_band'][0]:.1%}–{r['weight_band'][1]:.1%}" if r.get("weight_band") else "—"),
+                         "象限": r.get("quadrant"), "持有": "✅" if r.get("held") else "",
+                         "理由": "；".join(r.get("reasons") or [])})
+        st.dataframe(pd.DataFrame(rows).style.format({"conviction": "{:.2f}", "MoS": "{:+.0%}", "區間位置": "{:.2f}",
+                                                      "技術": "{:+.2f}", "修正動能": "{:+.2f}", "品質": "{:+.2f}"}, na_rep="—"),
+                     use_container_width=True, hide_index=True)
+
+    if plan.get("theme_over"):
+        st.warning("主題集中超過 25%：" + "、".join(f"{k} {v:.0%}" for k, v in plan["theme_over"].items()))
+    if plan.get("theme_exposure"):
+        st.caption("主題曝險（累積候選＋持有的權重帶中點加總）：" +
+                   "、".join(f"{k} {v:.0%}" for k, v in sorted(plan["theme_exposure"].items(), key=lambda kv: -kv[1])))
+    if plan.get("need_model") or plan.get("stale_models"):
+        st.info(("未建模：" + " ".join(plan["need_model"]) + "　" if plan.get("need_model") else "")
+                + ("模型過期：" + " ".join(plan["stale_models"]) if plan.get("stale_models") else "")
+                + "　→ Telegram `/playbook build 4` 逐批建模（閒置輪也會每 7 天自動輪替更新）")
+
+    with st.expander("這份計畫怎麼算出來的（各成分來源頁）"):
+        st.markdown("""
+| 成分 | 來源 | 頁面 / 指令 |
+|---|---|---|
+| 技術評分（價格/動能） | 每輪掃描的 composite score | 🏠 市場總覽、`/rank` |
+| 分析師修正動能 | 預估快照帳本（週頻自建歷史） | `/est` |
+| 估值 MoS / 區間位置 / 判定 | 公司模型（三情境 DCF／RIM／DDM，九條審核） | 🏛️ 公司模型、`/model` |
+| 品質與會計旗標 | Piotroski / Altman / Beneish / Sloan / ROIC | 🏛️ 公司模型（品質 tab） |
+| 大盤 regime → 現金目標、權重打折 | 市場氣象台五因子 | 🏠 市場總覽、`/weather` |
+| 持有 / 減碼判定 | 引擎簿記 engine.pos | 📉 模擬交易、`/positions` |
+| 迴避（失效價） | 論點追蹤 | `/thesis` |
+| 選股池排名 | 月頻宇宙快照 | `/universe` |
+
+**conviction** 只由可得成分加權（估值 35% / 品質 25% / 修正 20% / 技術 20%），缺的成分不臆測、只降信心。
+**權重帶** = 5% × (0.5 + conviction) × regime 係數，單檔 ≤10%、主題 ≤25%。
+**不做的事**：不觸發進場（仍由技術訊號過門檻）、不否決價格停損、不改引擎參數；估值層未過 walk-forward holdout 前不接引擎。
+""")
+    st.caption("⚠️ 佈局計畫為研究參考。教育用途，非投資建議。")
+
 # ════════════════════════════════════════════════════════════════════
 # PAGE: Trading Tools (Position Sizing / Kelly / R:R / Compound)
 # ════════════════════════════════════════════════════════════════════
@@ -6916,6 +7072,7 @@ PAGES = {
     "📉 模擬交易":  page_paper_trading,
     "🪞 鏡像帳":    page_mirror_book,
     "🏛️ 公司模型":  page_company_model,
+    "🧭 佈局計畫":  page_playbook,
     "🏦 機構選股":  page_stock_selector,
     "📰 新聞情報":  page_news_sentiment,
     "📦 匯出報告":  page_export,

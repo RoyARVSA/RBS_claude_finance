@@ -50,6 +50,7 @@ Telegram 指令（傳給 Bot）：
   /today [帳戶 風險%]     – 當日交易計畫：VWAP/ORB/RVOL 訂單票（別名 /plan）
   /plantest [apply|clear] – 當日計畫 60 日歷史回測；apply 套用校準（每週亦自動跑）
   /plantest opt [apply]   – 參數尋優（ORB 分鐘×停損 ATR×目標 R:R，walk-forward 把關）
+  /playbook [build N]     – 佈局計畫（整合各層 → 分層/四象限/權重帶；build 逐批建模）
   /model TICKER [set k=v|clear] – 公司模型（三情境 DCF/反向 DCF/品質評分；set 覆蓋驅動）
   /universe [rebuild]     – 選股池快照（寬宇宙→品質/流動性/動能篩→候選前 N；月頻自動重建）
   /est [TICKER]           – 分析師預估快照（共識/修正動能/目標價/評等/SUE 歷史）；無參數看排行
@@ -431,6 +432,7 @@ def _cmd_help() -> str:
         "`/today [帳戶 風險%]`（或 `/plan`）— 當日交易計畫：VWAP/ORB 進場票（進場/停損/停利/股數）\n"
         "`/plantest [apply|clear]` — 當日計畫 60 日回測；apply 套用校準（每週自動跑，`/set plan_autocal_enabled off` 關）\n"
         "`/plantest opt [apply]` — 參數尋優：ORB×停損×R:R 掃 27 組，holdout 段把關通過才推薦\n"
+        "`/playbook [build N]` — 佈局計畫：把選股池、分析師修正、公司模型（MoS/區間位置）、品質旗標、技術評分、大盤 regime、持倉與論點整合成一份分層計畫（迴避/減碼/累積候選/持有/觀察）+ 四象限 + 權重帶（參考、不下單）；build 逐批建模未建模的 watchlist\n"
         "`/model TICKER [set k=v…|clear]` — 公司模型：專業 WACC（Blume β/合成信評）、5+5 年 FCFF、價值中性終值、熊/基/牛 + 蒙地卡羅、反向 DCF、九條審核、品質評分（Piotroski/Altman/Beneish）；set 覆蓋驅動（opm_target/beta/wacc/tgr/rev_g=a,b,c/guidance_rev…；金融 RIM 用 payout/roe_target、地產 DDM 用 div_g）\n"
         "`/universe [rebuild]` — 選股池快照：yf.screen 寬宇宙（市值≥20 億、均量≥100 萬）→ 品質/流動性/12-1 動能篩 → 候選前 N；每月自動重建、快照落 data/universe/（P0 只顯示不接引擎）\n"
         "`/est [TICKER]` — 分析師預估快照：共識/修正動能/目標價/評等/財報驚奇史（每輪自動輪替刷新；無參數看 watchlist 上修下修排行）\n"
@@ -1017,7 +1019,7 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                          "cooldown_enabled", "regime_filter_enabled",
                          "position_sizing_enabled", "briefing_enabled", "mtf_enabled",
                          "autotrade_enabled", "weekly_enabled", "plan_autocal_enabled",
-                         "est_enabled", "uni_enabled"}
+                         "est_enabled", "uni_enabled", "model_auto_refresh"}
             float_keys = {"rsi_oversold", "rsi_overbought", "price_change_pct",
                           "vol_spike_ratio", "cooldown_hours",
                           "account_size", "risk_pct", "atr_mult", "briefing_hour_et",
@@ -1472,6 +1474,31 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                     reply = el.movers_text(led, list(state.get("watchlist") or []))
             except Exception as e:
                 reply = f"❌ 預估快照讀取失敗：{e}"
+
+        elif cmd == "/playbook":
+            # 佈局計畫：整合選股池/預估修正/公司模型/品質/技術評分/regime/持倉/論點 → 分層 + 權重帶（參考）
+            try:
+                import playbook as pb
+                today = datetime.now(ET).strftime("%Y-%m-%d")
+                if args and args[0].lower() == "build":
+                    n = 4
+                    try:
+                        n = min(max(int(args[1]), 1), 6) if len(args) > 1 else 4
+                    except ValueError:
+                        pass
+                    vh = state.get("val_hist") or {}
+                    todo = [t for t in state.get("watchlist") or [] if not vh.get(t)]
+                    todo += [t for t in state.get("watchlist") or [] if vh.get(t) and t not in todo]
+                    _tg_send(token, src_chat or chat_id, f"🧭 逐批建模 {min(n, len(todo))} 檔（每檔約 30 秒）…")
+                    save_state(state)
+                    done = refresh_models(state, 0.0, max_n=n, force_list=todo[:n])
+                    changed = True
+                    plan = build_playbook(state, today)
+                    reply = f"已建模：{' '.join(done) or '無'}\n\n" + pb.plan_text(plan)
+                else:
+                    reply = pb.plan_text(build_playbook(state, today))
+            except Exception as e:
+                reply = f"❌ 佈局計畫失敗：{e}"
 
         elif cmd == "/model":
             # 公司模型：/model T｜/model T set k=v…｜/model T clear｜/model（清單）
@@ -2100,7 +2127,8 @@ def run_company_model(state: dict, ticker: str, today: str) -> tuple[str, dict |
         vh = state.setdefault("val_hist", {}).setdefault(ticker, [])
         sc, sig = res.get("scenarios", {}), res.get("signal", {})
         row = {"d": today, "px": profile.get("price"), "bear": sc.get("bear"), "base": sc.get("base"),
-               "bull": sc.get("bull"), "mos": sig.get("mos"), "verdict": sig.get("verdict")}
+               "bull": sc.get("bull"), "mos": sig.get("mos"), "verdict": sig.get("verdict"),
+               "method": res.get("method")}
         wk = lambda ds: datetime.strptime(ds[:10], "%Y-%m-%d").isocalendar()[:2]
         if vh and wk(vh[-1]["d"]) == wk(today):
             vh[-1] = row
@@ -2150,6 +2178,76 @@ def parse_model_overrides(tokens: list[str]) -> tuple[dict, list[str]]:
             except ValueError:
                 bad.append(t)
     return out, bad
+
+
+def build_playbook(state: dict, today: str) -> dict:
+    """彙整 state / 預估帳本 / data/fin 品質 / 選股池快照 → playbook.build_plan（離線、不抓網路）。"""
+    import playbook as pb
+    ledger, universe, qmap, themes = None, None, {}, {}
+    try:
+        import estimates_ledger as el
+        ledger = el.load_ledger(ESTIMATES_FILE)
+    except Exception:
+        pass
+    try:
+        import universe as un
+        universe = un.load_latest_snapshot()
+        themes = un.theme_map()
+    except Exception:
+        pass
+    try:
+        import fin_data as fd
+        import quality as ql
+        vh = state.get("val_hist") or {}
+        for t in state.get("watchlist") or []:
+            store = fd.load_store(t)
+            periods = fd.pit_view(store, None, "A")
+            if len(periods) >= 2:
+                fin = bool(vh.get(t)) and (vh[t][-1].get("method") == "rim")
+                qmap[t] = ql.quality_summary(periods, None, None, financial=fin)
+    except Exception:
+        pass
+    return pb.build_plan(state, today, ledger, qmap, universe, themes)
+
+
+def refresh_models(state: dict, elapsed_s: float = 0.0, max_n: int = 2, max_age_days: int = 7,
+                   force_list: list[str] | None = None) -> list[str]:
+    """
+    閒置輪輪替建模：watchlist 內「未建模或 val_hist 超過 max_age_days」者最舊優先，每輪 ≤ max_n 檔
+    （每檔約 20–40 秒網路）。閉市輪且 elapsed 小才跑；/playbook build 以 force_list 直接指定。
+    """
+    th = state.get("thresholds") or {}
+    if not th.get("model_auto_refresh", True) and not force_list:
+        return []
+    today = datetime.now(ET).strftime("%Y-%m-%d")
+    if force_list is None:
+        if elapsed_s > 60 or market_status().get("open"):
+            return []
+        vh = state.get("val_hist") or {}
+        cand = []
+        for t in state.get("watchlist") or []:
+            last = (vh.get(t) or [{}])[-1].get("d")
+            try:
+                age = (datetime.strptime(today, "%Y-%m-%d") - datetime.strptime(str(last), "%Y-%m-%d")).days if last else 1e9
+            except Exception:
+                age = 1e9
+            if age >= max_age_days:
+                cand.append((t, age))
+        cand.sort(key=lambda x: -x[1])
+        picked = [t for t, _ in cand[:max_n]]
+    else:
+        picked = list(force_list)[:max_n]
+    done = []
+    for t in picked:
+        try:
+            txt, res = run_company_model(state, t, today)
+            if res:
+                done.append(t)
+        except Exception as e:
+            print(f"Models: {t} 建模失敗 {type(e).__name__}")
+    if done:
+        print(f"Models: 更新 {len(done)} 檔估值歷史")
+    return done
 
 
 def market_regime(state: dict | None = None) -> dict | None:
@@ -2474,11 +2572,16 @@ def daily_briefing(state: dict, force: bool = False) -> str | None:
 def weekly_report(state: dict) -> str:
     """
     每週深度週報：指數週漲跌 + 觀察清單強弱 + 決策計分板 + RRG 板塊輪動
-    + 下週財報/總經行事曆。組件全走既有模組；任何區塊失敗都跳過不擋整報。
+    + 下週財報/總經行事曆 + 佈局計畫摘要。組件全走既有模組；任何區塊失敗都跳過不擋整報。
     """
     from sector_scan import _batch_closes
     now_et = datetime.now(ET)
     lines = [f"📒 *RBS 每週深度週報* — {now_et.strftime('%Y-%m-%d')}"]
+    try:
+        import playbook as pb
+        lines.append(pb.plan_brief(build_playbook(state, now_et.strftime("%Y-%m-%d"))) + "（`/playbook` 看全文）")
+    except Exception as e:
+        print(f"Weekly: 佈局摘要失敗 {e}")
 
     # 指數本週表現
     try:
@@ -2859,6 +2962,13 @@ def scan_and_report(state: dict, timestamp: str) -> tuple[str | None, list[dict]
         pass
     results = scan(_scan_syms, th, calibration=_calibration_weights(state))
     state["last_scan_time"] = timestamp
+    # 每檔最新技術評分（佈局計畫 /playbook 的「價格/動能」成分；只留 watchlist，免揭露持倉）
+    try:
+        _wl = set(state.get("watchlist") or [])
+        state["last_scores"] = {r["ticker"]: {"score": r.get("score"), "price": r.get("price"), "ts": timestamp}
+                                for r in results if r.get("ticker") in _wl}
+    except Exception:
+        pass
 
     # 大盤風險濾網
     regime = market_regime(state) if th.get("regime_filter_enabled", True) else None
@@ -3191,6 +3301,10 @@ def main() -> int:
 
     # Step 1.8: 選股池月頻重建（閒置輪；P0 只快照與顯示，不接引擎）
     if maybe_rebuild_universe(state, time.monotonic() - _t0):
+        save_state(state)
+
+    # Step 1.9: 公司模型輪替更新（閉市閒置輪；每輪 ≤2 檔、7 天一輪；供 /playbook 佈局計畫）
+    if refresh_models(state, time.monotonic() - _t0):
         save_state(state)
 
     # Step 2: Check mute & market hours
