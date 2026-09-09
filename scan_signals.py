@@ -50,6 +50,7 @@ Telegram 指令（傳給 Bot）：
   /today [帳戶 風險%]     – 當日交易計畫：VWAP/ORB/RVOL 訂單票（別名 /plan）
   /plantest [apply|clear] – 當日計畫 60 日歷史回測；apply 套用校準（每週亦自動跑）
   /plantest opt [apply]   – 參數尋優（ORB 分鐘×停損 ATR×目標 R:R，walk-forward 把關）
+  /guidance TICKER [季別] – 指引/KPI 萃取（AV 逐字稿 + LLM 定位轉錄 + 程式驗證）
   /playbook [build N]     – 佈局計畫（整合各層 → 分層/四象限/權重帶；build 逐批建模）
   /model TICKER [set k=v|clear] – 公司模型（三情境 DCF/反向 DCF/品質評分；set 覆蓋驅動）
   /universe [rebuild]     – 選股池快照（寬宇宙→品質/流動性/動能篩→候選前 N；月頻自動重建）
@@ -432,6 +433,9 @@ def _cmd_help() -> str:
         "`/today [帳戶 風險%]`（或 `/plan`）— 當日交易計畫：VWAP/ORB 進場票（進場/停損/停利/股數）\n"
         "`/plantest [apply|clear]` — 當日計畫 60 日回測；apply 套用校準（每週自動跑，`/set plan_autocal_enabled off` 關）\n"
         "`/plantest opt [apply]` — 參數尋優：ORB×停損×R:R 掃 27 組，holdout 段把關通過才推薦\n"
+        "`/guidance TICKER [季別]` — 指引/KPI 萃取：Alpha Vantage 逐字稿 → 便宜 LLM 只做定位轉錄 → 程式驗證（原文逐字回對、數字 regex 回對、修訂 raise/lower 由程式判定、與財報對帳）；通過的項目存加密區供論點監測\n"
+        "`/set val_enabled on` — 估值層接引擎（預設關）：val_hist 的 MoS → 部位乘數 0.5–1.25×、價高於牛市不加碼、MoS>30% 提早加碼、排序傾斜 ±0.1；先用 `/engtest opt` 看估值層開/關 A/B 是否過 holdout\n"
+        "`/rebalance bl` — Black-Litterman：公允價值→期望報酬觀點、信心=情境寬度，先驗等權、單檔上限 25%\n"
         "`/playbook [build N]` — 佈局計畫：把選股池、分析師修正、公司模型（MoS/區間位置）、品質旗標、技術評分、大盤 regime、持倉與論點整合成一份分層計畫（迴避/減碼/累積候選/持有/觀察）+ 四象限 + 權重帶（參考、不下單）；build 逐批建模未建模的 watchlist\n"
         "`/model TICKER [set k=v…|clear]` — 公司模型：專業 WACC（Blume β/合成信評）、5+5 年 FCFF、價值中性終值、熊/基/牛 + 蒙地卡羅、反向 DCF、九條審核、品質評分（Piotroski/Altman/Beneish）；set 覆蓋驅動（opm_target/beta/wacc/tgr/rev_g=a,b,c/guidance_rev…；金融 RIM 用 payout/roe_target、地產 DDM 用 div_g）\n"
         "`/universe [rebuild]` — 選股池快照：yf.screen 寬宇宙（市值≥20 億、均量≥100 萬）→ 品質/流動性/12-1 動能篩 → 候選前 N；每月自動重建、快照落 data/universe/（P0 只顯示不接引擎）\n"
@@ -1019,7 +1023,7 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                          "cooldown_enabled", "regime_filter_enabled",
                          "position_sizing_enabled", "briefing_enabled", "mtf_enabled",
                          "autotrade_enabled", "weekly_enabled", "plan_autocal_enabled",
-                         "est_enabled", "uni_enabled", "model_auto_refresh"}
+                         "est_enabled", "uni_enabled", "model_auto_refresh", "val_enabled"}
             float_keys = {"rsi_oversold", "rsi_overbought", "price_change_pct",
                           "vol_spike_ratio", "cooldown_hours",
                           "account_size", "risk_pct", "atr_mult", "briefing_hour_et",
@@ -1475,6 +1479,59 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
             except Exception as e:
                 reply = f"❌ 預估快照讀取失敗：{e}"
 
+        elif cmd == "/guidance":
+            # 指引/KPI 萃取（P4）：Alpha Vantage 逐字稿 → 便宜 LLM 定位轉錄 → 程式驗證（原文回對/數字回對/修訂/對帳）
+            if not args:
+                reply = "用法：`/guidance TICKER [2026Q2]`（最近一季逐字稿；需 ALPHA_VANTAGE_KEY 與 LLM_API_KEY）"
+            else:
+                try:
+                    import guidance as gd
+                    import estimates_ledger as el
+                    tk = args[0].upper().lstrip("$")
+                    q = args[1].upper() if len(args) > 1 else None
+                    today = datetime.now(ET).strftime("%Y-%m-%d")
+                    av_key = os.environ.get("ALPHA_VANTAGE_KEY", "").strip()
+                    if not av_key:
+                        reply = "⚠️ 未設 ALPHA_VANTAGE_KEY（逐字稿來源）"
+                    elif not os.environ.get("LLM_API_KEY", "").strip():
+                        reply = "⚠️ 未設 LLM_API_KEY（萃取用便宜模型）"
+                    elif "guidance" in (state.get("__enc_locked__") or {}):
+                        reply = "❌ 加密區塊未解鎖（STATE_ENC_KEY 異常），暫停指引寫入"
+                    else:
+                        led = el.load_ledger(ESTIMATES_FILE)
+                        if el.av_quota_left(led, today) <= 0:
+                            reply = "⚠️ Alpha Vantage 今日配額已用罄（25 次/日），明天再試"
+                        else:
+                            _tg_send(token, src_chat or chat_id, f"📣 抓 {tk} 逐字稿並萃取指引（約 30–60 秒）…")
+                            save_state(state)
+                            el.av_quota_use(led, today, 1)
+                            el.save_ledger(ESTIMATES_FILE, led)
+                            got = gd.fetch_transcript_av(tk, av_key, q or gd.last_quarter_label(today))
+                            if not got or len(got[0]) < 200:
+                                reply = f"❌ {tk} 抓不到逐字稿（{q or gd.last_quarter_label(today)}；AV 免費層可能未涵蓋）"
+                            else:
+                                text_src, quarter = got
+                                prev = ((state.get("guidance") or {}).get(tk) or {}).get("items")
+                                actuals = None
+                                try:
+                                    import fin_data as fd
+                                    per = fd.pit_view(fd.load_store(tk), None, "A")
+                                    if per:
+                                        actuals = {"revenue": per[0].get("revenue")}
+                                except Exception:
+                                    pass
+                                res = gd.extract(tk, text_src, lambda pr: _llm_complete(pr, max_tokens=1500) or "",
+                                                 prev_items=prev, actuals=actuals)
+                                res["source"] = f"AV 逐字稿 {quarter}"
+                                if res.get("status") == "ok":
+                                    state.setdefault("guidance", {})[tk] = {
+                                        "as_of": today, "quarter": quarter, "items": res["items"],
+                                        "abstained": res.get("abstained", [])}
+                                    changed = True
+                                reply = gd.guidance_text(res, tk)
+                except Exception as e:
+                    reply = f"❌ 指引萃取失敗：{e}"
+
         elif cmd == "/playbook":
             # 佈局計畫：整合選股池/預估修正/公司模型/品質/技術評分/regime/持倉/論點 → 分層 + 權重帶（參考）
             try:
@@ -1487,8 +1544,10 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                     except ValueError:
                         pass
                     vh = state.get("val_hist") or {}
-                    todo = [t for t in state.get("watchlist") or [] if not vh.get(t)]
-                    todo += [t for t in state.get("watchlist") or [] if vh.get(t) and t not in todo]
+                    skip = state.get("model_skip") or {}
+                    wl = [t for t in state.get("watchlist") or [] if not skip.get(t)]
+                    todo = [t for t in wl if not vh.get(t)]
+                    todo += [t for t in wl if vh.get(t) and t not in todo]
                     _tg_send(token, src_chat or chat_id, f"🧭 逐批建模 {min(n, len(todo))} 檔（每檔約 30 秒）…")
                     save_state(state)
                     done = refresh_models(state, 0.0, max_n=n, force_list=todo[:n])
@@ -1603,9 +1662,13 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                         if "buy_threshold" not in cur and "at_buy_threshold" in th:
                             cur["buy_threshold"] = th["at_buy_threshold"]
                         calib = state.get("calibration") if isinstance(state.get("calibration"), dict) else None
+                        vh = state.get("val_hist") or {}
                         if is_opt:
+                            grid = dict(eb.GRID)
+                            if vh:
+                                grid["val_enabled"] = (False, True)        # 估值層 A/B（PIT 由 val_hist 列日期保證）
                             opt = eb.run_optimize(syms, period, baseline=cur,
-                                                  thresholds=th, calibration=calib)
+                                                  thresholds=th, calibration=calib, grid=grid, val_hist=vh)
                             reply = opt["text"]
                             if do_apply:
                                 rec = opt.get("recommend")
@@ -1620,7 +1683,8 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                                 else:
                                     reply += "\n\n（無組合通過 holdout 把關，未套用任何變更）"
                         else:
-                            out = eb.run(syms, period, params=cur, thresholds=th, calibration=calib)
+                            cur_v = {**cur, "val_enabled": bool(th.get("val_enabled", False))}
+                            out = eb.run(syms, period, params=cur_v, thresholds=th, calibration=calib, val_hist=vh)
                             reply = out["text"]
                             if state.get("eng_opt"):
                                 reply += (f"\n（現行含 /engtest apply 於 "
@@ -1882,6 +1946,8 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
             sch = args[0].lower() if args else "hrp"
             if not key or not secret:
                 reply = "⚠️ 未設定 Alpaca key（此指令以 Alpaca 模擬持倉為基準）"
+            elif sch == "bl" and not (state.get("val_hist") or {}):
+                reply = "⚠️ 尚無估值歷史（先 /model 或 /playbook build），BL 觀點無從建立"
             elif sch not in rbl.SCHEMES:
                 reply = ("用法：`/rebalance [配置法]`\n" +
                          "\n".join(f"`{k}` — {v}" for k, v in rbl.SCHEMES.items()))
@@ -1901,7 +1967,10 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                         close = (raw["Close"] if isinstance(raw.columns, pd.MultiIndex)
                                  else raw[["Close"]])
                         rets = close.pct_change().dropna(how="all").dropna(axis=1)
-                        tw = rbl.target_weights(rets, sch)
+                        views = None
+                        if sch == "bl":
+                            views = rbl.views_from_val_hist(state.get("val_hist") or {}, px)
+                        tw = rbl.target_weights(rets, sch, views=views)
                         if tw is None:
                             reply = "❌ 目標權重計算失敗（歷史數據不足：需 ≥2 檔、≥40 交易日）"
                         else:
@@ -2224,8 +2293,14 @@ def refresh_models(state: dict, elapsed_s: float = 0.0, max_n: int = 2, max_age_
         if elapsed_s > 60 or market_status().get("open"):
             return []
         vh = state.get("val_hist") or {}
+        skip = state.get("model_skip") or {}
         cand = []
         for t in state.get("watchlist") or []:
+            try:
+                if skip.get(t) and (datetime.strptime(today, "%Y-%m-%d") - datetime.strptime(str(skip[t]), "%Y-%m-%d")).days < 30:
+                    continue
+            except Exception:
+                pass
             last = (vh.get(t) or [{}])[-1].get("d")
             try:
                 age = (datetime.strptime(today, "%Y-%m-%d") - datetime.strptime(str(last), "%Y-%m-%d")).days if last else 1e9
@@ -2238,12 +2313,17 @@ def refresh_models(state: dict, elapsed_s: float = 0.0, max_n: int = 2, max_age_
     else:
         picked = list(force_list)[:max_n]
     done = []
+    skip = state.setdefault("model_skip", {})           # 建不了模的代碼（ETF/無年報）：30 天內不再排（對抗驗證 H1）
     for t in picked:
         try:
             txt, res = run_company_model(state, t, today)
             if res:
                 done.append(t)
+                skip.pop(t, None)
+            else:
+                skip[t] = today
         except Exception as e:
+            skip[t] = today
             print(f"Models: {t} 建模失敗 {type(e).__name__}")
     if done:
         print(f"Models: 更新 {len(done)} 檔估值歷史")
@@ -3110,6 +3190,20 @@ def run_autotrade(state: dict, results: list[dict]) -> str | None:
             print(f"Alpha: {n}")
     except Exception as e:
         print(f"Autotrade: alpha_overlay 失敗，跳過資訊疊加 {e}")
+
+    # 估值層（P3；預設關閉）：val_hist 的最新估值 → val_mult / val_no_add / val_early / val_tilt
+    # 只調部位與加碼閘、只傾斜排序；不觸發進場、不否決出場。開關 /set val_enabled on
+    if th.get("val_enabled", False):
+        try:
+            import engine_backtest as _eb
+            _px = {s_["ticker"]: float(s_["price"]) for s_ in scored if s_.get("price")}
+            _vc = _eb.val_ctx_from_hist(state.get("val_hist") or {}, datetime.now(ET).strftime("%Y-%m-%d"), _px)
+            for s_ in scored:
+                s_.update(_vc.get(s_["ticker"], {}))
+            if _vc:
+                print(f"Valuation: 估值層上下文 {len(_vc)} 檔")
+        except Exception as e:
+            print(f"Valuation: 估值層上下文失敗，略過 {e}")
 
     # Portfolio 層：相關性/集中度控制——與現有持倉高度相關的新倉縮半或跳過
     # （「10 檔高相關 megacap ≈ 貼著大盤」的直接解方；抓價失敗絕不擋交易）

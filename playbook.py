@@ -163,15 +163,22 @@ def classify(row: dict, regime: str | None, cfg: dict | None = None) -> dict:
     stop_hit = bool(row.get("thesis") and row["thesis"].get("stop") and row.get("price")
                     and row["thesis"].get("direction") in ("多", "long", "bull")
                     and row["price"] < row["thesis"]["stop"])
+    held = bool(row.get("held"))
+    mos, rp = v.get("mos"), v.get("range_pos")
+    mos_s = f"MoS {mos:+.0%}" if mos is not None else "MoS —"
     if q.get("veto"):
-        tier, reasons = "迴避", ["品質否決：" + "、".join(str(x).replace("_", "·") for x in (q.get("flags") or []))]
+        tier = "迴避"
+        reasons = [("⚠️ 持倉中·" if held else "") + "品質否決：" + "、".join(str(x).replace("_", "·") for x in (q.get("flags") or []))]
     elif v.get("verdict") == "exit":
-        tier, reasons = "迴避", ["市價高於牛市情境"]
+        tier = "減碼" if held else "迴避"
+        reasons = ["市價高於牛市情境" + ("，建議出清" if held else "")]
     elif stop_hit:
-        tier, reasons = "迴避", ["跌破論點失效價"]
-    elif row.get("held"):
-        if v.get("verdict") == "trim" or (v.get("range_pos") is not None and v["range_pos"] > 0.7):
-            tier, reasons = "減碼", [f"區間位置 {v.get('range_pos', 0):.2f} > 0.7（估值偏貴）"]
+        tier = "迴避"
+        reasons = [("⚠️ 持倉中·" if held else "") + "跌破論點失效價"]
+    elif held:
+        if v.get("verdict") == "trim" or (rp is not None and rp > 0.7):
+            tier = "減碼"
+            reasons = [f"區間位置 {rp:.2f} > 0.7（估值偏貴）" if rp is not None else "估值判定：減碼"]
         else:
             tier = "持有"
             if v.get("verdict") == "accumulate":
@@ -179,21 +186,27 @@ def classify(row: dict, regime: str | None, cfg: dict | None = None) -> dict:
             if r and r.get("score", 0) < -0.3:
                 reasons.append("分析師下修中，注意論點")
     else:
-        if v.get("verdict") == "accumulate" and (q.get("score") is None or q["score"] >= 0) and (not r or r.get("score", 0) > -0.3):
+        # 累積候選：verdict 已含 MoS 分層門檻與 up/down ≥2（品質已進門檻）；這裡只再擋否決與強烈下修
+        if v.get("verdict") == "accumulate" and (not r or r.get("score", 0) > -0.3):
             tier = "累積候選"
-            reasons.append(f"MoS {v.get('mos', 0):+.0%}" + ("；技術訊號已達門檻" if (row.get("tech") or -9) >= float(c["tech_buy"]) else "；等技術訊號（引擎觸發進場）"))
-        elif v.get("verdict") in ("hold",) and (row.get("tech") or -9) >= float(c["tech_buy"]) and (q.get("score") or 0) >= 0:
-            tier, reasons = "觀察", ["技術訊號在但估值無安全邊際——只做引擎標準部位"]
+            reasons.append(mos_s + ("；技術訊號已達門檻" if (row.get("tech") or -9) >= float(c["tech_buy"]) else "；等技術訊號（引擎觸發進場）"))
+        elif v.get("verdict") == "review":
+            reasons.append("模型待審（審核未過或品質旗標）")
+        elif v.get("verdict") == "hold" and (row.get("tech") or -9) >= float(c["tech_buy"]):
+            reasons.append("技術訊號在但估值無安全邊際——只做引擎標準部位")
         elif not v:
             reasons.append("未建模（/model 或 /playbook build）")
     if v.get("stale"):
         reasons.append(f"模型 {v.get('age_days')} 天未更新")
-    if conv is not None and conf < 0.75:
+    if conv is not None and conf < 0.75 and tier in ("累積候選", "持有"):
         reasons.append(f"成分僅 {len(row.get('components', []))}/4")
-    # 權重帶（參考）
+    # 權重帶（參考）：conviction × confidence——成分不足時退回基準權重，不放大（對抗驗證 M2）
     band = None
     if tier in ("累積候選", "持有"):
-        mult = (0.5 + (conv if conv is not None else 0.5)) * float(c["regime_mult"].get(regime, c["regime_mult"][None]))
+        eff = 0.5 + ((conv if conv is not None else 0.5) - 0.5) * conf
+        if conf < 0.5:                                   # 成分少於一半：不放大（只允許 ≤ 基準）
+            eff = min(eff, 0.5)
+        mult = (0.5 + eff) * float(c["regime_mult"].get(regime, c["regime_mult"][None]))
         mid = min(float(c["base_weight"]) * mult, float(c["max_single"]))
         band = (round(mid * 0.8, 4), round(min(mid * 1.2, float(c["max_single"])), 4))
     return {"tier": tier, "reasons": reasons, "conviction": conv, "confidence": conf,
@@ -216,7 +229,7 @@ def build_plan(state: dict, today: str, ledger: dict | None = None, quality_map:
     for k in tiers:
         tiers[k].sort(key=lambda r: -(r.get("conviction") or 0))
     # 主題集中（以「累積候選 + 持有」的權重帶中點估）
-    theme_exp = {}
+    theme_exp, theme_held = {}, {}
     for r in tiers["累積候選"] + tiers["持有"]:
         if not r.get("weight_band"):
             continue
@@ -224,11 +237,13 @@ def build_plan(state: dict, today: str, ledger: dict | None = None, quality_map:
         for name, syms in (themes or {}).items():
             if r["ticker"] in syms:
                 theme_exp[name] = theme_exp.get(name, 0.0) + mid
+                if r.get("held"):
+                    theme_held[name] = theme_held.get(name, 0.0) + mid
     over = {k: v for k, v in theme_exp.items() if v > float(c["max_theme"])}
     need_model = [r["ticker"] for r in rows if not r.get("val")]
     stale = [r["ticker"] for r in rows if r.get("val") and r["val"].get("stale")]
     return {"as_of": today, "regime": regime, "cash_target": float(c["cash_target"].get(regime, c["cash_target"][None])),
-            "rows": rows, "tiers": tiers, "theme_exposure": theme_exp, "theme_over": over,
+            "rows": rows, "tiers": tiers, "theme_exposure": theme_exp, "theme_held": theme_held, "theme_over": over,
             "need_model": need_model, "stale_models": stale,
             "n": len(rows), "coverage": (sum(1 for r in rows if r.get("val")) / len(rows)) if rows else 0.0}
 
@@ -249,7 +264,7 @@ def _one(r: dict) -> str:
     if r.get("weight_band"):
         bits.append(f"權重 {r['weight_band'][0]:.1%}–{r['weight_band'][1]:.1%}")
     why = f"（{r['reasons'][0]}）" if r.get("reasons") else ""
-    return f"・{r['ticker']} " + "｜".join(bits) + why
+    return f"・{r['ticker']}{'（持）' if r.get('held') else ''} " + "｜".join(bits) + why
 
 
 def plan_text(plan: dict, max_per_tier: int = 6) -> str:
@@ -265,7 +280,8 @@ def plan_text(plan: dict, max_per_tier: int = 6) -> str:
         if len(rs) > max_per_tier:
             lines.append(f"  …另 {len(rs) - max_per_tier} 檔")
     if plan.get("theme_over"):
-        lines.append("⚠️ 主題集中超過 25%：" + "、".join(f"{k.replace('_', '·')} {v:.0%}" for k, v in plan["theme_over"].items()))
+        lines.append("⚠️ 主題集中（含候選）超過 25%：" + "、".join(
+            f"{k.replace('_', '·')} {v:.0%}（已持 {plan.get('theme_held', {}).get(k, 0):.0%}）" for k, v in plan["theme_over"].items()))
     if plan.get("need_model"):
         lines.append(f"未建模 {len(plan['need_model'])} 檔：{' '.join(plan['need_model'][:8])}（`/playbook build` 逐批建模）")
     if plan.get("stale_models"):
@@ -313,6 +329,27 @@ if __name__ == "__main__":
     assert by["AAA"]["confidence"] == 1.0 and 0.6 < by["AAA"]["conviction"] <= 1.0 and by["AAA"]["universe_rank"] == 3
     assert by["BBB"]["tier"] == "持有" and by["BBB"]["val"]["stale"] and any("未更新" in x for x in by["BBB"]["reasons"])
     assert by["CCC"]["tier"] == "迴避" and by["DDD"]["tier"] == "減碼"
+    # M1：持倉 + exit → 減碼（建議出清）；持倉 + veto → 迴避但標「持倉中」
+    st_x = {"watchlist": ["CCC"], "weather": state["weather"], "engine": {"pos": {"CCC": {"opened": "2026-08-01"}}},
+            "last_scores": state["last_scores"], "val_hist": state["val_hist"]}
+    rx = build_plan(st_x, today, None, {}, None, None)["rows"][0]
+    assert rx["tier"] == "減碼" and "出清" in rx["reasons"][0] and "（持）" in _one(rx)
+    rv_ = build_plan({"watchlist": ["FFF"], "engine": {"pos": {"FFF": {"opened": "2026-08-01"}}}}, today, None, qmap, None, None)["rows"][0]
+    assert rv_["tier"] == "迴避" and rv_["reasons"][0].startswith("⚠️ 持倉中")
+    # M2：只有技術評分的持倉，權重帶不得高於基準（成分不足退回基準）
+    st_t = {"watchlist": ["TT"], "weather": state["weather"], "engine": {"pos": {"TT": {"opened": "2026-08-01"}}},
+            "last_scores": {"TT": {"score": 0.9, "price": 10}}}
+    rt = build_plan(st_t, today, None, {}, None, None)["rows"][0]
+    assert rt["tier"] == "持有" and rt["weight_band"][1] <= 0.05 * 1.2 * 1.05 + 1e-9, rt["weight_band"]
+    # M3：range_pos / mos 為 None 不炸
+    st_n = {"watchlist": ["NN", "MM"], "engine": {"pos": {"NN": {"opened": "2026-08-01"}}},
+            "val_hist": {"NN": [{"d": today, "base": 10, "bear": None, "bull": None, "mos": None, "verdict": "trim", "px": None}],
+                         "MM": [{"d": today, "base": 10, "bear": None, "bull": None, "mos": None, "verdict": "accumulate", "px": None}]}}
+    pn = {r["ticker"]: r for r in build_plan(st_n, today, None, {}, None, None)["rows"]}
+    assert pn["NN"]["tier"] == "減碼" and pn["MM"]["tier"] == "累積候選" and "MoS —" in pn["MM"]["reasons"][0]
+    # M4：review 有理由
+    st_r = {"watchlist": ["RR"], "val_hist": {"RR": [{"d": today, "base": 10, "bear": 8, "bull": 12, "mos": 0.1, "verdict": "review", "px": 9}]}}
+    assert "待審" in build_plan(st_r, today, None, {}, None, None)["rows"][0]["reasons"][0]
     assert by["EEE"]["tier"] == "迴避" and "失效價" in by["EEE"]["reasons"][0]          # 價 30 < 失效價 35
     assert by["FFF"]["tier"] == "迴避" and "品質否決" in by["FFF"]["reasons"][0] and by["FFF"]["val"] is None
     assert plan["cash_target"] == 0.10 and plan["need_model"] == ["EEE", "FFF"] and plan["stale_models"] == ["BBB"]

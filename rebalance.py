@@ -20,7 +20,9 @@ SCHEMES = {
     "min_vol":    "最小波動（MPT）",
     "erc":        "等風險貢獻（風險平價）",
     "equal":      "等權重",
+    "bl":         "Black-Litterman（估值觀點：公允/市價 → 期望報酬，信心=區間寬度）",
 }
+BL_HORIZON_YEARS = 3.0      # 公允價值收斂年限（view 年化報酬 = (公允/市價)^(1/T) − 1）
 
 DEFAULT_MIN_TRADE_PCT = 0.01   # 單筆交易 < 總值 1% 就略過（不值得付出摩擦成本）
 
@@ -43,13 +45,51 @@ def current_weights(qty: dict[str, float],
     return w, total, skipped
 
 
-def target_weights(returns_df: pd.DataFrame, scheme: str) -> pd.Series | None:
-    """報酬矩陣 → 目標權重（Series，總和 1）。失敗回 None。"""
+def views_from_val_hist(val_hist: dict, prices: dict, horizon: float = BL_HORIZON_YEARS) -> dict:
+    """val_hist 最新列 → {ticker: {"ret": 年化期望報酬, "conf": 信心 0..1}}。
+    信心 = 1 − (bull/bear 寬度 − 1)/3 夾 [0.1, 0.9]（寬度 1.8x → 0.73、4x → 0.1）；過期 (>30 天) 不給觀點。"""
+    from datetime import datetime as _dt
+    out = {}
+    today = _dt.utcnow()
+    for t, rows in (val_hist or {}).items():
+        if not rows:
+            continue
+        r = rows[-1]
+        px = prices.get(t)
+        base = r.get("base")
+        if not px or not base or px <= 0 or base <= 0:
+            continue
+        try:
+            age = (today - _dt.strptime(str(r.get("d"))[:10], "%Y-%m-%d")).days
+        except Exception:
+            age = 999
+        if age > 30:
+            continue
+        ret = (float(base) / float(px)) ** (1.0 / horizon) - 1
+        bear, bull = r.get("bear"), r.get("bull")
+        width = (float(bull) / float(bear)) if (bear and bull and bear > 0) else 3.0
+        conf = min(max(1 - (width - 1) / 3.0, 0.1), 0.9)
+        out[t] = {"ret": max(min(ret, 0.60), -0.60), "conf": conf}
+    return out
+
+
+def target_weights(returns_df: pd.DataFrame, scheme: str, views: dict | None = None) -> pd.Series | None:
+    """報酬矩陣 → 目標權重（Series，總和 1）。失敗回 None。scheme='bl' 需 views（無觀點退回等權先驗）。"""
     if returns_df is None or returns_df.shape[1] < 2 or len(returns_df) < 40:
         return None
     cols = list(returns_df.columns)
     try:
-        if scheme == "hrp":
+        if scheme == "bl":
+            from portfolio_opt import black_litterman
+            import numpy as _np
+            cov = returns_df.cov().to_numpy() * 252
+            w0 = _np.ones(len(cols)) / len(cols)                 # 先驗：等權（無市值資料時的中性選擇）
+            v = {t: d["ret"] for t, d in (views or {}).items() if t in cols}
+            cf = {t: d["conf"] for t, d in (views or {}).items() if t in cols}
+            cap = max(0.25, 2.0 / len(cols))                       # 檔數少時上限放寬（n×cap 須 ≥1）
+            res = black_litterman(cov, w0, v, cols, cf, max_w=cap)
+            w = pd.Series(res["w_bl"], index=cols)
+        elif scheme == "hrp":
             from portfolio_opt import hrp_weights
             w = hrp_weights(returns_df)
         elif scheme == "max_sharpe":
@@ -215,6 +255,16 @@ if __name__ == "__main__":
         assert tw is not None and abs(tw.sum() - 1) < 1e-6 and (tw >= -1e-9).all(), \
             (sch, tw)
     assert target_weights(rets.iloc[:, :1], "hrp") is None      # <2 檔 → None
+    # BL：正觀點高信心 → 權重高於等權；無觀點 → 等權；過期估值不給觀點
+    cols_ = list(rets.columns)
+    vw = views_from_val_hist({cols_[0]: [{"d": "2099-01-01", "base": 200, "bear": 150, "bull": 250}]}, {cols_[0]: 100})
+    assert cols_[0] in vw and vw[cols_[0]]["ret"] > 0 and 0.1 <= vw[cols_[0]]["conf"] <= 0.9
+    assert views_from_val_hist({cols_[0]: [{"d": "2020-01-01", "base": 200}]}, {cols_[0]: 100}) == {}
+    w_bl = target_weights(rets, "bl", views=vw); w_eq = target_weights(rets, "equal")
+    cap_ = max(0.25, 2.0 / len(cols_))
+    assert w_bl is not None, "bl None"
+    assert w_bl[cols_[0]] > w_eq[cols_[0]] and abs(w_bl.sum() - 1) < 1e-9 and w_bl.max() <= cap_ + 1e-9, (w_bl.to_dict(), cap_)
+    assert (target_weights(rets, "bl", views={}) - w_eq).abs().max() < 1e-9
     assert target_weights(rets, "nonsense") is None
 
     txt = rebalance_text(res, SCHEMES["hrp"])
