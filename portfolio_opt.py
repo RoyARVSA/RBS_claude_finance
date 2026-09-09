@@ -192,25 +192,32 @@ def market_implied_returns(cov: np.ndarray, w_mkt: np.ndarray, delta: float = 2.
     return delta * cov @ w_mkt
 
 
-def _cap_weights(w: np.ndarray, max_w: float, iters: int = 50) -> np.ndarray:
-    """單檔上限（注水法）：超上限者封頂，多出的比例按未封頂者重分配，直到無人超限；
-    n×max_w < 1 時退回等於 max_w 的可行解（總和 < 1，餘為現金）。"""
+def _cap_weights(w: np.ndarray, max_w: float, iters: int = 100) -> np.ndarray:
+    """單檔上限（注水法）：超上限者封頂並**維持封頂**，多出的比例按未封頂正權重者重分配；
+    未封頂者無正權重時平均注入零權重檔；n×max_w < 1 時無可行解 → 回等於 max_w 的向量（總和 < 1，餘為現金）。
+    （對抗驗證 D-1：舊版不記住已封頂者且排除零權重 → 反覆乒乓、上限被突破）"""
     w = np.asarray(w, dtype=float).copy()
     n = len(w)
     if n == 0 or max_w <= 0:
         return w
     if n * max_w < 1.0 - 1e-12:
-        return np.minimum(w / w.sum() if w.sum() > 0 else w, max_w)
+        return np.full(n, max_w)
+    capped = np.zeros(n, dtype=bool)
     for _ in range(iters):
-        over = w > max_w + 1e-12
+        over = (w > max_w + 1e-12) & ~capped
         if not over.any():
             break
         excess = float((w[over] - max_w).sum())
         w[over] = max_w
-        free = ~over & (w > 0)
+        capped |= over
+        free = ~capped
         if not free.any():
             break
-        w[free] += excess * w[free] / w[free].sum()
+        pos = free & (w > 0)
+        if pos.any():
+            w[pos] += excess * w[pos] / w[pos].sum()
+        else:
+            w[free] += excess / free.sum()
     return w
 
 
@@ -278,6 +285,15 @@ if __name__ == "__main__":
     assert abs(r2["w_bl"][3] - w_mkt[3]) < 1e-3                      # 零信心 ≈ 先驗
     r3 = black_litterman(cov, w_mkt, {"D": 0.30, "A": -0.20}, tk, {"D": 1.0, "A": 1.0}, max_w=0.35)
     assert r3["w_bl"].max() <= 0.35 + 1e-9 and abs(r3["w_bl"].sum() - 1) < 1e-9 and r3["w_bl"][0] < w_mkt[0]
+    # D-1 最小重現：只有兩檔正權重、上限 0.214（6 檔）→ 注水到零權重檔，上限不破、總和 1
+    wc = _cap_weights(np.array([.019, 0, 0, 0, .981, 0]), 0.214)
+    assert wc.max() <= 0.214 + 1e-9 and abs(wc.sum() - 1) < 1e-9
+    rng2 = np.random.default_rng(1)
+    for _ in range(300):
+        v = rng2.random(8) ** 3; v /= v.sum()
+        wc = _cap_weights(v, 0.25)
+        assert wc.max() <= 0.25 + 1e-9 and abs(wc.sum() - 1) < 1e-9
+    assert (_cap_weights(np.array([0.7, 0.3]), 0.25) == 0.25).all()          # n×cap<1：回 cap 向量（餘為現金）
     assert black_litterman(cov, w_mkt, {"ZZ": 0.1, "D": float("nan")}, tk)["n_views"] == 0
     print("✅ BL（無觀點=先驗、信心單調、上限、未知/NaN 觀點忽略）")
     print("portfolio_opt selftest OK ✅")

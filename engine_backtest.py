@@ -199,28 +199,45 @@ def _fill(book: dict, orders: list[dict], day: dict, date: str,
     return filled
 
 
-def val_ctx_from_hist(val_hist: dict, date: str, price_by_sym: dict) -> dict:
+def val_ctx_from_hist(val_hist: dict, date: str, price_by_sym: dict, max_age_days: int | None = 45) -> dict:
     """
     估值層 PIT 上下文：對每檔取「日期 ≤ date 的最新 val_hist 列」（列日期就是可得知日），
     算 val_mult（0.5–1.25，MoS 線性）、val_no_add（市價 > bull）、val_early（MoS>30%）、val_tilt（±0.1）。
-    無列 → 不給欄位（引擎＝現狀）。
+    列超過 max_age_days 視為過期不給（實盤與回測同規則，對抗驗證 C-2）；無列 → 不給欄位（引擎＝現狀）。
     """
     out = {}
+    from datetime import datetime as _dt
     for sym, rows in (val_hist or {}).items():
         rs = [r for r in (rows or []) if str(r.get("d", "9999")) <= date and r.get("base")]
         if not rs:
             continue
-        r = rs[-1]
+        r = max(rs, key=lambda x: str(x.get("d", "")))
+        if max_age_days is not None:
+            try:
+                if (_dt.strptime(date[:10], "%Y-%m-%d") - _dt.strptime(str(r["d"])[:10], "%Y-%m-%d")).days > max_age_days:
+                    continue
+            except Exception:
+                continue
         px = price_by_sym.get(sym)
-        if not px or px <= 0:
+        try:
+            px = float(px)
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(px) or px <= 0:
             continue
         mos = float(r["base"]) / px - 1
         bull = r.get("bull")
         out[sym] = {"val_mult": min(max(1 + 0.5 * mos, 0.5), 1.25),
                     "val_no_add": bool(bull and px > float(bull)),
-                    "val_early": mos > 0.30,
+                    "val_early": mos > 0.30,                       # 提早加碼：MoS>30%（上修動能由 playbook 顯示、不進引擎）
                     "val_tilt": min(max(0.6 * min(max(mos / 0.5, -1), 1) * 0.1, -0.1), 0.1)}
     return out
+
+
+def val_hist_coverage(val_hist: dict) -> str | None:
+    """最早的估值列日期（A/B 是否有意義：須早於訓練段結束）。"""
+    ds = [str(r.get("d")) for rows in (val_hist or {}).values() for r in (rows or []) if r.get("d") and r.get("base")]
+    return min(ds) if ds else None
 
 
 def replay(pre: dict, params: dict | None = None, dates: list[str] | None = None,
@@ -422,7 +439,7 @@ def apply_params(state: dict, params: dict, meta: dict | None = None) -> list[st
     applied = dict(old_rec.get("applied") or {})
     written = []
     for k, v in params.items():
-        key = f"eng_{k}"
+        key = k if k == "val_enabled" else f"eng_{k}"     # 估值層開關是頂層鍵，不是 eng_*（對抗驗證 C-1）
         if key not in prev:
             prev[key] = th.get(key)
         th[key] = v
@@ -668,9 +685,16 @@ if __name__ == "__main__":
     rep_on = replay(pre, {"buy_threshold": 0.3, "val_enabled": True}, val_hist=vh)
     assert rep_off["metrics"]["total_ret"] == rep["metrics"]["total_ret"]          # 預設關閉＝現狀
     early = val_ctx_from_hist(vh, pre["dates"][50], {"AAA": 100.0})
-    late = val_ctx_from_hist(vh, pre["dates"][150], {"AAA": 100.0})
+    late = val_ctx_from_hist(vh, pre["dates"][115], {"AAA": 100.0})          # 15 個交易日後（≤45 天）
     assert early == {} and late["AAA"]["val_mult"] == 1.25 and late["AAA"]["val_early"] and not late["AAA"]["val_no_add"]
-    assert val_ctx_from_hist({"AAA": [{"d": "2020-01-01", "base": 50.0, "bull": 60.0}]}, "2026-01-01", {"AAA": 100.0})["AAA"]["val_no_add"]
+    assert val_ctx_from_hist({"AAA": [{"d": "2020-01-01", "base": 50.0, "bull": 60.0}]}, "2026-01-01", {"AAA": 100.0}, max_age_days=None)["AAA"]["val_no_add"]
+    assert val_ctx_from_hist({"AAA": [{"d": "2020-01-01", "base": 50.0, "bull": 60.0}]}, "2026-01-01", {"AAA": 100.0}) == {}   # 過期不給（C-2）
+    assert val_ctx_from_hist({"AAA": [{"d": "2026-01-01", "base": 50.0}]}, "2026-01-10", {"AAA": float("nan")}) == {}
+    assert val_hist_coverage(vh) == pre["dates"][100] and val_hist_coverage({}) is None
+    st_v = {"thresholds": {}}
+    apply_params(st_v, {"val_enabled": True, "trail_pct": 0.05})
+    assert st_v["thresholds"]["val_enabled"] is True and st_v["thresholds"]["eng_trail_pct"] == 0.05     # C-1：頂層鍵
+    clear_params(st_v); assert "val_enabled" not in st_v["thresholds"]
     assert math.isfinite(rep_on["metrics"]["total_ret"])
     print("✅ 7b 估值層 val_ctx（PIT 列日期、預設關閉＝現狀、乘數/加碼閘）")
 

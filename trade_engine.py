@@ -78,6 +78,13 @@ def _val_num(x, default: float, lo: float, hi: float) -> float:
     return min(max(v, lo), hi)
 
 
+def _val_flag(x) -> bool:
+    """估值層布林欄位：只認 True / 1 / "true"（字串 "false" 不算真）。"""
+    if isinstance(x, bool):
+        return x
+    return str(x).strip().lower() in ("1", "true", "yes")
+
+
 def _d(s: str) -> date:
     return date.fromisoformat(str(s)[:10])
 
@@ -390,10 +397,10 @@ def decide(scored: list[dict], positions: dict, equity: float, buying_power: flo
             if s_rec.get("no_entry"):           # veto 也擋加碼（出場機制不受影響）
                 continue
             sc = float(s_rec.get("score") or 0)
-            if s_rec.get("val_no_add"):        # 估值層：市價高於牛市情境 → 不加碼（出場不受影響）
+            if _val_flag(s_rec.get("val_no_add")):   # 估值層：市價高於牛市情境 → 不加碼（出場不受影響）
                 continue
             r_need = (adds + 1) * float(cfg["pyramid_r"])
-            if s_rec.get("val_early"):         # 估值層：MoS>30% 且上修中 → 加碼門檻提早到 0.75×
+            if _val_flag(s_rec.get("val_early")):    # 估值層：MoS>30% → 加碼門檻提早到 0.75×
                 r_need *= 0.75
             if adds < int(cfg["pyramid_max_adds"]) \
                     and r_now >= r_need \

@@ -441,7 +441,7 @@ def _cmd_help() -> str:
         "`/universe [rebuild]` — 選股池快照：yf.screen 寬宇宙（市值≥20 億、均量≥100 萬）→ 品質/流動性/12-1 動能篩 → 候選前 N；每月自動重建、快照落 data/universe/（P0 只顯示不接引擎）\n"
         "`/est [TICKER]` — 分析師預估快照：共識/修正動能/目標價/評等/財報驚奇史（每輪自動輪替刷新；無參數看 watchlist 上修下修排行）\n"
         "`/engtest [3m|6m|1y|2y]` — 整台引擎歷史重放：現行參數過去 N 個月會賺多少（次日開盤成交、含成本、對照 SPY）\n"
-        "`/engtest opt [1y] [apply]` — 引擎參數學習：進場門檻×停損×追蹤×分批×死錢 108 組，三段 walk-forward + DSR，holdout 通過才推薦；apply 套用、`/engtest clear` 還原\n"
+        "`/engtest opt [1y] [apply]` — 引擎參數學習：進場門檻×停損×追蹤×分批×死錢 108 組（估值歷史夠長時再 ×2 做估值層開/關 A/B），三段 walk-forward + DSR，holdout 通過才推薦；apply 套用、`/engtest clear` 還原\n"
         "`/weekly` — 立即生成每週深度週報（指數/強弱/計分板/RRG/下週行事曆）\n"
         "`/committee NVDA`（或 `/cmt`）— 開一場機構決策會議（需 LLM key，約 1-3 分）\n\n"
         "🤖 *模擬交易（Alpaca paper・分層引擎）*\n"
@@ -1520,7 +1520,7 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                                         actuals = {"revenue": per[0].get("revenue")}
                                 except Exception:
                                     pass
-                                res = gd.extract(tk, text_src, lambda pr: _llm_complete(pr, max_tokens=1500) or "",
+                                res = gd.extract(tk, text_src, lambda pr: _llm_complete(pr, max_tokens=3500) or "",
                                                  prev_items=prev, actuals=actuals)
                                 res["source"] = f"AV 逐字稿 {quarter}"
                                 if res.get("status") == "ok":
@@ -1545,7 +1545,13 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                         pass
                     vh = state.get("val_hist") or {}
                     skip = state.get("model_skip") or {}
-                    wl = [t for t in state.get("watchlist") or [] if not skip.get(t)]
+
+                    def _skipped(t):
+                        try:
+                            return bool(skip.get(t)) and (datetime.now(ET) - datetime.strptime(str(skip[t]), "%Y-%m-%d").replace(tzinfo=ET)).days < 30
+                        except Exception:
+                            return False
+                    wl = [t for t in state.get("watchlist") or [] if not _skipped(t)]
                     todo = [t for t in wl if not vh.get(t)]
                     todo += [t for t in wl if vh.get(t) and t not in todo]
                     _tg_send(token, src_chat or chat_id, f"🧭 逐批建模 {min(n, len(todo))} 檔（每檔約 30 秒）…")
@@ -1652,7 +1658,7 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                 else:
                     _tg_send(token, src_chat or chat_id,
                              f"🧪 引擎歷史重放（{len(syms)} 檔 × {period}"
-                             f"{'、108 組參數 × 三段 walk-forward' if is_opt else ''}，"
+                             f"{'、108 組參數（有估值歷史時 ×2 做估值層 A/B）× 三段 walk-forward' if is_opt else ''}，"
                              f"約 {'1-2' if is_opt else '1'} 分鐘）…")
                     try:
                         # 長操作前先落盤 last_update_id（runner 超時被殺也不會毒訊息迴圈）
@@ -1663,13 +1669,19 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                             cur["buy_threshold"] = th["at_buy_threshold"]
                         calib = state.get("calibration") if isinstance(state.get("calibration"), dict) else None
                         vh = state.get("val_hist") or {}
+                        cur["val_enabled"] = bool(th.get("val_enabled", False))       # 基準反映現行開關（B-1）
                         if is_opt:
                             grid = dict(eb.GRID)
-                            if vh:
-                                grid["val_enabled"] = (False, True)        # 估值層 A/B（PIT 由 val_hist 列日期保證）
+                            cov = eb.val_hist_coverage(vh)
+                            ab_note = ""
+                            if cov and cov <= (datetime.now(ET) - timedelta(days=int(eb.PERIOD_DAYS.get(period, 252) * 7 / 5 * 0.5))).strftime("%Y-%m-%d"):
+                                grid["val_enabled"] = (False, True)        # 估值層 A/B：估值歷史須早於訓練段結束才有意義（B-2）
+                                ab_note = f"\n估值層 A/B 已納入（估值歷史自 {cov}、{len(vh)} 檔；PIT 由列日期保證）"
+                            elif cov:
+                                ab_note = f"\n估值層 A/B 略過：估值歷史自 {cov} 太短，覆蓋不到訓練段"
                             opt = eb.run_optimize(syms, period, baseline=cur,
                                                   thresholds=th, calibration=calib, grid=grid, val_hist=vh)
-                            reply = opt["text"]
+                            reply = opt["text"] + ab_note
                             if do_apply:
                                 rec = opt.get("recommend")
                                 if rec:
@@ -1683,8 +1695,7 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                                 else:
                                     reply += "\n\n（無組合通過 holdout 把關，未套用任何變更）"
                         else:
-                            cur_v = {**cur, "val_enabled": bool(th.get("val_enabled", False))}
-                            out = eb.run(syms, period, params=cur_v, thresholds=th, calibration=calib, val_hist=vh)
+                            out = eb.run(syms, period, params=cur, thresholds=th, calibration=calib, val_hist=vh)
                             reply = out["text"]
                             if state.get("eng_opt"):
                                 reply += (f"\n（現行含 /engtest apply 於 "
