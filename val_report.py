@@ -50,21 +50,35 @@ def coverage(state: dict, today: str, stale_days: int = 30) -> dict:
 
 
 def hindsight(state: dict, price_now: dict, today: str, min_days: int = 20) -> dict:
-    """val_hist 列（≥ min_days 天前、有 px）→ 之後到今天的報酬，依 verdict 分組。"""
+    """
+    val_hist → 事後報酬：以「同檔連續同判定區段的首列」為一樣本（週頻列不當獨立樣本，PITFALLS E1）；
+    列日至今 ≥ min_days、有 px 與現價。回各 verdict 的 {n_segments, n_rows, n_tickers, mean_ret, hit, min, max}
+    與 skipped_no_price（無現價、多半是移出 watchlist 的代碼）。
+    """
     vh = state.get("val_hist") or {}
-    groups: dict[str, list[float]] = {}
+    groups: dict[str, list[tuple[str, float]]] = {}
+    rows_cnt: dict[str, int] = {}
+    skipped = []
     for t, rows in vh.items():
         pn = _f(price_now.get(t))
         if not pn:
+            if rows:
+                skipped.append(t)
             continue
+        prev_v = None
         for r in rows or []:
             px, v = _f(r.get("px")), r.get("verdict")
             age = _days(r.get("d"), today)
             if not px or not v or age is None or age < min_days:
+                prev_v = v if v else prev_v
                 continue
-            groups.setdefault(v, []).append(pn / px - 1)
+            rows_cnt[v] = rows_cnt.get(v, 0) + 1
+            if v != prev_v:                                   # 區段首列才算樣本
+                groups.setdefault(v, []).append((t, pn / px - 1))
+            prev_v = v
     out = {}
-    for v, rets in groups.items():
+    for v, seg in groups.items():
+        rets = [x for _, x in seg]
         n = len(rets)
         mean = sum(rets) / n
         if v in ("accumulate", "hold"):
@@ -73,7 +87,9 @@ def hindsight(state: dict, price_now: dict, today: str, min_days: int = 20) -> d
             hit = sum(1 for x in rets if x <= 0) / n
         else:
             hit = None
-        out[v] = {"n": n, "mean_ret": mean, "hit": hit, "min": min(rets), "max": max(rets)}
+        out[v] = {"n": n, "n_rows": rows_cnt.get(v, n), "n_tickers": len({t for t, _ in seg}),
+                  "mean_ret": mean, "hit": hit, "min": min(rets), "max": max(rets)}
+    out["_skipped_no_price"] = sorted(set(skipped))
     return out
 
 
@@ -95,14 +111,23 @@ def stability(state: dict, n_last: int = 8) -> dict:
 def mos_factor(state: dict, closes: dict | None) -> dict | None:
     """val_hist → {date: {ticker: mos}} 快照 → factor_eval.evaluate（需 closes）。"""
     vh = state.get("val_hist") or {}
-    fac: dict[str, dict] = {}
+    # ISO 週分桶：閒置輪每輪只建 ≤2 檔，各檔列日期分散；快照日取該週最大 d（因子值皆早於快照日，PIT 安全）
+    buckets: dict[tuple, dict] = {}
     for t, rows in vh.items():
         for r in rows or []:
-            d, mos = r.get("d"), _f(r.get("mos"))
-            if d and mos is not None:
-                fac.setdefault(str(d)[:10], {})[t] = mos
+            d, mos = str(r.get("d") or "")[:10], _f(r.get("mos"))
+            if not d or mos is None:
+                continue
+            try:
+                wk = datetime.strptime(d, "%Y-%m-%d").isocalendar()[:2]
+            except ValueError:
+                continue
+            cur = buckets.setdefault(wk, {}).get(t)
+            if cur is None or d > cur[0]:
+                buckets[wk][t] = (d, mos)
+    fac = {max(v[0] for v in m.values()): {t: v[1] for t, v in m.items()} for m in buckets.values()}
     if not closes or len(fac) < 4:
-        return {"n_dates": len(fac), "note": "累積中（需 ≥4 期且有行情）"}
+        return {"n_dates": len(fac), "note": "累積中（需 ≥4 週且有行情；門檻 12 有效期約需 50 週）"}
     try:
         import factor_eval as fe
         ev = fe.evaluate(fac, closes)
@@ -139,24 +164,31 @@ def report_text(rep: dict) -> str:
         lines.append("過期：" + " ".join(c["stale"][:10]))
     if c.get("review"):
         lines.append("待審（審核未過/品質否決）：" + " ".join(c["review"][:10]))
-    if h:
-        lines.append("*事後命中*（列日 → 今日報酬；≥20 天）：")
+    hv = {k: v for k, v in h.items() if not k.startswith("_")}
+    if hv:
+        lines.append("*事後命中*（判定區段首列 → 今日報酬；≥20 天；樣本＝區段/檔）：")
         for v in ("accumulate", "hold", "trim", "exit", "review"):
-            if v in h:
-                d = h[v]
+            if v in hv:
+                d = hv[v]
                 hit = f"命中 {d['hit']:.0%}" if d.get("hit") is not None else "—"
-                lines.append(f"・{v}：n={d['n']}，均 {d['mean_ret']:+.1%}（{d['min']:+.0%}～{d['max']:+.0%}），{hit}")
+                lines.append(f"・{v}：{d['n']} 段/{d['n_tickers']} 檔（{d['n_rows']} 列），均 {d['mean_ret']:+.1%}"
+                             f"（{d['min']:+.0%}～{d['max']:+.0%}），{hit}")
     else:
         lines.append("事後命中：樣本累積中（列滿 20 天後開始統計）")
+    if h.get("_skipped_no_price"):
+        lines.append(f"（無現價跳過 {len(h['_skipped_no_price'])} 檔：{' '.join(h['_skipped_no_price'][:6])}）")
     if s.get("unstable"):
         lines.append("⚠️ 公允價值不穩（近 8 列變異係數 >15%）：" + " ".join(s["unstable"][:8]))
     if m:
-        if m.get("eval"):
-            ic = (m["eval"].get("horizons") or {}).get(21, {}).get("ic") or {}
-            lines.append(f"MoS 因子 21 日 IC {ic.get('mean', 0):+.3f}（有效期數 {ic.get('n_eff', 0):.0f}，NW t {ic.get('t_nw') if ic.get('t_nw') is None else round(ic['t_nw'], 1)}）"
-                         + ("｜✅ 過配置門檻" if m.get("gate") else f"｜➖ 未過（{m.get('why')}）"))
+        ic = ((m.get("eval") or {}).get("horizons") or {}).get(21, {}).get("ic") or {}
+        if m.get("eval") and ic.get("mean") is not None:
+            tnw = "—" if ic.get("t_nw") is None else f"{ic['t_nw']:.1f}"
+            lines.append(f"MoS 因子 21 日 IC {ic['mean']:+.3f}（有效期數 {ic.get('n_eff', 0):.0f}，NW t {tnw}）"
+                         + ("｜✅ 過配置門檻" if m.get("gate") else f"｜➖ 未過（{str(m.get('why', '')).replace('_', '·')}）"))
+        elif m.get("eval"):
+            lines.append(f"MoS 因子 IC：累積中（每期橫截面 <5 檔或期數不足；快照 {m.get('n_dates', 0)} 週）")
         else:
-            lines.append(f"MoS 因子 IC：{m.get('note')}（快照 {m.get('n_dates', 0)} 期）")
+            lines.append(f"MoS 因子 IC：{m.get('note')}（快照 {m.get('n_dates', 0)} 週）")
     lines.append(f"指引萃取：{g['n_tickers']} 檔" + ("；修訂 " + "、".join(f"{k} {v}" for k, v in g["revisions"].items()) if g["revisions"] else ""))
     lines.append("估值層仍為顯示層（val·enabled 關）之前，本報只評估「準不準」；非投資建議")
     return "\n".join(lines)
@@ -178,7 +210,19 @@ if __name__ == "__main__":
     c = rep["coverage"]
     assert c["n_modeled"] == 3 and c["stale"] == ["CCC"] and c["review"] == ["CCC"] and c["routed"] == ["CCC"] and c["skipped"] == ["SPY"]
     h = rep["hindsight"]
-    assert h["accumulate"]["n"] == 3 and h["accumulate"]["hit"] == 1.0 and h["exit"]["hit"] == 1.0 and "hold" not in h   # hold 列 <20 天
+    assert h["accumulate"]["n"] == 1 and h["accumulate"]["n_rows"] == 3 and h["accumulate"]["hit"] == 1.0   # 3 列同區段＝1 樣本（M1）
+    assert h["exit"]["hit"] == 1.0 and "hold" not in h                                                       # hold 列 <20 天
+    state["val_hist"]["LOSER"] = [{"d": "2026-06-01", "px": 80, "base": 60, "mos": -0.25, "verdict": "exit"}]
+    assert "LOSER" in build_report(state, today, px_now, None)["hindsight"]["_skipped_no_price"]              # 無現價明列（M2）
+    # H1：eval 存在但 IC 算不出（每期橫截面 <5）→ 不炸
+    import pandas as pd, numpy as np
+    idx = pd.bdate_range("2026-01-01", periods=300)
+    closes = {t: pd.Series(100 + np.arange(300) * 0.1, index=idx) for t in ("AAA", "BBB", "CCC")}
+    st_h = {"watchlist": [], "val_hist": {t: [{"d": str(d.date()), "px": 100, "base": 110, "mos": 0.1, "verdict": "hold"}
+                                              for d in idx[10:200:7]] for t in ("AAA", "BBB", "CCC")}}
+    rep_h = build_report(st_h, today, {}, closes)
+    assert rep_h["mos_factor"].get("eval") is not None
+    th_ = report_text(rep_h); assert "累積中" in th_ and th_.count("*") % 2 == 0 and "_" not in th_
     assert rep["stability"]["unstable"] == ["AAA"]                          # 130/131/200/135 → CV >15%
     assert rep["mos_factor"]["note"].startswith("累積中") and rep["guidance"]["revisions"] == {"raise": 1}
     t = report_text(rep)

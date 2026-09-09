@@ -166,6 +166,9 @@ SET_CLAMPS = {
     "uni_top_n":           (5.0, 300.0),
     "uni_pages":           (1.0, 4.0),
     "uni_rebuild_day":     (1.0, 28.0),
+    "screen_max_fetch":    (0.0, 20.0),
+    "screen_ttl_days":     (1.0, 60.0),
+    "screen_top":          (3.0, 50.0),
     # 引擎鍵的風險上限（trade_engine 只夾 trail/guard/max_positions，
     # 這兩鍵在引擎端無夾制——/set eng_risk_pct 50 曾可讓單檔吃滿買力）
     "eng_risk_pct":        (0.0005, 0.05),
@@ -1033,7 +1036,7 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                           "account_size", "risk_pct", "atr_mult", "briefing_hour_et",
                           "earnings_alert_days", "at_buy_threshold", "at_exit_threshold",
                           "at_max_positions", "at_max_position_pct",
-                          "corr_hi", "corr_mid"}
+                          "corr_hi", "corr_mid", "screen_max_fetch", "screen_ttl_days", "screen_top"}
             eng_ok = False
             if key.startswith("eng_"):
                 try:
@@ -2386,7 +2389,7 @@ def maybe_refresh_screen(state: dict, elapsed_s: float = 0.0, force: bool = Fals
 def _should_send_valreport(state: dict) -> bool:
     """每月一次治理月報：每月第一個交易日之後的第一個閉市輪（與週報同風格：記 last_valreport=YYYY-MM）。"""
     th = state.get("thresholds") or {}
-    if not th.get("valreport_enabled", True):
+    if not th.get("valreport_enabled", True) or _is_muted(state):        # 靜音中不發、不記（解除後補發，與週報一致）
         return False
     now = datetime.now(ET)
     if now.day < 2 or market_status().get("open"):
@@ -2402,7 +2405,11 @@ def build_valreport(state: dict, today: str, with_ic: bool = False) -> str:
     if with_ic:
         try:
             from behavior_check import fetch_closes
-            closes = fetch_closes(list(state.get("watchlist") or []), period="1y")
+            syms = sorted(set(state.get("watchlist") or []) | set((state.get("val_hist") or {}).keys()))   # 含已移出者（M2）
+            closes = fetch_closes(syms, period="1y")
+            for t, ser in (closes or {}).items():
+                if not px_now.get(t) and ser is not None and len(ser):
+                    px_now[t] = float(ser.iloc[-1])
         except Exception:
             closes = None
     return vr.report_text(vr.build_report(state, today, px_now, closes))

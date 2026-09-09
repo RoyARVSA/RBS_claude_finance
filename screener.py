@@ -5,6 +5,7 @@ screener.py – 候選篩選（估值層 P5：選股池 + 主題層 → 進 watc
 Stage 3（限額、有網路時）：每檔抓 PIT 三表 → 品質分（quality）、yfinance 預估快照 → 修正動能、
 加上選股池的 12-1 動能與距 52 週高。綜合分 = 品質 0.4 + 修正動能 0.3 + 動能 0.3（缺成分只降信心）。
 輸出排名與理由；**只建議、不自動加 watchlist**——`/add` 之後才會進建模輪替與佈局計畫。
+節奏：每個閉市日一批（≤8 檔）、單檔 7 天更新一次；池約 80 檔 → 首輪約兩週覆蓋。
 純邏輯離線可測；stage3 需網路。教育用途，非投資建議。
 """
 
@@ -168,12 +169,10 @@ def run_screen(state: dict, today: str, universe: dict | None, themes: dict | No
 
 
 def should_refresh(state: dict, today: str, cfg: dict | None = None) -> bool:
-    c = {**DEFAULTS, **(cfg or {})}
+    """每個閉市日跑一批 Stage 3（≤ screen_max_fetch 檔）；單檔新鮮度由 screen_ttl_days 管。
+    池 ≈80 檔、每日 8 檔 → 約兩週覆蓋一輪，之後每檔每 7 天更新。"""
     last = (state.get("screen") or {}).get("as_of")
-    try:
-        return not last or (datetime.strptime(today, "%Y-%m-%d") - datetime.strptime(str(last), "%Y-%m-%d")).days >= int(c["screen_ttl_days"])
-    except Exception:
-        return True
+    return not last or str(last)[:10] != today[:10]
 
 
 if __name__ == "__main__":
@@ -202,7 +201,7 @@ if __name__ == "__main__":
     res2 = run_screen(st, "2026-09-09", uni, themes, {"screen_max_fetch": 2}, fetch=fake_fetch)
     assert calls == ["MU"] and [r["ticker"] for r in res2["rows"]][0] == "AAA" and any(r["ticker"] == "MU" for r in res2["rows"])
     assert res2["rows"][0]["confidence"] == 1.0 and res2["rows"][0]["score"] > 0.5
-    assert should_refresh(st, "2026-09-10") is False and should_refresh(st, "2026-09-20") is True
+    assert should_refresh(st, "2026-09-09") is False and should_refresh(st, "2026-09-10") is True        # 每閉市日一批
     # 離開候選池的快取被清；watchlist 新增後不再是候選
     st["watchlist"].append("AAA")
     res3 = run_screen(st, "2026-09-20", uni, themes, {"screen_max_fetch": 0}, fetch=fake_fetch)
