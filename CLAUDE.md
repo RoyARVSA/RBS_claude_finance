@@ -7,7 +7,7 @@
 
 ## 專案一句話
 
-Streamlit 金融儀表板（`app.py`，13 頁）+ Telegram 訊號 Bot（`scan_signals.py` 排程版 /
+Streamlit 金融儀表板（`app.py`，16 頁）+ Telegram 訊號 Bot（`scan_signals.py` 排程版 /
 `bot_daemon.py` 常駐版），部署於 Streamlit Cloud + GitHub Actions（cron `*/15`）。
 使用者以繁體中文溝通；本專案為分析教育用途，所有輸出標「非投資建議」。
 
@@ -46,6 +46,10 @@ Streamlit 金融儀表板（`app.py`，13 頁）+ Telegram 訊號 Bot（`scan_si
 | Alpaca 模擬交易 | `trade_engine.py`（Lean 式分層引擎 `decide`：訊號只管進場、出場走停損/追蹤/分批/死錢、保險絲三態；state["engine"] 簿記）+ `alpha_overlay.py`（Alpha 層資訊疊加：內部人/選擇權/空單/財報 veto/恐貪縮倉，state["alpha_cache"] 限額輪替）+ `alpaca_trader.py`（REST client + bracket 單；`decide_orders` 為 legacy 退回路徑）|
 | 當日交易計畫與其回測 | `trade_plan.py`（/today 訂單票）/ `plan_backtest.py`（60 日重放 + walk-forward 校準，存 `state["plan_calib"]`）|
 | 估值 / 財報 / 論點 / 反駁器 | `valuation.py`（DCF+Comps）/ `earnings_review.py`（/preview）/ `thesis.py`（/thesis 失效價監測）/ `falsifier.py`（/falsify 只證偽不證實＋DSR 帳本）——皆移植自 Anthropic financial-services 方法論 |
+| 估值層接引擎（P3）/ 指引萃取（P4） | `trade_engine.decide` 讀 scored 的 `val_mult/val_tilt/val_no_add/val_early`（`engine_backtest.val_ctx_from_hist` 由 val_hist PIT 產生；`thresholds["val_enabled"]` 預設關）；`portfolio_opt.black_litterman` + `rebalance.views_from_val_hist`（/rebalance bl）；`guidance.py`（/guidance：AV 逐字稿 → LLM 定位轉錄 → 程式驗證；state["guidance"] 加密）|
+| 候選篩選 / 治理月報（P5/P6） | `screener.py`（/screen：候選池 = universe.top ∪ 主題 − watchlist；Stage 3 ≤8 檔/次、state["screen"] 明文快取；`maybe_refresh_screen` 每閉市日一批）+ `val_report.py`（/valreport：覆蓋/事後命中/穩定度/MoS IC/指引；`_should_send_valreport` 每月一次）|
+| 佈局計畫整合層 | `playbook.py`（/playbook、網頁 `page_playbook`：彙整 last_scores/val_hist/data-fin 品質/預估帳本/universe/weather/engine.pos/theses → 分層四象限權重帶；`scan_signals.build_playbook` 組裝、`refresh_models` 閒置輪輪替建模）|
+| 估值層模型（P1/P2） | `fin_data.py`（PIT 三表、first-seen、data/fin/）+ `quality.py`（Piotroski/Altman/Beneish/Sloan/ROIC）+ `company_model.py`（/model：驅動推導→專業 WACC→價值中性 DCF→三情境/MC/反向 DCF→九條審核→訊號；金融 RIM／地產 DDM 路由；人工覆蓋 state["models"]、歷史 state["val_hist"] 皆加密）+ `factor_eval.py`（Rank IC/ICIR/分位/自相關、配置門檻）；網頁 `page_company_model`（滑桿即時重算、football field、匯出/匯入橋）|
 | 估值層資料地基（P0） | `universe.py`（/universe：寬宇宙→品質/動能篩→PIT 快照 data/universe/、成分歷史期間表）+ `estimates_ledger.py`（/est：yfinance 預估快照週頻帳本 + 修正動能 + Alpha Vantage SUE 回填；獨立檔 `estimates_ledger.json` 由 workflow commit；規劃見 `VALUATION_PLAN.md` / `VALUATION_LANDSCAPE.md`）|
 | 情緒 / 台指籌碼 / 再平衡 | `sentiment_fg.py`（雙恐懼貪婪）/ `taifex.py`（三大法人期權）/ `rebalance.py`（HRP 等權重配置）|
 

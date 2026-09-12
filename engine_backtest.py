@@ -52,6 +52,7 @@ GRID = {
     "dead_money_days": (20, 30, 45),
 }
 PARAM_LABELS = {          # 顯示用（Telegram Markdown 不能有底線）
+    "val_enabled": "估值層",
     "buy_threshold": "進場門檻", "stop_mult": "停損倍數", "trail_pct": "追蹤回落",
     "scale_out_r": "分批R", "dead_money_days": "死錢天數", "trail_tight_pct": "收緊追蹤",
     "exit_threshold": "轉弱門檻", "max_positions": "最大檔數", "risk_pct": "單筆風險",
@@ -198,8 +199,49 @@ def _fill(book: dict, orders: list[dict], day: dict, date: str,
     return filled
 
 
+def val_ctx_from_hist(val_hist: dict, date: str, price_by_sym: dict, max_age_days: int | None = 45) -> dict:
+    """
+    估值層 PIT 上下文：對每檔取「日期 ≤ date 的最新 val_hist 列」（列日期就是可得知日），
+    算 val_mult（0.5–1.25，MoS 線性）、val_no_add（市價 > bull）、val_early（MoS>30%）、val_tilt（±0.1）。
+    列超過 max_age_days 視為過期不給（實盤與回測同規則，對抗驗證 C-2）；無列 → 不給欄位（引擎＝現狀）。
+    """
+    out = {}
+    from datetime import datetime as _dt
+    for sym, rows in (val_hist or {}).items():
+        rs = [r for r in (rows or []) if str(r.get("d", "9999")) <= date and r.get("base")]
+        if not rs:
+            continue
+        r = max(rs, key=lambda x: str(x.get("d", "")))
+        if max_age_days is not None:
+            try:
+                if (_dt.strptime(date[:10], "%Y-%m-%d") - _dt.strptime(str(r["d"])[:10], "%Y-%m-%d")).days > max_age_days:
+                    continue
+            except Exception:
+                continue
+        px = price_by_sym.get(sym)
+        try:
+            px = float(px)
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(px) or px <= 0:
+            continue
+        mos = float(r["base"]) / px - 1
+        bull = r.get("bull")
+        out[sym] = {"val_mult": min(max(1 + 0.5 * mos, 0.5), 1.25),
+                    "val_no_add": bool(bull and px > float(bull)),
+                    "val_early": mos > 0.30,                       # 提早加碼：MoS>30%（上修動能由 playbook 顯示、不進引擎）
+                    "val_tilt": min(max(0.6 * min(max(mos / 0.5, -1), 1) * 0.1, -0.1), 0.1)}
+    return out
+
+
+def val_hist_coverage(val_hist: dict) -> str | None:
+    """最早的估值列日期（A/B 是否有意義：須早於訓練段結束）。"""
+    ds = [str(r.get("d")) for rows in (val_hist or {}).values() for r in (rows or []) if r.get("d") and r.get("base")]
+    return min(ds) if ds else None
+
+
 def replay(pre: dict, params: dict | None = None, dates: list[str] | None = None,
-           equity0: float = START_EQUITY) -> dict:
+           equity0: float = START_EQUITY, val_hist: dict | None = None) -> dict:
     """
     用一組引擎參數在 dates（預設全部）上完整重放。
     t 日收盤決策 → t+1 日開盤成交；淨值以收盤 mark。
@@ -208,6 +250,7 @@ def replay(pre: dict, params: dict | None = None, dates: list[str] | None = None
     import shadow_book as sb
     import trade_engine as te
     cfg = dict(params or {})
+    cfg.setdefault("val_enabled", False)
     dates = list(dates if dates is not None else pre["dates"])
     book = {"cash": float(equity0), "positions": {}, "last_px": {}}
     engine = None
@@ -231,6 +274,10 @@ def replay(pre: dict, params: dict | None = None, dates: list[str] | None = None
         expo.append(1 - book["cash"] / equity if equity > 0 else 0.0)
         scored = [{"ticker": s, "score": v["score"], "price": v["close"],
                    "risk_per_share": v.get("rps")} for s, v in day.items() if s != "SPY"]
+        if val_hist and cfg.get("val_enabled"):
+            vc = val_ctx_from_hist(val_hist, d, closes)      # PIT：只用列日期 ≤ d 的估值
+            for sc_ in scored:
+                sc_.update(vc.get(sc_["ticker"], {}))
         pos_view = {}
         for s, p in book["positions"].items():
             px = closes.get(s) or book["last_px"].get(s) or p["entry"]
@@ -309,7 +356,7 @@ def split_dates(dates: list[str]) -> dict | None:
 
 
 def optimize(pre: dict, grid: dict | None = None, baseline: dict | None = None,
-             progress=None) -> dict:
+             progress=None, val_hist: dict | None = None) -> dict:
     """
     網格逐組在三段各自完整重放（每段獨立起跑，段間不漏資訊）。
     挑選：train Sharpe 排序（n≥MIN_TRADES）→ 第一個 val 合格者（n≥VAL_MIN_TRADES
@@ -326,7 +373,7 @@ def optimize(pre: dict, grid: dict | None = None, baseline: dict | None = None,
     if not sp:
         return out
     import trade_engine as te
-    base_prm = {k: te.ENGINE_DEFAULTS[k] for k in keys}
+    base_prm = {k: te.ENGINE_DEFAULTS.get(k, False) for k in keys}     # val_enabled 不在引擎預設 → False
     if baseline:
         base_prm.update({k: baseline[k] for k in keys if k in baseline})
     # 非網格的現行覆蓋（max_positions/risk_pct/…）固定帶入每組——否則「基準（現行）」
@@ -335,7 +382,7 @@ def optimize(pre: dict, grid: dict | None = None, baseline: dict | None = None,
     out["fixed"] = fixed
 
     def _run(prm):
-        segs = {seg: replay(pre, {**fixed, **prm}, sp[seg]) for seg in ("train", "val", "holdout")}
+        segs = {seg: replay(pre, {**fixed, **prm}, sp[seg], val_hist=val_hist) for seg in ("train", "val", "holdout")}
         return {"params": prm,
                 **{seg: segs[seg]["metrics"] for seg in segs},
                 "_holdout_eq": segs["holdout"]["equity"]}
@@ -392,7 +439,7 @@ def apply_params(state: dict, params: dict, meta: dict | None = None) -> list[st
     applied = dict(old_rec.get("applied") or {})
     written = []
     for k, v in params.items():
-        key = f"eng_{k}"
+        key = k if k == "val_enabled" else f"eng_{k}"     # 估值層開關是頂層鍵，不是 eng_*（對抗驗證 C-1）
         if key not in prev:
             prev[key] = th.get(key)
         th[key] = v
@@ -430,7 +477,9 @@ def _pct(x) -> str:
 
 
 def _params_text(p: dict) -> str:
-    return "、".join(f"{PARAM_LABELS.get(k, k).replace('_', '·')} {v:g}" for k, v in p.items())
+    def _v(v):
+        return ("開" if v else "關") if isinstance(v, bool) else f"{v:g}"
+    return "、".join(f"{PARAM_LABELS.get(k, k).replace('_', '·')} {_v(v)}" for k, v in p.items())
 
 
 def run_text(rep: dict, params: dict | None, dates: list[str], bench: float | None,
@@ -438,6 +487,8 @@ def run_text(rep: dict, params: dict | None, dates: list[str], bench: float | No
     m = rep["metrics"]
     import trade_engine as te
     p = {k: (params or {}).get(k, te.ENGINE_DEFAULTS[k]) for k in GRID}
+    if (params or {}).get("val_enabled"):
+        p["val_enabled"] = True
     lines = [f"🧪 *引擎歷史重放*（{period_label or '期間'} {dates[0]}→{dates[-1]}，"
              f"{m['n_days']} 個交易日）",
              f"參數：{_params_text(p)}",
@@ -504,7 +555,7 @@ def opt_text(opt: dict, top_n: int = 5) -> str:
 # ── 5. 網路進入點（Bot / 網頁共用）──────────────────────────────────────────
 
 def run(tickers: list[str], period: str = "1y", params: dict | None = None,
-        thresholds: dict | None = None, calibration: dict | None = None) -> dict:
+        thresholds: dict | None = None, calibration: dict | None = None, val_hist: dict | None = None) -> dict:
     """單組參數重放。回 {"rep","pre","dates","bench","text"}；資料不足 rep=None。"""
     period = period if period in PERIOD_DAYS else "1y"
     data = fetch_history(tickers, FETCH_PERIOD[period])
@@ -513,7 +564,7 @@ def run(tickers: list[str], period: str = "1y", params: dict | None = None,
     pre = precompute(data, PERIOD_DAYS[period], thresholds, calibration)
     if len(pre["dates"]) < 40:
         return {"rep": None, "pre": pre, "text": "❌ 可重放的交易日不足 40 天"}
-    rep = replay(pre, params)
+    rep = replay(pre, params, val_hist=val_hist)
     bench = bench_return(pre, pre["dates"])
     return {"rep": rep, "pre": pre, "dates": pre["dates"], "bench": bench,
             "text": run_text(rep, params, pre["dates"], bench, period)}
@@ -521,14 +572,14 @@ def run(tickers: list[str], period: str = "1y", params: dict | None = None,
 
 def run_optimize(tickers: list[str], period: str = "1y", baseline: dict | None = None,
                  thresholds: dict | None = None, calibration: dict | None = None,
-                 grid: dict | None = None) -> dict:
+                 grid: dict | None = None, val_hist: dict | None = None) -> dict:
     """參數學習進入點。回 optimize() 結果 + "text"。"""
     period = period if period in PERIOD_DAYS else "1y"
     data = fetch_history(tickers, FETCH_PERIOD[period])
     if len([s for s in data if s != "SPY"]) == 0:
         return {"results": [], "recommend": None, "text": "❌ 行情抓取失敗或資料不足，稍後再試"}
     pre = precompute(data, PERIOD_DAYS[period], thresholds, calibration)
-    opt = optimize(pre, grid, baseline)
+    opt = optimize(pre, grid, baseline, val_hist=val_hist)
     opt["text"] = opt_text(opt)
     return opt
 
@@ -627,6 +678,25 @@ if __name__ == "__main__":
     print(f"✅ 7 optimize（{opt['n_trials']} 組 {time.time() - t1:.1f}s，"
           f"best={'有' if opt['best'] else '無'}、recommend={'有' if opt['recommend'] else '無'}、"
           f"DSR={(d or {}).get('dsr')}）")
+
+    # 7b) 估值層 PIT 上下文：只用列日期 ≤ 當日的估值；val_enabled=False 完全等於現狀
+    vh = {"AAA": [{"d": pre["dates"][100], "base": 999.0, "bear": 1.0, "bull": 9999.0}]}
+    rep_off = replay(pre, {"buy_threshold": 0.3}, val_hist=vh)
+    rep_on = replay(pre, {"buy_threshold": 0.3, "val_enabled": True}, val_hist=vh)
+    assert rep_off["metrics"]["total_ret"] == rep["metrics"]["total_ret"]          # 預設關閉＝現狀
+    early = val_ctx_from_hist(vh, pre["dates"][50], {"AAA": 100.0})
+    late = val_ctx_from_hist(vh, pre["dates"][115], {"AAA": 100.0})          # 15 個交易日後（≤45 天）
+    assert early == {} and late["AAA"]["val_mult"] == 1.25 and late["AAA"]["val_early"] and not late["AAA"]["val_no_add"]
+    assert val_ctx_from_hist({"AAA": [{"d": "2020-01-01", "base": 50.0, "bull": 60.0}]}, "2026-01-01", {"AAA": 100.0}, max_age_days=None)["AAA"]["val_no_add"]
+    assert val_ctx_from_hist({"AAA": [{"d": "2020-01-01", "base": 50.0, "bull": 60.0}]}, "2026-01-01", {"AAA": 100.0}) == {}   # 過期不給（C-2）
+    assert val_ctx_from_hist({"AAA": [{"d": "2026-01-01", "base": 50.0}]}, "2026-01-10", {"AAA": float("nan")}) == {}
+    assert val_hist_coverage(vh) == pre["dates"][100] and val_hist_coverage({}) is None
+    st_v = {"thresholds": {}}
+    apply_params(st_v, {"val_enabled": True, "trail_pct": 0.05})
+    assert st_v["thresholds"]["val_enabled"] is True and st_v["thresholds"]["eng_trail_pct"] == 0.05     # C-1：頂層鍵
+    clear_params(st_v); assert "val_enabled" not in st_v["thresholds"]
+    assert math.isfinite(rep_on["metrics"]["total_ret"])
+    print("✅ 7b 估值層 val_ctx（PIT 列日期、預設關閉＝現狀、乘數/加碼閘）")
 
     # 8) apply/clear 往返：thresholds 還原到原狀
     st = {"thresholds": {"eng_trail_pct": 0.07}}

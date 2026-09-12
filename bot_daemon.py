@@ -174,6 +174,27 @@ def main() -> int:
                             ss.save_state(state)
                     except Exception as e:
                         print(f"Universe error: {e}")
+                # 1.9 公司模型輪替更新（閉市輪；供 /playbook）
+                if hasattr(ss, "refresh_models"):
+                    try:
+                        if ss.refresh_models(state):
+                            ss.save_state(state)
+                    except Exception as e:
+                        print(f"Models error: {e}")
+                # 1.10 候選篩選每週刷新 + 每月治理月報
+                if hasattr(ss, "maybe_refresh_screen"):
+                    try:
+                        if ss.maybe_refresh_screen(state):
+                            ss.save_state(state)
+                        if ss._should_send_valreport(state):
+                            from datetime import datetime as _dt3
+                            msg = ss.build_valreport(state, _dt3.now(ss.ET).strftime("%Y-%m-%d"), with_ic=True)
+                            if msg:
+                                ss._tg_send(TOKEN, CHAT_ID, msg)
+                            state["last_valreport"] = _dt3.now(ss.ET).strftime("%Y-%m")
+                            ss.save_state(state)
+                    except Exception as e:
+                        print(f"Screen/Valreport error: {e}")
 
             # 2. 定時自動掃描
             if nowt - last_scan >= SCAN_INTERVAL:

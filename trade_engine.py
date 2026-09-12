@@ -67,6 +67,24 @@ ENGINE_DEFAULTS = {
 
 # ── 小工具 ────────────────────────────────────────────────────────────────
 
+def _val_num(x, default: float, lo: float, hi: float) -> float:
+    """估值層外部欄位消毒：None/NaN/非數 → default；夾 [lo, hi]（B9：防護放純函數入口）。"""
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return default
+    if not math.isfinite(v):
+        return default
+    return min(max(v, lo), hi)
+
+
+def _val_flag(x) -> bool:
+    """估值層布林欄位：只認 True / 1 / "true"（字串 "false" 不算真）。"""
+    if isinstance(x, bool):
+        return x
+    return str(x).strip().lower() in ("1", "true", "yes")
+
+
 def _d(s: str) -> date:
     return date.fromisoformat(str(s)[:10])
 
@@ -322,6 +340,7 @@ def decide(scored: list[dict], positions: dict, equity: float, buying_power: flo
     bp = float(buying_power)
     if exp_state == "ACTIVE" and equity > 0:
         slots = int(cfg["max_positions"]) - len(held)
+        # 估值層傾斜（VALUATION_PLAN §5）：排序鍵 = 評分 + val_tilt（夾 ±0.1）；門檻仍看原評分
         cands = sorted(
             [s for s in scored
              if s["ticker"] not in held and s["ticker"] not in exited
@@ -329,7 +348,7 @@ def decide(scored: list[dict], positions: dict, equity: float, buying_power: flo
              and not s.get("no_entry")          # alpha overlay veto（如財報前）只擋新倉
              and float(s.get("score") or 0) >= float(cfg["buy_threshold"])
              and float(s.get("price", 0) or 0) > 0],
-            key=lambda s: -float(s["score"]))
+            key=lambda s: -(float(s["score"]) + _val_num(s.get("val_tilt"), 0.0, -0.1, 0.1)))
         for s in cands:
             if slots <= 0:
                 break
@@ -343,7 +362,9 @@ def decide(scored: list[dict], positions: dict, equity: float, buying_power: flo
                 scale = 1.0
             # NaN → 1、夾 [0,1]：縮量層只准縮不准放大，也不准把 int() 炸掉
             scale = min(max(scale, 0.0), 1.0) if scale == scale else 1.0
-            qty = int(min((equity * float(cfg["risk_pct"])) / rps,
+            # 估值層部位乘數（只乘風險預算；單檔上限與現金不放大）：無資料＝1.0（完全等於現狀）
+            vmult = _val_num(s.get("val_mult"), 1.0, 0.5, 1.25)
+            qty = int(min((equity * float(cfg["risk_pct"]) * vmult) / rps,
                           (equity * float(cfg["max_position_pct"])) / px,
                           bp / px) * scale)
             if qty >= 1:
@@ -376,8 +397,13 @@ def decide(scored: list[dict], positions: dict, equity: float, buying_power: flo
             if s_rec.get("no_entry"):           # veto 也擋加碼（出場機制不受影響）
                 continue
             sc = float(s_rec.get("score") or 0)
+            if _val_flag(s_rec.get("val_no_add")):   # 估值層：市價高於牛市情境 → 不加碼（出場不受影響）
+                continue
+            r_need = (adds + 1) * float(cfg["pyramid_r"])
+            if _val_flag(s_rec.get("val_early")):    # 估值層：MoS>30% → 加碼門檻提早到 0.75×
+                r_need *= 0.75
             if adds < int(cfg["pyramid_max_adds"]) \
-                    and r_now >= (adds + 1) * float(cfg["pyramid_r"]) \
+                    and r_now >= r_need \
                     and sc >= float(cfg["pyramid_min_score"]):
                 mv_now = abs(float(positions[sym].get("market_value") or 0))
                 # 加碼量＝裝得下多少加多少：min(半倍, headroom 剩餘空間, 現金)。
@@ -728,6 +754,38 @@ if __name__ == "__main__":
         {}, 100000, 100000, new_engine_state(), "risk_on", None, T)
     assert [o["qty"] for o in orders] == [150, 150], orders
     print("✅ 22 entry_scale 縮量/歸零/夾制")
+
+    # ── 估值層接口：無欄位＝現狀；val_mult 只乘風險預算；val_tilt 只改排序；val_no_add 擋加碼；val_early 提早
+    base_sc = [{"ticker": "VA", "score": 0.8, "price": 100.0, "risk_per_share": 10.0}]   # rps 10 → 風險預算綁定（100 股 < 15% 上限 150 股）
+    o0, _, _ = decide(base_sc, {}, 100000, 100000, None, "risk_on", {}, T)
+    o1, _, _ = decide([{**base_sc[0], "val_mult": 1.25}], {}, 100000, 100000, None, "risk_on", {}, T)
+    o2, _, _ = decide([{**base_sc[0], "val_mult": 0.5}], {}, 100000, 100000, None, "risk_on", {}, T)
+    o3, _, _ = decide([{**base_sc[0], "val_mult": float("nan")}], {}, 100000, 100000, None, "risk_on", {}, T)
+    o4, _, _ = decide([{**base_sc[0], "val_mult": 9.0}], {}, 100000, 100000, None, "risk_on", {}, T)
+    assert o1[0]["qty"] == int(o0[0]["qty"] * 1.25) and o2[0]["qty"] == int(o0[0]["qty"] * 0.5)
+    assert o3[0]["qty"] == o0[0]["qty"] and o4[0]["qty"] == o1[0]["qty"]          # NaN→1、超界夾 1.25
+    two = [{"ticker": "HI", "score": 0.70, "price": 100.0, "risk_per_share": 4.0},
+           {"ticker": "LO", "score": 0.65, "price": 100.0, "risk_per_share": 4.0, "val_tilt": 0.1}]
+    oo, _, _ = decide(two, {}, 100000, 100000, None, "risk_on", {"max_positions": 1}, T)
+    assert oo[0]["symbol"] == "LO"                                                  # 傾斜改變排序
+    oo2, _, _ = decide([dict(two[0]), {**two[1], "val_tilt": 0.5}], {}, 100000, 100000, None, "risk_on", {"max_positions": 1}, T)
+    assert oo2[0]["symbol"] == "LO"                                                 # 超界夾 0.1 仍勝（0.75 vs 0.70）
+    oo3, _, _ = decide([dict(two[0]), {**two[1], "score": 0.45, "val_tilt": 0.1}], {}, 100000, 100000, None, "risk_on", {"max_positions": 1}, T)
+    assert oo3[0]["symbol"] == "HI"                                                 # 傾斜不放寬門檻（0.45 < 0.5）
+    eng_p = {"pos": {"WIN": {"entry": 100.0, "rps": 4.0, "peak": 106.0, "opened": "2026-07-01", "init_qty": 20, "adds": 0, "scaled_out": False}},
+             "stop_events": [], "cooldown": {}, "halted_until": None, "equity_peak": 100000}
+    posw = {"WIN": mk_pos(20, 100.0, 105.0)}
+    on, _, _ = decide([{"ticker": "WIN", "score": 0.6, "price": 105.0, "risk_per_share": 4.0}], posw, 100000, 50000, eng_p, "risk_on", {}, T)
+    assert any(o["mechanism"] == "pyramid" for o in on)                              # +1.25R 正常加碼
+    eng_p2 = {**eng_p, "pos": {"WIN": dict(eng_p["pos"]["WIN"], adds=0)}}
+    onoadd, _, _ = decide([{"ticker": "WIN", "score": 0.6, "price": 105.0, "risk_per_share": 4.0, "val_no_add": True}], posw, 100000, 50000, eng_p2, "risk_on", {}, T)
+    assert not any(o["mechanism"] == "pyramid" for o in onoadd)                      # 高於牛市 → 不加碼
+    eng_p3 = {**eng_p, "pos": {"WIN": dict(eng_p["pos"]["WIN"], adds=0)}}
+    posw3 = {"WIN": mk_pos(20, 100.0, 103.2)}                                        # +0.8R：正常不加、val_early 加
+    oe0, _, _ = decide([{"ticker": "WIN", "score": 0.6, "price": 103.2, "risk_per_share": 4.0}], posw3, 100000, 50000, dict(eng_p3, pos={"WIN": dict(eng_p3["pos"]["WIN"])}), "risk_on", {}, T)
+    oe1, _, _ = decide([{"ticker": "WIN", "score": 0.6, "price": 103.2, "risk_per_share": 4.0, "val_early": True}], posw3, 100000, 50000, dict(eng_p3, pos={"WIN": dict(eng_p3["pos"]["WIN"])}), "risk_on", {}, T)
+    assert not any(o["mechanism"] == "pyramid" for o in oe0) and any(o["mechanism"] == "pyramid" for o in oe1)
+    print("✅ 估值層接口（val_mult 夾制/NaN、val_tilt 只排序、val_no_add、val_early）")
 
     print("\n─ engine_status_text ─")
     eng = mk_eng("AAPL", 100, 3)

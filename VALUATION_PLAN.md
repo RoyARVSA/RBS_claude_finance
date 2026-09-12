@@ -67,8 +67,9 @@ DCF（2026-30 取自 Model、2031-35 以 8% 成長 / 24% OPM 淡出；TV Gordon 
 | 6 | 現金滾到 2030 年 170 億、零回購（資本配置未建模）；對 FCFF 無影響，但 EPS 路徑與利息收入偏樂觀 | 中性（DCF） | — |
 | 7 | 敏感度 WACC 軸只掃 12.8–16.8%，**沒有覆蓋市價隱含的區間**——反向 DCF 會告訴你：在 14.8% 下沒有任何合理成長路徑能到 $269；市價在賭的是「折現率」而不只是「成長」 | 認知 | 建議加一張「市價隱含成長」表 |
 | 8 | 2026E 已錨定指引，但**指引更新（7/29 上調）後沒有版本紀錄**——模型無法回答「上次估值多少、這次為什麼變」 | 流程 | 這正是專案能補的：估值歷史序列 |
+| 9 | **終值折現期錯誤（2026-09-09 建引擎對齊時發現）**：`DCF!G44 = G45*R10`，R 欄是 2031E（n=6）的折現因子 0.4361，終值卻是 2035E 末的現金流，應用 V10（n=10）的 0.2508 | **高估** | 終值 PV 26,860 → 15,450；EV 46.4bn → 35.0bn；**每股 $117.7 → $87.9**（同樣假設下）。與 #1、#2 疊加後的公允區間會整體下移；請先修這格再看其他 |
 
-**結論**：模型的「引擎」很扎實，弱點集中在**折現率與呈現方式**（單點 vs 區間、缺反向 DCF、缺版本歷史）。這三點恰好是軟體比 Excel 擅長的。
+**結論**：模型的「引擎」很扎實，弱點集中在**折現率與呈現方式**（單點 vs 區間、缺反向 DCF、缺版本歷史），外加一個公式錯位（#9）。這正是為什麼專案端要把折現引擎程式化並用 Excel 當回歸測試——`company_model.py` 的自測明確重現了 Excel 的 117.7 與正確的 87.9 兩個數字。
 
 ### 1.4 模型引用的參考
 
@@ -232,6 +233,25 @@ DCF（2026-30 取自 Model、2031-35 以 8% 成長 / 24% OPM 淡出；TV Gordon 
 - **§5 引擎接口**維持有界與失效安全原則；新增「審核未過 → verdict=review，Bot 不推播買訊」。
 - **§8 拍板決策**更新為 LANDSCAPE §9（新增第 6、7 項：不引入 FinanceToolkit 依賴、LLM 萃取用 Haiku 抽 + Sonnet 校）。
 - 資料源定案：yfinance 共識/修正快照 + Finnhub 三支免費端點（recommendation / earnings calendar / financials-reported）+ 自建歷史；SEC 只作回測資料集；Alpha Vantage 可選。
+
+## 10. 進度看板（2026-09-09）
+
+| 階段 | 狀態 | 落地 |
+|---|---|---|
+| P0-a 預估快照帳本 | ✅ 上線（生產環境已寫 `estimates_ledger.json`） | `estimates_ledger.py`、`/est`、Alpha Vantage SUE 回填 |
+| P0-b 選股池 | ✅ | `universe.py`、`/universe`、月頻快照 `data/universe/`、成分期間表解析 |
+| P0-c PIT 三表 | ✅ | `fin_data.py`（first-seen、Finnhub as-reported 備援、`data/fin/`） |
+| P1 公司模型 | ✅ | `quality.py`、`company_model.py`、`/model`、VRT Excel 回歸（含其終值折現期錯誤） |
+| P1.5 產業路由 | ✅ | 金融 RIM、地產 DDM，金融業品質模式 |
+| P2 訊號/驗證/網頁 | ✅ | `factor_eval.py`（IC/ICIR/NW t/門檻）、網頁「🏛️ 公司模型」（滑桿、football field、匯出/匯入橋） |
+| 整合層 | ✅ | `playbook.py`、`/playbook`、網頁「🧭 佈局計畫」、閒置輪每 7 天輪替建模、週報摘要 |
+| P3 接資金佈建 | ✅ 程式就緒、**預設關閉** | `trade_engine` val 欄位（乘數/加碼閘/傾斜）、`engine_backtest` PIT val_ctx + 估值層 A/B、`/set val_enabled`、`/rebalance bl`（Black-Litterman） |
+| P4 指引萃取 | ✅ 首版 | `guidance.py`、`/guidance`（AV 逐字稿 + LLM 定位轉錄 + 程式驗證） |
+| P5 宇宙擴大（主題層 Stage 3、/screen） | ✅ | `screener.py`、`/screen`、每週閉市輪刷新；只建議不自動加入 |
+| P6 治理月報 | ✅ | `val_report.py`、`/valreport`、每月自動推播（事後命中／穩定度／MoS IC／覆蓋） |
+
+**啟用順序（維持原拍板）**：先讓 val_hist 與預估帳本累積 → `/engtest opt` 看估值層 A/B 是否過 holdout →
+才 `/set val_enabled on`。在此之前估值層只在 `/playbook`、`/model`、網頁顯示。
 
 ## 附錄 A — `RBS_Summary` 工作表規格（Excel 匯入橋）
 
