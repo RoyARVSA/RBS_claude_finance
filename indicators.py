@@ -402,6 +402,28 @@ def _atr_value(close, high, low, period: int = 14) -> float:
     return float(atr) if not pd.isna(atr) else 0.0
 
 
+def _extension(close, high, low) -> dict:
+    """
+    進場延伸度（追高濾網用，純函數）：距 MA20 幾個 ATR、近 5 日報酬。
+    2026-09 診斷實案：強訊號進場後 5 日平均報酬為負、硬停損 6/14 在進場 1–2 天內被打到
+    ——問題不在方向而在「買在延伸端」。資料不足的欄回 None（引擎視為不濾）。
+    """
+    out = {"atr": None, "ma20": None, "ext_atr": None, "ret_5d": None}
+    try:
+        if len(close) >= 20:
+            atr = _atr_value(close, high, low)
+            ma20 = float(close.rolling(20).mean().iloc[-1])
+            px = float(close.iloc[-1])
+            out["atr"], out["ma20"] = round(atr, 4), round(ma20, 4)
+            if atr > 0:
+                out["ext_atr"] = round((px - ma20) / atr, 2)
+        if len(close) >= 6:
+            out["ret_5d"] = round(float(close.iloc[-1] / close.iloc[-6] - 1), 4)
+    except Exception:
+        pass
+    return out
+
+
 def _position_hint(close, high, low, price: float, thresholds: dict) -> dict | None:
     """ATR 風險基準的建議部位（共用 quant_tools，與 dashboard 一致）。"""
     try:
@@ -534,6 +556,7 @@ def scan(tickers: list[str], thresholds: dict, calibration: dict | None = None) 
                 "mtf_note": cs.get("mtf_note"),
                 "position": pos,
                 "signals": [s for s in signals if s],
+                **_extension(close, high, low),      # atr/ma20/ext_atr/ret_5d（引擎追高濾網）
             })
             flag = "🚨" if signals else "  "
             print(f"{flag} {ticker}: ${price}  RSI={rsi}  chg={chg:+.1f}%  "
@@ -554,6 +577,7 @@ macd = _macd
 bollinger = _bollinger
 composite_score = _composite_score
 position_hint = _position_hint
+extension = _extension
 
 
 # ── 自我測試（合成 K 線；評分心臟首次有斷言）────────────────────────────────
@@ -634,5 +658,16 @@ if __name__ == "__main__":
     cs_t = _composite_score(tiny, None, None, None)
     assert -1 <= cs_t["score"] <= 1
     print("✅ 7 短序列防炸")
+
+    # 8) 延伸度：平穩上升趨勢 ext 小；末端跳空拉升 → ext_atr 顯著 > 2；短序列回 None
+    ex_up = _extension(s_up, hi_u, lo_u)
+    assert {"atr", "ma20", "ext_atr", "ret_5d"} <= set(ex_up) and ex_up["atr"] > 0
+    spike = list(up[:200]) + [up[199] * (1 + 0.06 * (i + 1)) for i in range(3)]   # 3 天拉 +18%
+    s_sp, _ = _mk(spike)
+    ex_sp = _extension(s_sp, s_sp * 1.01, s_sp * 0.99)
+    assert ex_sp["ext_atr"] > 2.0 and ex_sp["ret_5d"] > 0.10, ex_sp
+    assert ex_sp["ext_atr"] > ex_up["ext_atr"]
+    assert _extension(flat.iloc[:10], None, None)["ext_atr"] is None
+    print(f"✅ 8 延伸度（趨勢 ext {ex_up['ext_atr']:+.1f} ATR、噴出 {ex_sp['ext_atr']:+.1f} ATR）")
 
     print("\nindicators selftest OK ✅")

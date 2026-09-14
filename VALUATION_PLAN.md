@@ -253,6 +253,24 @@ DCF（2026-30 取自 Model、2031-35 以 8% 成長 / 24% OPM 淡出；TV Gordon 
 **啟用順序（維持原拍板）**：先讓 val_hist 與預估帳本累積 → `/engtest opt` 看估值層 A/B 是否過 holdout →
 才 `/set val_enabled on`。在此之前估值層只在 `/playbook`、`/model`、網頁顯示。
 
+### 10.1 校準紀錄（2026-09-14）
+
+- **第一批四檔全 exit 的系統性偏低**：AAPL/MSFT/NVDA/GOOGL 首輪 DCF（9/12）MoS −32%～−62%、全部 exit。
+  原因是純「價值中性終值」（ROIC_TV＝WACC）把第 6 年起的超額報酬歸零——對歷史 ROIC 30%+ 的公司等於
+  假設護城河一夕消失，判定失去鑑別力（什麼都是 exit ＝ 沒有訊號）。
+  修法：`DEFAULTS["roic_tv_mode"]="fade"`——ROIC_TV = WACC + min(0.5 × (歷史 ROIC 中位數 − WACC), +10pp)；
+  歷史 ROIC ≤ WACC 或算不出 → 回到價值中性；**bear 情境一律價值中性**（溢價全失），所以品質公司的區間
+  變寬、bear 不變；手動 `roic_tv` 溢價超過 +10pp → 審核 `tv_premium_ok` 失敗進 review。
+  舊列的 val_hist 會在 30 天輪替時以新假設重算（或 `/model TICKER` 立即重跑）；事後命中由 `/valreport` 追蹤。
+- **使用者 VRT 模型 v2**（`VRT_model1.xlsx`，9/14）：已修正 v1 的終值折現期錯誤（G44 改乘 V10、n=10），
+  顯性期拉到 2035（2031–35 營收 +8%、OPM 24%、NWC 18% 增量營收），改用稀釋股數 394.6m，
+  WACC 13.1%（Blume β 1.72、MRP 5%），每股 103.9 vs 市價 268.8（−61%）；新增 WACC×g 與 WACC×長期成長
+  兩張敏感度表。反向推算：市價隱含 WACC ≈7.5%（g=3%），或 WACC 13.1% 下隱含 2031–35 成長 ≈36%／
+  隱含終端 g ≈10.4%——兩個模型（使用者的與本專案的）在同一組保守終值假設下都得到「大幅高估」，
+  說明這類 AI 基建成長股的價值幾乎全在終值假設，單點公允價值沒有意義，**要看的是反向 DCF 的隱含
+  假設是否合理**（這正是 `/model` 反向 DCF 與 football field 的用途）。可再檢視的假設：NWC 18% 增量
+  營收與 VRT 歷史「負營運資金（客戶預付）」相反、13% 的 WACC 對投資級大型工業股偏高。
+
 ## 附錄 A — `RBS_Summary` 工作表規格（Excel 匯入橋）
 
 在你的模型加一張名為 `RBS_Summary` 的表，A 欄鍵、B 欄值（全部用公式連到模型，不要手打）：
