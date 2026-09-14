@@ -111,9 +111,16 @@ def composite(components: dict, weights: dict | None = None,
             "missing": sorted(k for k in w if _bad(components.get(k)))}
 
 
-def to_regime(score: float, prev: str | None = None) -> dict:
+BREADTH_VETO = 40.0   # 廣度分 < 40 → risk_on 降為 neutral（2026-09 實案：總分 66 偏多、廣度 36，
+                      # 窄幅上漲環境動能進場全被掃；引擎在 neutral 縮量、不加碼）
+
+
+def to_regime(score: float, prev: str | None = None, breadth: float | None = None) -> dict:
     """
     分數 → 三態（帶遲滯：前一狀態往回翻需多跨 HYSTERESIS 分）。
+    breadth：廣度成分分數（可缺）；risk_on 但廣度 < BREADTH_VETO → neutral（廣度否決）。
+    注意：否決後存下的 prev 為 neutral，之後回 risk_on 需總分 ≥ 60（否決會重置多方遲滯——刻意：
+    廣度剛修復時不該立刻恢復滿額曝險）。
     回 {"regime","emoji","label"}。
     """
     on_th, off_th = RISK_ON_TH, RISK_OFF_TH
@@ -122,6 +129,9 @@ def to_regime(score: float, prev: str | None = None) -> dict:
     elif prev == "risk_off":
         off_th += HYSTERESIS       # 已在空方 → 升到 45 以上才升級
     if score >= on_th:
+        if breadth is not None and not _bad(breadth) and float(breadth) < BREADTH_VETO:
+            return {"regime": "neutral", "emoji": "🟡",
+                    "label": f"偏多但廣度弱（氣象台 {score:.0f}/100、廣度 {float(breadth):.0f}）"}
         return {"regime": "risk_on", "emoji": "🟢",
                 "label": f"偏多（氣象台 {score:.0f}/100）"}
     if score <= off_th:
@@ -279,7 +289,7 @@ def get_weather(state: dict | None = None, now: str | None = None) -> dict | Non
     if state is not None and _hours_since(cache.get("ts"), now) < TTL_HOURS \
             and cache.get("score") is not None:
         prev = (cache.get("regime") or {}).get("regime")
-        rg = to_regime(float(cache["score"]), prev)
+        rg = to_regime(float(cache["score"]), prev, (cache.get("components") or {}).get("breadth"))
         return {**{k: cache.get(k) for k in ("score", "components", "missing")},
                 "regime": rg}
 
@@ -287,7 +297,7 @@ def get_weather(state: dict | None = None, now: str | None = None) -> dict | Non
     if comp is None:
         return None
     prev = ((cache.get("regime") or {}).get("regime")) if cache else None
-    rg = to_regime(comp["score"], prev)
+    rg = to_regime(comp["score"], prev, (comp.get("components") or {}).get("breadth"))
     result = {**comp, "regime": rg}
     if state is not None:
         state["weather"] = {"ts": now, **comp, "regime": rg}
@@ -346,6 +356,11 @@ if __name__ == "__main__":
     assert to_regime(43, prev="risk_off")["regime"] == "risk_off"
     assert to_regime(43, prev=None)["regime"] == "neutral"
     assert to_regime(54, prev="risk_on")["regime"] == "neutral"     # 跌破 55 → 降級
+    # 廣度否決：偏多總分但廣度 < 40 → neutral（不影響 risk_off / 中性；缺席不否決）
+    assert to_regime(65.7, breadth=36.4)["regime"] == "neutral" and "廣度弱" in to_regime(65.7, breadth=36.4)["label"]
+    assert to_regime(65.7, breadth=45)["regime"] == "risk_on" and to_regime(65.7, breadth=None)["regime"] == "risk_on"
+    assert to_regime(65.7, breadth=float("nan"))["regime"] == "risk_on"
+    assert to_regime(30, breadth=10)["regime"] == "risk_off" and to_regime(57, prev="risk_on", breadth=30)["regime"] == "neutral"
     print("✅ 3 三態遲滯")
 
     # 4) inputs→components 管線 + 快取路徑（不打網路：直接餵 cache）

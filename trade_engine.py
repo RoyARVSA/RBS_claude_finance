@@ -41,7 +41,16 @@ ENGINE_DEFAULTS = {
                                   # 分批後 scaled_out 永久停用加碼（免費部位語意）。
                                   # 要真 2 次需 eng_scale_out_r>2 或 eng_pyramid_r<0.75
     "pyramid_frac":       0.5,    # 加碼股數上限 = 初始股數 × 此比例
-    "pyramid_min_score":  0.0,    # 加碼時評分至少要 ≥ 此值
+    "pyramid_min_score":  0.5,    # 加碼時評分至少要 ≥ 此值（2026-09 起 0.5：加碼只給訊號仍達進場門檻的贏家）
+    # ── 進場品質（2026-09 診斷：強訊號進場後 5 日平均為負、硬停損 6/14 在 1–2 天內被打到、
+    #    加碼 0/2 勝——問題是「買在延伸端」而非方向。scan 帶 ext_atr=(價−MA20)/ATR）
+    "entry_max_ext_atr":  2.0,    # 價格高於 MA20 超過 N 個 ATR → 不開新倉（等回檔）；≤0 關閉
+    "pyramid_max_ext_atr": 1.5,   # 加碼同理（更嚴：加碼點恆在 +1R 之後，最容易買在頂）；≤0 關閉
+    "entry_max_ret5d":    0.06,   # 延伸濾網第二條件：近 5 日漲幅 > 此值才算「噴出」——等速平穩趨勢的
+                                  # ext 是常數（斜率×MA20 滯後/ATR）、不會回檔到上限內，只靠 ext 會永遠
+                                  # 不進場（對抗驗證 M3）；ret_5d 缺欄時只看 ext；≤0 關閉第二條件
+    "neutral_risk_mult":  0.5,    # regime=neutral（含「偏多但廣度弱」）新倉風險預算倍數
+    "neutral_pyramid":    False,  # regime=neutral 是否允許加碼
     "pyramid_headroom":   1.3,    # 加碼可把單檔市值推到 max_position_pct × 此值
                                   # （2026-08 實案：ATR sizing 天然把進場開到 15% 滿格，
                                   #   加碼條件「市值+加碼 ≤ 15%」數學上恆 False——
@@ -176,6 +185,11 @@ def decide(scored: list[dict], positions: dict, equity: float, buying_power: flo
     cfg["risk_pct"] = min(max(float(cfg["risk_pct"]), 0.0005), 0.05)
     cfg["max_position_pct"] = min(max(float(cfg["max_position_pct"]), 0.01), 0.50)
     cfg["pyramid_headroom"] = min(max(float(cfg["pyramid_headroom"]), 1.0), 2.0)
+    for k in ("entry_max_ext_atr", "pyramid_max_ext_atr"):
+        cfg[k] = min(max(_val_num(cfg.get(k), ENGINE_DEFAULTS[k], -1.0, 10.0), 0.0), 10.0)   # ≤0 = 關；None/非數 → 預設
+    cfg["entry_max_ret5d"] = min(max(_val_num(cfg.get("entry_max_ret5d"), ENGINE_DEFAULTS["entry_max_ret5d"], -1.0, 5.0), 0.0), 5.0)
+    cfg["neutral_risk_mult"] = min(max(_val_num(cfg.get("neutral_risk_mult"), 0.5, 0.1, 1.0), 0.1), 1.0)
+    cfg["neutral_pyramid"] = _val_flag(cfg.get("neutral_pyramid"))
     engine = engine if isinstance(engine, dict) and engine.get("pos") is not None \
         else new_engine_state()
     equity = float(equity)
@@ -204,6 +218,36 @@ def decide(scored: list[dict], positions: dict, equity: float, buying_power: flo
     if exp_state != "ACTIVE":
         notes.append(f"曝險狀態 {exp_state}：{exp_reason}")
     tighten = exp_state != "ACTIVE"
+    neutral = (regime == "neutral")
+    if neutral and exp_state == "ACTIVE" and (float(cfg["neutral_risk_mult"]) < 1.0 or not cfg["neutral_pyramid"]):
+        notes.append(f"🟡 大盤中性：新倉風險 ×{float(cfg['neutral_risk_mult']):g}"
+                     f"{'、不加碼' if not cfg['neutral_pyramid'] else ''}")
+
+    def _ext_of(s_):
+        """scan 的延伸度欄（(價−MA20)/ATR）；缺/NaN → None（不濾）。"""
+        v = s_.get("ext_atr")
+        try:
+            v = float(v)
+            return v if math.isfinite(v) else None
+        except (TypeError, ValueError):
+            return None
+
+    max_ret5 = float(cfg["entry_max_ret5d"])
+
+    def _extended(s_, max_ext):
+        """噴出判定：ext_atr > 上限，且（有 ret_5d 時）近 5 日漲幅 > entry_max_ret5d。回 (是否, ext, ret5)。"""
+        ext = _ext_of(s_)
+        if max_ext <= 0 or ext is None or ext <= max_ext:
+            return False, ext, None
+        r5 = s_.get("ret_5d")
+        try:
+            r5 = float(r5)
+            r5 = r5 if math.isfinite(r5) else None
+        except (TypeError, ValueError):
+            r5 = None
+        if max_ret5 > 0 and r5 is not None and r5 <= max_ret5:
+            return False, ext, r5            # 延伸但沒有急拉（平穩趨勢）→ 放行
+        return True, ext, r5
 
     orders: list[dict] = []
     exited: set[str] = set()
@@ -349,10 +393,17 @@ def decide(scored: list[dict], positions: dict, equity: float, buying_power: flo
              and float(s.get("score") or 0) >= float(cfg["buy_threshold"])
              and float(s.get("price", 0) or 0) > 0],
             key=lambda s: -(float(s["score"]) + _val_num(s.get("val_tilt"), 0.0, -0.1, 0.1)))
+        max_ext = float(cfg["entry_max_ext_atr"])
         for s in cands:
             if slots <= 0:
                 break
             px = float(s["price"])
+            is_ext, ext, r5 = _extended(s, max_ext)
+            if is_ext:
+                # 追高濾網：不占名額、不冷卻——回檔到延伸上限內且評分仍達標時自然進場
+                notes.append(f"⏳ {s['ticker']} 評分 {float(s['score']):+.2f} 但距 MA20 +{ext:.1f} ATR"
+                             f"（>{max_ext:g}{f'、5 日 {r5:+.0%}' if r5 is not None else ''}，延伸端）→ 等回檔再進")
+                continue
             rps = s.get("risk_per_share")
             rps = float(rps) if rps and float(rps) > 0 else px * 0.05
             scale = s.get("entry_scale")                 # 相關性控制等外部縮量
@@ -364,6 +415,8 @@ def decide(scored: list[dict], positions: dict, equity: float, buying_power: flo
             scale = min(max(scale, 0.0), 1.0) if scale == scale else 1.0
             # 估值層部位乘數（只乘風險預算；單檔上限與現金不放大）：無資料＝1.0（完全等於現狀）
             vmult = _val_num(s.get("val_mult"), 1.0, 0.5, 1.25)
+            if neutral:
+                vmult *= float(cfg["neutral_risk_mult"])      # 中性 regime：只縮風險預算（上限/現金不放大）
             qty = int(min((equity * float(cfg["risk_pct"]) * vmult) / rps,
                           (equity * float(cfg["max_position_pct"])) / px,
                           bp / px) * scale)
@@ -381,11 +434,14 @@ def decide(scored: list[dict], positions: dict, equity: float, buying_power: flo
                 held.add(s["ticker"])
 
         # 贏家加碼（海龜式：每 +1R 加一次、最多 2 次、只加給還在趨勢中的贏家）
+        pyr_max_ext = float(cfg["pyramid_max_ext_atr"])
         for sym in sorted(held):
             rec = pos_book.get(sym)
             if not rec or sym in exited or rec.get("scaled_out"):
                 continue
             if sym not in positions:      # 本輪新開倉不加碼
+                continue
+            if neutral and not cfg["neutral_pyramid"]:   # 中性 regime 不加碼（出場不受影響）
                 continue
             px = price_of(sym)
             if not px:
@@ -405,6 +461,11 @@ def decide(scored: list[dict], positions: dict, equity: float, buying_power: flo
             if adds < int(cfg["pyramid_max_adds"]) \
                     and r_now >= r_need \
                     and sc >= float(cfg["pyramid_min_score"]):
+                is_ext, ext, _r5 = _extended(s_rec, pyr_max_ext)
+                if is_ext:
+                    notes.append(f"⏳ {sym} 已達加碼條件（{r_now:+.1f}R）但距 MA20 +{ext:.1f} ATR"
+                                 f"（>{pyr_max_ext:g}）→ 暫不加碼")
+                    continue
                 mv_now = abs(float(positions[sym].get("market_value") or 0))
                 # 加碼量＝裝得下多少加多少：min(半倍, headroom 剩餘空間, 現金)。
                 # 全有全無的舊寫法在「進場即滿格」幾何下恆 False（死鎖實案）；
@@ -786,6 +847,62 @@ if __name__ == "__main__":
     oe1, _, _ = decide([{"ticker": "WIN", "score": 0.6, "price": 103.2, "risk_per_share": 4.0, "val_early": True}], posw3, 100000, 50000, dict(eng_p3, pos={"WIN": dict(eng_p3["pos"]["WIN"])}), "risk_on", {}, T)
     assert not any(o["mechanism"] == "pyramid" for o in oe0) and any(o["mechanism"] == "pyramid" for o in oe1)
     print("✅ 估值層接口（val_mult 夾制/NaN、val_tilt 只排序、val_no_add、val_early）")
+
+    # 23) 追高濾網：ext_atr > 上限不開新倉（不占名額、有說明）；≤上限/缺欄/關閉照進
+    base_e = {"ticker": "EXT", "score": 0.8, "price": 100.0, "risk_per_share": 4.0}
+    o_hi, _, n_hi = decide([{**base_e, "ext_atr": 2.5}], {}, 100000, 100000, None, "risk_on", {}, T)
+    assert o_hi == [] and any("延伸端" in n for n in n_hi), (o_hi, n_hi)
+    o_ok, _, _ = decide([{**base_e, "ext_atr": 1.9}], {}, 100000, 100000, None, "risk_on", {}, T)
+    o_na, _, _ = decide([dict(base_e)], {}, 100000, 100000, None, "risk_on", {}, T)
+    o_nan, _, _ = decide([{**base_e, "ext_atr": float("nan")}], {}, 100000, 100000, None, "risk_on", {}, T)
+    o_off, _, _ = decide([{**base_e, "ext_atr": 5.0}], {}, 100000, 100000, None, "risk_on", {"entry_max_ext_atr": 0}, T)
+    assert o_ok and o_na and o_nan and o_off and o_off[0]["qty"] == o_ok[0]["qty"]
+    two_e = [{**base_e, "ext_atr": 3.0}, {"ticker": "NXT", "score": 0.6, "price": 100.0, "risk_per_share": 4.0, "ext_atr": 0.5}]
+    o_slot, _, _ = decide(two_e, {}, 100000, 100000, None, "risk_on", {"max_positions": 1}, T)
+    assert [o["symbol"] for o in o_slot] == ["NXT"]                                   # 被濾掉的不占名額
+    o_slow, _, _ = decide([{**base_e, "ext_atr": 2.7, "ret_5d": 0.02}], {}, 100000, 100000, None, "risk_on", {}, T)
+    assert o_slow, "平穩趨勢（延伸但 5 日只 +2%）不該被擋"                             # M3：第二條件
+    o_fast, _, _ = decide([{**base_e, "ext_atr": 2.7, "ret_5d": 0.12}], {}, 100000, 100000, None, "risk_on", {}, T)
+    assert o_fast == []                                                                # 延伸且急拉 → 擋
+    o_r5off, _, _ = decide([{**base_e, "ext_atr": 2.7, "ret_5d": 0.02}], {}, 100000, 100000, None, "risk_on", {"entry_max_ret5d": 0}, T)
+    assert o_r5off == []                                                               # 關掉第二條件 → 只看 ext
+    o_none, _, _ = decide([{**base_e, "ext_atr": 2.5}], {}, 100000, 100000, None, "risk_on", {"entry_max_ext_atr": None}, T)
+    assert o_none == []                                                                # None → 預設 2.0（不是關閉）
+    print("✅ 23 追高濾網（ext_atr > 上限等回檔、不占名額、缺欄/關閉不濾、平穩趨勢放行）")
+
+    # 24) 中性 regime：新倉風險減半、不加碼；neutral_pyramid=True 恢復加碼；risk_off 仍 REDUCING
+    base_r = {**base_e, "risk_per_share": 10.0}          # rps 10 → 風險預算綁定（100 股 < 15% 上限 150 股）
+    o_on, _, _ = decide([dict(base_r)], {}, 100000, 100000, None, "risk_on", {}, T)
+    o_neu, _, n_neu = decide([dict(base_r)], {}, 100000, 100000, None, "neutral", {}, T)
+    assert o_on[0]["qty"] == 100 and o_neu[0]["qty"] == 50 and any("中性" in n for n in n_neu), (o_on, o_neu)
+    o_neu1, _, _ = decide([dict(base_r)], {}, 100000, 100000, None, "neutral", {"neutral_risk_mult": 1.0}, T)
+    assert o_neu1[0]["qty"] == o_on[0]["qty"]
+    o_cap, _, _ = decide([dict(base_e)], {}, 100000, 100000, None, "neutral", {}, T)
+    assert o_cap[0]["qty"] == 125                                                     # 只縮風險預算（250→125），上限 150 不放大
+    eng_n = {"pos": {"WIN": {"entry": 100.0, "rps": 4.0, "peak": 106.0, "opened": "2026-07-01", "init_qty": 20, "adds": 0, "scaled_out": False}},
+             "stop_events": [], "cooldown": {}, "halted_until": None, "equity_peak": 100000}
+    posn = {"WIN": mk_pos(20, 100.0, 105.0)}
+    row_w = {"ticker": "WIN", "score": 0.6, "price": 105.0, "risk_per_share": 4.0, "ext_atr": 1.0}
+    p_neu, _, _ = decide([dict(row_w)], posn, 100000, 50000, {**eng_n, "pos": {"WIN": dict(eng_n["pos"]["WIN"])}}, "neutral", {}, T)
+    p_neu_ok, _, _ = decide([dict(row_w)], posn, 100000, 50000, {**eng_n, "pos": {"WIN": dict(eng_n["pos"]["WIN"])}}, "neutral", {"neutral_pyramid": True}, T)
+    p_on, _, _ = decide([dict(row_w)], posn, 100000, 50000, {**eng_n, "pos": {"WIN": dict(eng_n["pos"]["WIN"])}}, "risk_on", {}, T)
+    assert not any(o["mechanism"] == "pyramid" for o in p_neu) and any(o["mechanism"] == "pyramid" for o in p_neu_ok) \
+        and any(o["mechanism"] == "pyramid" for o in p_on)
+    p_str, _, _ = decide([dict(row_w)], posn, 100000, 50000, {**eng_n, "pos": {"WIN": dict(eng_n["pos"]["WIN"])}}, "neutral", {"neutral_pyramid": "off"}, T)
+    assert not any(o["mechanism"] == "pyramid" for o in p_str)                        # 字串 "off" 視為 False（L1）
+    print("✅ 24 中性 regime 縮量/停加碼（可設定）")
+
+    # 25) 加碼閘：延伸 > 1.5 ATR 暫不加碼；評分 < 0.5 不加碼（新預設）；出場不受影響
+    p_ext, _, n_ext = decide([{**row_w, "ext_atr": 2.0}], posn, 100000, 50000, {**eng_n, "pos": {"WIN": dict(eng_n["pos"]["WIN"])}}, "risk_on", {}, T)
+    assert not any(o["mechanism"] == "pyramid" for o in p_ext) and any("暫不加碼" in n for n in n_ext)
+    p_lo, _, _ = decide([{**row_w, "score": 0.45}], posn, 100000, 50000, {**eng_n, "pos": {"WIN": dict(eng_n["pos"]["WIN"])}}, "risk_on", {}, T)
+    assert not any(o["mechanism"] == "pyramid" for o in p_lo)
+    p_lo_old, _, _ = decide([{**row_w, "score": 0.45}], posn, 100000, 50000, {**eng_n, "pos": {"WIN": dict(eng_n["pos"]["WIN"])}}, "risk_on", {"pyramid_min_score": 0.0}, T)
+    assert any(o["mechanism"] == "pyramid" for o in p_lo_old)
+    eng_s = mk_eng("WIN", 100, 4)
+    o_stop, _, _ = decide([{"ticker": "WIN", "score": 0.9, "price": 95.0, "ext_atr": 9.0}], {"WIN": mk_pos(20, 100, 95)}, 100000, 50000, eng_s, "neutral", {}, T)
+    assert o_stop and o_stop[0]["mechanism"] == "stop_loss"                            # 濾網/中性不擋出場
+    print("✅ 25 加碼閘（延伸/評分）、出場不受影響")
 
     print("\n─ engine_status_text ─")
     eng = mk_eng("AAPL", 100, 3)
