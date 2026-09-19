@@ -415,6 +415,13 @@ def decide(scored: list[dict], positions: dict, equity: float, buying_power: flo
             scale = min(max(scale, 0.0), 1.0) if scale == scale else 1.0
             # 估值層部位乘數（只乘風險預算；單檔上限與現金不放大）：無資料＝1.0（完全等於現狀）
             vmult = _val_num(s.get("val_mult"), 1.0, 0.5, 1.25)
+            # meta-labeling 勝率倍數（B 段；scan_signals 只在 meta_enabled 且模型過閘門時附欄）：0 = 跳過
+            mmult = _val_num(s.get("meta_mult"), 1.0, 0.0, 1.25)
+            if mmult <= 0:
+                notes.append(f"🧪 {s['ticker']} 評分 {float(s['score']):+.2f} 但 meta 勝率 "
+                             f"{_val_num(s.get('meta_p'), 0.0, 0.0, 1.0):.0%} 低於門檻 → 跳過")
+                continue
+            vmult *= mmult
             if neutral:
                 vmult *= float(cfg["neutral_risk_mult"])      # 中性 regime：只縮風險預算（上限/現金不放大）
             qty = int(min((equity * float(cfg["risk_pct"]) * vmult) / rps,
@@ -903,6 +910,19 @@ if __name__ == "__main__":
     o_stop, _, _ = decide([{"ticker": "WIN", "score": 0.9, "price": 95.0, "ext_atr": 9.0}], {"WIN": mk_pos(20, 100, 95)}, 100000, 50000, eng_s, "neutral", {}, T)
     assert o_stop and o_stop[0]["mechanism"] == "stop_loss"                            # 濾網/中性不擋出場
     print("✅ 25 加碼閘（延伸/評分）、出場不受影響")
+
+    # 26) meta_mult：缺欄＝1；0 → 跳過不占名額；夾 [0,1.25] 只乘風險預算
+    base_m = {"ticker": "MM", "score": 0.8, "price": 100.0, "risk_per_share": 10.0}
+    o_m0, _, n_m0 = decide([{**base_m, "meta_mult": 0.0, "meta_p": 0.31}, {"ticker": "NX", "score": 0.6, "price": 100.0, "risk_per_share": 10.0}],
+                           {}, 100000, 100000, None, "risk_on", {"max_positions": 1}, T)
+    assert [o["symbol"] for o in o_m0] == ["NX"] and any("meta 勝率" in n for n in n_m0)
+    o_m1, _, _ = decide([dict(base_m)], {}, 100000, 100000, None, "risk_on", {}, T)
+    o_mh, _, _ = decide([{**base_m, "meta_mult": 1.25}], {}, 100000, 100000, None, "risk_on", {}, T)
+    o_ml, _, _ = decide([{**base_m, "meta_mult": 0.5}], {}, 100000, 100000, None, "risk_on", {}, T)
+    o_mx, _, _ = decide([{**base_m, "meta_mult": 9.0}], {}, 100000, 100000, None, "risk_on", {}, T)
+    o_mn, _, _ = decide([{**base_m, "meta_mult": float("nan")}], {}, 100000, 100000, None, "risk_on", {}, T)
+    assert o_m1[0]["qty"] == 100 and o_mh[0]["qty"] == 125 and o_ml[0]["qty"] == 50 and o_mx[0]["qty"] == 125 and o_mn[0]["qty"] == 100
+    print("✅ 26 meta_mult（0 跳過、夾制、NaN=1）")
 
     print("\n─ engine_status_text ─")
     eng = mk_eng("AAPL", 100, 3)

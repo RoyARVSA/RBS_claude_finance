@@ -18,6 +18,7 @@ _weekly_trend）、綜合評分 _composite_score（趨勢 35%/MACD 25%/RSI 15%/
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 import yfinance as yf
 
@@ -218,7 +219,7 @@ def _composite_score(close: pd.Series, high: pd.Series | None,
     mom_s = 0.0
     if len(close) >= 22:
         ret_1m = price / float(close.iloc[-22]) - 1
-        mom_s = max(-1.0, min(1.0, ret_1m * 8))   # ±12.5% → ±1
+        mom_s = max(-1.0, min(1.0, ret_1m * 8)) if ret_1m == ret_1m else 0.0   # ±12.5% → ±1；NaN → 0（否則 max/min 會傳出 +1）
     comps["momentum"] = round(float(mom_s), 3)
 
     # ── 4. RSI：只在極端區作用（<35 偏多反彈、>65 偏空）─────────
@@ -299,6 +300,127 @@ def _composite_score(close: pd.Series, high: pd.Series | None,
 
     return {"score": round(score, 3), "rating": rating, "emoji": emoji,
             "components": comps, "mtf_note": mtf_note}
+
+
+# ── 向量化評分序列（A/B 段夜間工作流用；與 _composite_score 逐日切片逐位相等）─────────
+
+def _py_round(s: pd.Series, nd: int) -> pd.Series:
+    """用 Python round（正確捨入）逐值取整，確保與 _composite_score 的 round() 逐位一致。"""
+    return s.map(lambda v: round(float(v), nd) if pd.notna(v) else v)
+
+
+def _weekly_trend_series(close: pd.Series) -> pd.Series:
+    """_weekly_trend 的逐日向量化版：第 i 日的週線序列 = 已完成週的週收 + [close_i]（與切片 resample 同義）。"""
+    n = len(close)
+    if not isinstance(close.index, pd.DatetimeIndex) or n == 0:
+        return pd.Series(0, index=close.index, dtype=int)
+    W = close.resample("W").last().dropna()                    # 全序列週收（含最後一個部分週）
+    if len(W) == 0:
+        return pd.Series(0, index=close.index, dtype=int)
+    a12, a26, a9 = 2 / 13, 2 / 27, 2 / 10
+    e12 = W.ewm(span=12, adjust=False).mean()
+    e26 = W.ewm(span=26, adjust=False).mean()
+    macd = e12 - e26
+    sig = macd.ewm(span=9, adjust=False).mean()
+    wk_end = close.index.to_period("W").end_time.normalize()   # 每日所屬週的週末
+    W_end = W.index                                             # 週收索引（週日）
+    # 已完成週數 c = 週末 < 該日週末 的週收數
+    c = np.searchsorted(W_end.values, wk_end.values, side="left")
+    Wv, e12v, e26v, sigv = W.values, e12.values, e26.values, sig.values
+    csum = np.concatenate([[0.0], np.cumsum(Wv)])
+    out = np.zeros(n, dtype=int)
+    px = close.values
+    for i in range(n):
+        ci = int(c[i])
+        if ci + 1 < 12 or np.isnan(px[i]):
+            continue
+        ma10 = (csum[ci] - csum[ci - 9] + px[i]) / 10.0
+        E12 = a12 * px[i] + (1 - a12) * e12v[ci - 1]
+        E26 = a26 * px[i] + (1 - a26) * e26v[ci - 1]
+        m_i = E12 - E26
+        S_i = a9 * m_i + (1 - a9) * sigv[ci - 1]
+        out[i] = (1 if px[i] > ma10 else -1) + (1 if (m_i - S_i) > 0 else -1)
+    return pd.Series(out, index=close.index, dtype=int)
+
+
+def composite_series(close: pd.Series, high: pd.Series | None = None, low: pd.Series | None = None,
+                     volume: pd.Series | None = None, edge_weights: dict | None = None,
+                     mtf: bool = False) -> pd.Series:
+    """
+    _composite_score 的逐日向量化：回每個位置 i 的評分（= _composite_score(close[:i+1], …)["score"]）。
+    只用 i 以前含 i 的資料（無前視）；夜間工作流 415 檔 × 504 日由 ~24 分縮到 ~1 分。
+    前提：close 無 NaN（呼叫端先 dropna；engine_backtest.fetch_history 已如此）——收盤含 NaN 時
+    _rsi 的 dropna 與 ewm 的 ignore_na 語意不同，之後 ~25 根會有暫態差。成交量可含 NaN。
+    自測以逐日切片逐位比對（含 NaN 成交量、edge_weights、mtf）。
+    """
+    n = len(close)
+    idx = close.index
+    pos = pd.Series(np.arange(1, n + 1), index=idx)             # 切片長度 len(close[:i+1])
+    price = close.astype(float)
+    # 1. 趨勢
+    trend = pd.Series(0.0, index=idx)
+    for span, w in [(20, 0.4), (50, 0.35), (200, 0.25)]:
+        ma = price.rolling(span).mean()
+        contrib = np.where(price > ma, 1.0, -1.0) * w
+        trend = trend + pd.Series(np.where(pos >= span, contrib, 0.0), index=idx)
+    trend = _py_round(trend, 3)
+    # 2. MACD
+    ema12 = price.ewm(span=12, adjust=False).mean()
+    ema26 = price.ewm(span=26, adjust=False).mean()
+    macd_line = ema12 - ema26
+    h = macd_line - macd_line.ewm(span=9, adjust=False).mean()
+    norm = pd.Series(np.where(price != 0, h / price * 100, 0.0), index=idx)
+    macd_s = (norm * 4).clip(-1.0, 1.0)
+    macd_s = _py_round(pd.Series(np.where(pos >= 35, macd_s, 0.0), index=idx), 3)
+    # 3. 動量
+    ret_1m = price / price.shift(21) - 1
+    mom_s = (ret_1m * 8).clip(-1.0, 1.0)
+    mom_s = _py_round(pd.Series(np.where(pos >= 22, mom_s, 0.0), index=idx).fillna(0.0), 3)
+    # 4. RSI（與 _rsi 同：ewm alpha=1/14, min_periods=14；round 1 位）
+    delta = price.diff()
+    gain = delta.clip(lower=0).ewm(alpha=1 / 14, min_periods=14).mean()
+    loss = (-delta).clip(lower=0).ewm(alpha=1 / 14, min_periods=14).mean()
+    rsi = pd.Series(np.where(loss == 0, 100.0, 100 - 100 / (1 + gain / loss)), index=idx)
+    rsi = _py_round(rsi, 1)
+    rsi_s = pd.Series(0.0, index=idx)
+    rsi_s = rsi_s.mask(rsi < 35, (35 - rsi) / 25).mask(rsi > 65, -(rsi - 65) / 25)
+    rsi_s = _py_round(rsi_s.clip(-1.0, 1.0).fillna(0.0), 3)
+    # 5. 布林
+    ma20 = price.rolling(20).mean()
+    std20 = price.rolling(20).std()
+    u, l = ma20 + 2 * std20, ma20 - 2 * std20
+    pct_b = (price - l) / (u - l)
+    bb_s = pd.Series(0.0, index=idx)
+    bb_s = bb_s.mask((u > l) & (pct_b < 0.15), (0.15 - pct_b) / 0.15) \
+               .mask((u > l) & (pct_b > 0.85), -(pct_b - 0.85) / 0.15)
+    bb_s = _py_round(pd.Series(np.where(pos >= 20, bb_s.clip(-1.0, 1.0), 0.0), index=idx).fillna(0.0), 3)
+    # 加權
+    base_w = {"trend": 0.35, "macd": 0.25, "momentum": 0.20, "rsi": 0.10, "bollinger": 0.10}
+    if edge_weights:
+        adj = {k: base_w[k] * float(edge_weights.get(k, 1.0)) for k in base_w}
+        tot = sum(adj.values()) or 1.0
+        w = {k: adj[k] / tot for k in adj}
+    else:
+        w = base_w
+    score = w["trend"] * trend + w["macd"] * macd_s + w["momentum"] * mom_s + w["rsi"] * rsi_s + w["bollinger"] * bb_s
+    # 成交量放大器
+    if volume is not None and len(volume) == n:
+        v = volume.astype(float)
+        avg_vol = v.rolling(20, min_periods=1).mean().shift(1)
+        ratio = v / avg_vol
+        amp = (ratio - 1.5) * 0.1
+        amp = amp.clip(upper=0.15)
+        cond = (pos >= 21) & (avg_vol > 0) & (ratio > 1.5)
+        score = score * (1 + pd.Series(np.where(cond, amp, 0.0), index=idx))
+    score = score.clip(-1.0, 1.0)
+    # MTF
+    if mtf:
+        wt = _weekly_trend_series(price)
+        f = pd.Series(1.0, index=idx)
+        f = f.mask((score > 0.1) & (wt >= 1), 1.1).mask((score < -0.1) & (wt <= -1), 1.1) \
+             .mask((score > 0.1) & (wt <= -1), 0.8).mask((score < -0.1) & (wt >= 1), 0.8)
+        score = (score * f).clip(-1.0, 1.0)
+    return _py_round(score, 3)
 
 
 # ── 回測校準：把歷史勝率回饋成元件權重 ────────────────────────────────────────
@@ -408,7 +530,8 @@ def _extension(close, high, low) -> dict:
     2026-09 診斷實案：強訊號進場後 5 日平均報酬為負、硬停損 6/14 在進場 1–2 天內被打到
     ——問題不在方向而在「買在延伸端」。資料不足的欄回 None（引擎視為不濾）。
     """
-    out = {"atr": None, "ma20": None, "ext_atr": None, "ret_5d": None}
+    out = {"atr": None, "ma20": None, "ext_atr": None, "ret_5d": None,
+           "vol_60": None, "mom_12_1": None, "ret_1m": None}        # 後三欄：meta-labeling 線上特徵（與夜間訓練同定義）
     try:
         if len(close) >= 20:
             atr = _atr_value(close, high, low)
@@ -419,6 +542,12 @@ def _extension(close, high, low) -> dict:
                 out["ext_atr"] = round((px - ma20) / atr, 2)
         if len(close) >= 6:
             out["ret_5d"] = round(float(close.iloc[-1] / close.iloc[-6] - 1), 4)
+        if len(close) >= 61:
+            out["vol_60"] = round(float(close.pct_change().iloc[-60:].std()), 5)
+        if len(close) >= 22:
+            out["ret_1m"] = round(float(close.iloc[-1] / close.iloc[-22] - 1), 4)
+        if len(close) >= 253:
+            out["mom_12_1"] = round(float(close.iloc[-22] / close.iloc[-253] - 1), 4)
     except Exception:
         pass
     return out
@@ -446,7 +575,8 @@ def _position_hint(close, high, low, price: float, thresholds: dict) -> dict | N
     }
 
 
-def scan(tickers: list[str], thresholds: dict, calibration: dict | None = None) -> list[dict]:
+def scan(tickers: list[str], thresholds: dict, calibration: dict | None = None, quiet: bool = False) -> list[dict]:
+    """quiet=True：不逐檔 print（候選池／持倉補掃用——公開 Actions 日誌不印持倉代碼，PITFALLS D14）。"""
     rsi_lo  = thresholds.get("rsi_oversold",    35)
     rsi_hi  = thresholds.get("rsi_overbought",  68)
     chg_th  = thresholds.get("price_change_pct", 3.0)
@@ -456,10 +586,11 @@ def scan(tickers: list[str], thresholds: dict, calibration: dict | None = None) 
     vol_r   = thresholds.get("vol_spike_ratio", 2.0)
     mtf_on  = thresholds.get("mtf_enabled",   True)
 
-    # 1y：週線指標（MACD 26週）需足夠歷史
-    print(f"Batch-downloading {len(tickers)} tickers (1y)…")
+    # 15mo：週線指標（MACD 26 週）與 12-1 動能（需 ≥253 根；1y 剛好卡在門檻上，對抗驗證 H1）
+    if not quiet:
+        print(f"Batch-downloading {len(tickers)} tickers (15mo)…")
     try:
-        raw = yf.download(tickers, period="1y", auto_adjust=True,
+        raw = yf.download(tickers, period="15mo", auto_adjust=True,
                           progress=False, threads=True)
     except Exception as e:
         print(f"Batch download failed: {e}")
@@ -486,7 +617,8 @@ def scan(tickers: list[str], thresholds: dict, calibration: dict | None = None) 
                 volume = _col(raw, "Volume", ticker)
 
             if close is None or len(close) < 20:
-                print(f"  {ticker}: insufficient data, skipping")
+                if not quiet:
+                    print(f"  {ticker}: insufficient data, skipping")
                 continue
 
             price  = round(float(close.iloc[-1]), 2)
@@ -559,11 +691,14 @@ def scan(tickers: list[str], thresholds: dict, calibration: dict | None = None) 
                 **_extension(close, high, low),      # atr/ma20/ext_atr/ret_5d（引擎追高濾網）
             })
             flag = "🚨" if signals else "  "
+            if quiet:
+                continue
             print(f"{flag} {ticker}: ${price}  RSI={rsi}  chg={chg:+.1f}%  "
                   f"score={cs['score']:+.2f}({cs['rating']})  signals={len(signals)}")
 
         except Exception as exc:
-            print(f"  {ticker}: error – {exc}")
+            if not quiet:
+                print(f"  {ticker}: error – {exc}")
 
     return results
 
@@ -583,7 +718,6 @@ extension = _extension
 # ── 自我測試（合成 K 線；評分心臟首次有斷言）────────────────────────────────
 
 if __name__ == "__main__":
-    import numpy as np
 
     def _mk(px_path, vol=None, n=None):
         n = n or len(px_path)
@@ -668,6 +802,29 @@ if __name__ == "__main__":
     assert ex_sp["ext_atr"] > 2.0 and ex_sp["ret_5d"] > 0.10, ex_sp
     assert ex_sp["ext_atr"] > ex_up["ext_atr"]
     assert _extension(flat.iloc[:10], None, None)["ext_atr"] is None
+    assert ex_up["vol_60"] is not None and ex_up["mom_12_1"] is not None and ex_up["ret_1m"] is not None
+    assert abs(ex_up["mom_12_1"] - (float(s_up.iloc[-22]) / float(s_up.iloc[-253]) - 1)) < 1e-4
     print(f"✅ 8 延伸度（趨勢 ext {ex_up['ext_atr']:+.1f} ATR、噴出 {ex_sp['ext_atr']:+.1f} ATR）")
+
+    # 9) composite_series 與逐日切片逐位相等（含 NaN 成交量、edge_weights、mtf）
+    rng9 = np.random.default_rng(11)
+    n9 = 320
+    px9 = 100 * np.cumprod(1 + rng9.normal(0.0005, 0.02, n9))
+    idx9 = pd.bdate_range("2025-01-06", periods=n9)
+    c9 = pd.Series(px9, index=idx9)
+    h9, l9 = c9 * (1 + np.abs(rng9.normal(0, 0.008, n9))), c9 * (1 - np.abs(rng9.normal(0, 0.008, n9)))
+    v9 = pd.Series(rng9.integers(5e5, 5e6, n9).astype(float), index=idx9)
+    v9.iloc[[40, 41, 150]] = np.nan
+    v9.iloc[200] = v9.iloc[199] * 4                                  # 爆量日
+    for ew, mt in [(None, False), (None, True), ({"macd": 1.4, "rsi": 0.7, "trend": 1.1}, True)]:
+        vec = composite_series(c9, h9, l9, v9, edge_weights=ew, mtf=mt)
+        worst = 0.0
+        for i in range(20, n9):
+            ref = _composite_score(c9.iloc[:i + 1], h9.iloc[:i + 1], l9.iloc[:i + 1], v9.iloc[:i + 1],
+                                   edge_weights=ew, mtf=mt)["score"]
+            worst = max(worst, abs(float(vec.iloc[i]) - ref))
+            assert abs(float(vec.iloc[i]) - ref) < 1e-9, (i, ew, mt, vec.iloc[i], ref)
+    assert (composite_series(c9, None, None, None) != 0).any()
+    print(f"✅ 9 composite_series 逐位對齊逐日評分（300 日 × 3 組設定，最大差 {worst:.1e}）")
 
     print("\nindicators selftest OK ✅")

@@ -111,8 +111,10 @@ jobs:
             cp /tmp/tj.json trade_journal.json  2>/dev/null || true
             cp /tmp/el.json estimates_ledger.json 2>/dev/null || true
             # 只有本輪備份存在才覆蓋（否則會把 reset --hard 拉進來的遠端快照刪掉，對抗驗證 D3）
-            if [ -d /tmp/uni ]; then mkdir -p data && rm -rf data/universe && cp -r /tmp/uni data/universe; fi
-            if [ -d /tmp/fin ]; then mkdir -p data && rm -rf data/fin && cp -r /tmp/fin data/fin; fi
+            # 合併式複製（不 rm -rf）：保留遠端在本輪期間新增的檔（夜間 alpha_nightly 的 data/fin 覆蓋擴張），
+            # 只覆蓋本輪有寫的檔（對抗驗證 M1：整目錄覆蓋會把夜間新檔當成刪除提交）
+            if [ -d /tmp/uni ]; then mkdir -p data/universe && cp -r /tmp/uni/. data/universe/; fi
+            if [ -d /tmp/fin ]; then mkdir -p data/fin && cp -r /tmp/fin/. data/fin/; fi
             # 分開 add：多 pathspec 是原子的，任一檔缺席會整批中止（上方步驟同理）
             git add watchlist_state.json 2>/dev/null || true
             git add trade_journal.json  2>/dev/null || true

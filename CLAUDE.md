@@ -8,7 +8,7 @@
 ## 專案一句話
 
 Streamlit 金融儀表板（`app.py`，16 頁）+ Telegram 訊號 Bot（`scan_signals.py` 排程版 /
-`bot_daemon.py` 常駐版），部署於 Streamlit Cloud + GitHub Actions（cron `*/15`）。
+`bot_daemon.py` 常駐版），部署於 Streamlit Cloud + GitHub Actions（cron `*/15`；`alpha_nightly.yml` 每交易日收盤後一次）。
 使用者以繁體中文溝通；本專案為分析教育用途，所有輸出標「非投資建議」。
 
 ## 鐵律（違反 = 真實出過事故的等級）
@@ -47,6 +47,7 @@ Streamlit 金融儀表板（`app.py`，16 頁）+ Telegram 訊號 Bot（`scan_si
 | 當日交易計畫與其回測 | `trade_plan.py`（/today 訂單票）/ `plan_backtest.py`（60 日重放 + walk-forward 校準，存 `state["plan_calib"]`）|
 | 估值 / 財報 / 論點 / 反駁器 | `valuation.py`（DCF+Comps）/ `earnings_review.py`（/preview）/ `thesis.py`（/thesis 失效價監測）/ `falsifier.py`（/falsify 只證偽不證實＋DSR 帳本）——皆移植自 Anthropic financial-services 方法論 |
 | 估值層接引擎（P3）/ 指引萃取（P4） | `trade_engine.decide` 讀 scored 的 `val_mult/val_tilt/val_no_add/val_early`（`engine_backtest.val_ctx_from_hist` 由 val_hist PIT 產生；`thresholds["val_enabled"]` 預設關）；`portfolio_opt.black_litterman` + `rebalance.views_from_val_hist`（/rebalance bl）；`guidance.py`（/guidance：AV 逐字稿 → LLM 定位轉錄 → 程式驗證；state["guidance"] 加密）|
+| Alpha 脊椎 / meta-labeling / 因子實驗室（A/B/C） | `alpha_spine.py`（橫斷面因子面板→IC 閘門→ICIR 加權排名→`data/alpha/rank.json`；`pool_symbols` 給引擎候選池）+ `meta_label.py`（訊號樣本→引擎規則出場標籤→`features()` 訓練=線上→numpy 邏輯迴歸 + purged walk-forward→`data/alpha/meta.json`；`score_rows` 給 meta_mult）+ `factor_lab.py`（白名單 DSL、DSR 帳本 state["factor_lab"] 明文）+ `alpha_nightly.py`（`.github/workflows/alpha_nightly.yml` 收盤後一次；`--offline` 自測）；`indicators.composite_series` 為引擎評分向量化版（自測逐位相等）；旗標 `alpha_pool_enabled`/`meta_enabled` 預設關；規劃 `ALPHA_SPINE.md` |
 | 候選篩選 / 治理月報（P5/P6） | `screener.py`（/screen：候選池 = universe.top ∪ 主題 − watchlist；Stage 3 ≤8 檔/次、state["screen"] 明文快取；`maybe_refresh_screen` 每閉市日一批）+ `val_report.py`（/valreport：覆蓋/事後命中/穩定度/MoS IC/指引；`_should_send_valreport` 每月一次）|
 | 佈局計畫整合層 | `playbook.py`（/playbook、網頁 `page_playbook`：彙整 last_scores/val_hist/data-fin 品質/預估帳本/universe/weather/engine.pos/theses → 分層四象限權重帶；`scan_signals.build_playbook` 組裝、`refresh_models` 閒置輪輪替建模）|
 | 估值層模型（P1/P2） | `fin_data.py`（PIT 三表、first-seen、data/fin/）+ `quality.py`（Piotroski/Altman/Beneish/Sloan/ROIC）+ `company_model.py`（/model：驅動推導→專業 WACC→DCF（終值 ROIC 淡出，bear 價值中性）→三情境/MC/反向 DCF→十條審核→訊號；金融 RIM／地產 DDM 路由；人工覆蓋 state["models"]、歷史 state["val_hist"] 皆加密）+ `factor_eval.py`（Rank IC/ICIR/分位/自相關、配置門檻）；網頁 `page_company_model`（滑桿即時重算、football field、匯出/匯入橋）|
