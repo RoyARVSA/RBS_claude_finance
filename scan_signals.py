@@ -50,6 +50,9 @@ Telegram 指令（傳給 Bot）：
   /today [帳戶 風險%]     – 當日交易計畫：VWAP/ORB/RVOL 訂單票（別名 /plan）
   /plantest [apply|clear] – 當日計畫 60 日歷史回測；apply 套用校準（每週亦自動跑）
   /plantest opt [apply]   – 參數尋優（ORB 分鐘×停損 ATR×目標 R:R，walk-forward 把關）
+  /alpha [factors|meta]   – Alpha 脊椎：橫斷面排名／因子 IC 閘門／meta-labeling OOS（夜間工作流產出）
+  /factor test|add|drop|list – 因子實驗室：DSL 公式 → IC/ICIR/NW t + DSR 帳本；核准者進夜間合成
+  /lanes [reset]          – 多線平行帳：現行／＋候選池／＋候選池＋meta 三條虛擬帳同輪比較（含 SPY、真帳同期）
   /screen                 – 候選篩選（選股池 ∪ 主題 − watchlist；Stage 3 限額；只建議）
   /valreport              – 估值治理月報（覆蓋/事後命中/穩定度/因子 IC/指引覆蓋；每月自動）
   /guidance TICKER [季別] – 指引/KPI 萃取（AV 逐字稿 + LLM 定位轉錄 + 程式驗證）
@@ -58,7 +61,7 @@ Telegram 指令（傳給 Bot）：
   /universe [rebuild]     – 選股池快照（寬宇宙→品質/流動性/動能篩→候選前 N；月頻自動重建）
   /est [TICKER]           – 分析師預估快照（共識/修正動能/目標價/評等/SUE 歷史）；無參數看排行
   /engtest [期間]          – 整台引擎歷史重放（現行參數；次日開盤成交、含成本、對照 SPY）
-  /engtest opt [期間] [apply] – 引擎參數學習：108 組 × 三段 walk-forward + DSR；clear 還原
+  /engtest opt [期間] [entry] [apply] – 引擎參數學習：出場網格 108 組／進場品質網格 32 組 × 三段 walk-forward + DSR；clear 還原
   /weekly                 – 立即生成每週深度週報（每週日 ET 18:00 後自動推送）
   /committee TICKER       – 機構決策會議：分析師×4→對辯→交易員→風控→PM（別名 /cmt）
   /set mtf_enabled on/off – 週線同向確認（日線分數與週線同向加強、背離減弱）
@@ -144,6 +147,8 @@ SET_CLAMPS = {
     "at_max_position_pct": (0.01, 0.50),
     "at_max_positions":    (1.0, 50.0),
     "at_buy_threshold":    (-1.0, 1.0),
+    "event_blackout_days": (0, 5),
+    "alpha_pool_top":      (5, 50),
     "at_exit_threshold":   (-1.0, 1.0),
     "cooldown_hours":      (0.5, 720.0),
     "corr_hi":             (0.2, 0.99),
@@ -438,6 +443,9 @@ def _cmd_help() -> str:
         "`/today [帳戶 風險%]`（或 `/plan`）— 當日交易計畫：VWAP/ORB 進場票（進場/停損/停利/股數）\n"
         "`/plantest [apply|clear]` — 當日計畫 60 日回測；apply 套用校準（每週自動跑，`/set plan_autocal_enabled off` 關）\n"
         "`/plantest opt [apply]` — 參數尋優：ORB×停損×R:R 掃 27 組，holdout 段把關通過才推薦\n"
+        "`/alpha [factors|meta]` — Alpha 脊椎（夜間工作流）：選股池 400 檔橫斷面排名（因子過 IC 閘門才配權）、因子 IC 表、meta-labeling 勝率模型 OOS 與閘門；`/set alpha_pool_enabled on` 讓前 N 名進候選池、`/set meta_enabled on` 讓部位吃勝率倍數（皆預設關）\n"
+        "`/lanes [reset]` — 多線平行帳：現行 watchlist／＋候選池／＋候選池＋meta 部位三條虛擬帳（各 10 萬起）同一輪訊號並排記帳，含 SPY 與真帳同期；旗標關著也在跑，看完再決定開不開（`/set lanes_enabled off` 關）\n"
+        "`/factor test <公式>`｜`add <名稱> <公式>`｜`drop`｜`list` — 因子實驗室：DSL 公式（ret/mom/vol/ma_dist/ext/rsi/volratio/hi_dist/lo_dist）→ IC/ICIR/NW t + DSR 記帳；核准者夜間納入合成\n"
         "`/screen` — 候選篩選：選股池動能前 N ∪ AI 主題 − watchlist，逐批補品質/修正動能（≤8 檔/次、每週閉市輪自動刷新），綜合分排名；只建議、`/add` 後才進建模與佈局\n"
         "`/valreport` — 估值治理月報：覆蓋/過期/待審、各判定的事後命中率、公允價穩定度、MoS 因子 IC、指引覆蓋（每月自動推播；`/set valreport_enabled off` 關）\n"
         "`/guidance TICKER [季別]` — 指引/KPI 萃取：Alpha Vantage 逐字稿 → 便宜 LLM 只做定位轉錄 → 程式驗證（原文逐字回對、數字 regex 回對、修訂 raise/lower 由程式判定、與財報對帳）；通過的項目存加密區供論點監測\n"
@@ -449,6 +457,7 @@ def _cmd_help() -> str:
         "`/est [TICKER]` — 分析師預估快照：共識/修正動能/目標價/評等/財報驚奇史（每輪自動輪替刷新；無參數看 watchlist 上修下修排行）\n"
         "`/engtest [3m|6m|1y|2y]` — 整台引擎歷史重放：現行參數過去 N 個月會賺多少（次日開盤成交、含成本、對照 SPY）\n"
         "`/engtest opt [1y] [apply]` — 引擎參數學習：進場門檻×停損×追蹤×分批×死錢 108 組（估值歷史夠長時再 ×2 做估值層開/關 A/B），三段 walk-forward + DSR，holdout 通過才推薦；apply 套用、`/engtest clear` 還原\n"
+        "`/engtest opt entry [1y] [apply]` — 進場品質網格 32 組：門檻×追高上限(ATR)×加碼R×中性風險倍數——驗證 2026-09 診斷出的追高/加碼在頂問題\n"
         "`/weekly` — 立即生成每週深度週報（指數/強弱/計分板/RRG/下週行事曆）\n"
         "`/committee NVDA`（或 `/cmt`）— 開一場機構決策會議（需 LLM key，約 1-3 分）\n\n"
         "🤖 *模擬交易（Alpaca paper・分層引擎）*\n"
@@ -1030,13 +1039,16 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                          "cooldown_enabled", "regime_filter_enabled",
                          "position_sizing_enabled", "briefing_enabled", "mtf_enabled",
                          "autotrade_enabled", "weekly_enabled", "plan_autocal_enabled",
-                         "est_enabled", "uni_enabled", "model_auto_refresh", "val_enabled", "valreport_enabled"}
+                         "est_enabled", "uni_enabled", "model_auto_refresh", "val_enabled", "valreport_enabled",
+                         "event_blackout_enabled", "adaptive_throttle_enabled",
+                         "alpha_pool_enabled", "meta_enabled", "lanes_enabled"}
             float_keys = {"rsi_oversold", "rsi_overbought", "price_change_pct",
                           "vol_spike_ratio", "cooldown_hours",
                           "account_size", "risk_pct", "atr_mult", "briefing_hour_et",
                           "earnings_alert_days", "at_buy_threshold", "at_exit_threshold",
                           "at_max_positions", "at_max_position_pct",
-                          "corr_hi", "corr_mid", "screen_max_fetch", "screen_ttl_days", "screen_top"}
+                          "corr_hi", "corr_mid", "screen_max_fetch", "screen_ttl_days", "screen_top",
+                          "event_blackout_days", "alpha_pool_top"}
             eng_ok = False
             if key.startswith("eng_"):
                 try:
@@ -1062,7 +1074,14 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                     eng_ok = key[3:] in ao.OVERLAY_DEFAULTS
                 except Exception:
                     pass
-            if key in bool_keys:
+            eng_bool = False
+            if eng_ok and key.startswith("eng_"):
+                try:
+                    import trade_engine as _te_b
+                    eng_bool = isinstance(_te_b.ENGINE_DEFAULTS.get(key[4:]), bool)   # 如 eng_neutral_pyramid on|off
+                except Exception:
+                    eng_bool = False
+            if key in bool_keys or eng_bool:
                 th[key] = val in ("on", "true", "1", "yes")
                 changed = True
                 reply = f"✅ `{key}` → {'開啟' if th[key] else '關閉'}"
@@ -1437,8 +1456,9 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                 f"🤖 *自動交易*：{'✅ 開啟' if on else '⏸ 關閉'}\n"
                 f"Alpaca key：{key_ok}\n"
                 f"買進門檻 ≥{th.get('at_buy_threshold',0.5)}　出場 ≤{th.get('at_exit_threshold',-0.2)}\n"
-                f"最多 {int(th.get('at_max_positions',10))} 檔，每檔 ≤{th.get('at_max_position_pct',0.15):.0%}\n\n"
-                "⚠️ 開啟後僅在美股開盤時，依掃描評分自動下*模擬*單\n"
+                f"最多 {int(th.get('at_max_positions',10))} 檔，每檔 ≤{th.get('at_max_position_pct',0.15):.0%}\n"
+                + _blackout_line(th) + _throttle_line(state) +
+                "\n⚠️ 開啟後僅在美股開盤時，依掃描評分自動下*模擬*單\n"
                 "`/autotrade on`｜`/autotrade off`｜`/positions`｜`/pnl`｜`/closeall`"
             )
 
@@ -1538,6 +1558,73 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                                 reply = gd.guidance_text(res, tk)
                 except Exception as e:
                     reply = f"❌ 指引萃取失敗：{e}"
+
+        elif cmd == "/lanes":
+            # 多線平行帳：現行／＋候選池／＋候選池＋meta 三條虛擬帳同輪比較（reset 重新起算）
+            try:
+                import lanes as _ln
+                if args and args[0].lower() == "reset":
+                    _ln.reset(state, datetime.now(ET).strftime("%Y-%m-%d"))
+                    changed = True
+                    reply = "🛣 多線平行帳已重置（下一輪 autotrade 起重新記帳）"
+                else:
+                    reply = _ln.lanes_text(state)          # 真帳同期基準由 run_lanes 記在 state["lanes"]
+            except Exception as e:
+                reply = f"❌ /lanes 失敗：{e}"
+
+        elif cmd == "/alpha":
+            # 橫斷面 Alpha 脊椎（A）與 meta-labeling（B）狀態：讀夜間工作流產出 data/alpha/*（ALPHA_SPINE.md）
+            try:
+                import alpha_spine as asp
+                import meta_label as ml
+                sub = args[0].lower() if args else "rank"
+                rank = asp.load_rank()
+                if sub == "factors":
+                    reply = asp.factors_text(rank)
+                elif sub == "meta":
+                    reply = ml.meta_text(ml.load_model())
+                else:
+                    held = sorted(((state.get("engine") or {}).get("pos") or {}).keys()) \
+                        if isinstance(state.get("engine"), dict) else []
+                    reply = asp.rank_text(rank, 15, held) + "\n" + _alpha_flags_line(state)
+            except Exception as e:
+                reply = f"❌ /alpha 失敗：{e}"
+
+        elif cmd == "/factor":
+            # 因子研發迴圈（C）：test 公式 → IC/ICIR/NW t + DSR 記帳；add 核准（夜間 A 段納入）；drop 撤銷；list
+            try:
+                import factor_lab as fl
+                sub = args[0].lower() if args else "list"
+                today_s = datetime.now(ET).strftime("%Y-%m-%d")
+                if sub == "test" and len(args) >= 2:
+                    expr = " ".join(args[1:])
+                    try:
+                        fl.parse_expr(expr)
+                    except fl.DSLError as e:
+                        reply = f"❌ 公式無效：{e}"
+                    else:
+                        _tg_send(token, src_chat or chat_id, "🔬 測試因子（抓選股池前 200 檔兩年行情，約 1 分鐘）…")
+                        save_state(state)
+                        frames, dates = _alpha_frames(state, max_symbols=200)
+                        if not frames:
+                            reply = "❌ 行情不可用或選股池未建（先 `/universe rebuild`）"
+                        else:
+                            res = fl.test_factor(expr, frames, dates, ledger=state.get("factor_lab"))
+                            fl.ledger_add(state, res, today_s)
+                            changed = True
+                            reply = fl.test_text(res)
+                elif sub == "add" and len(args) >= 3:
+                    ok, msg = fl.approve(state, args[1], " ".join(args[2:]), today_s)
+                    changed = bool(ok)
+                    reply = ("✅ " if ok else "❌ ") + msg
+                elif sub == "drop" and len(args) >= 2:
+                    ok = fl.drop(state, args[1])
+                    changed = bool(ok)
+                    reply = f"🗑 已撤銷 {args[1].lower()}" if ok else "找不到該核准因子"
+                else:
+                    reply = fl.list_text(state)
+            except Exception as e:
+                reply = f"❌ /factor 失敗：{e}"
 
         elif cmd == "/screen":
             # 候選篩選：選股池 ∪ 主題層 − watchlist；Stage 3 限額；只建議不自動加入
@@ -1678,6 +1765,10 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                 if is_opt and eb.PERIOD_DAYS.get(period, 0) < 80:
                     period = "6m"        # 三段 walk-forward 需 ≥80 個交易日（3m 恆不足）
                 do_apply = is_opt and any(a.lower() == "apply" for a in rest)
+                grid_name = "entry" if (is_opt and any(a.lower() == "entry" for a in rest)) else "exit"
+                _n_comb = 1
+                for _vals in eb.GRIDS[grid_name].values():
+                    _n_comb *= len(_vals)
                 eng_pos = sorted(((state.get("engine") or {}).get("pos") or {}).keys())
                 syms = list(dict.fromkeys(list(state["watchlist"][:12]) + eng_pos))
                 if not syms:
@@ -1685,7 +1776,7 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                 else:
                     _tg_send(token, src_chat or chat_id,
                              f"🧪 引擎歷史重放（{len(syms)} 檔 × {period}"
-                             f"{'、108 組參數（有估值歷史時 ×2 做估值層 A/B）× 三段 walk-forward' if is_opt else ''}，"
+                             f"{f'、{_n_comb} 組{grid_name} 網格參數（有估值歷史時 ×2 做估值層 A/B）× 三段 walk-forward' if is_opt else ''}，"
                              f"約 {'1-2' if is_opt else '1'} 分鐘）…")
                     try:
                         # 長操作前先落盤 last_update_id（runner 超時被殺也不會毒訊息迴圈）
@@ -1694,11 +1785,14 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                         cur = {k: th[f"eng_{k}"] for k in te.ENGINE_DEFAULTS if f"eng_{k}" in th}
                         if "buy_threshold" not in cur and "at_buy_threshold" in th:
                             cur["buy_threshold"] = th["at_buy_threshold"]
+                        # 事件靜默窗與正式引擎同步（重放/最佳化都在同樣的靜默規則下評估）
+                        cur["event_blackout"] = bool(th.get("event_blackout_enabled", True))
+                        cur["event_blackout_days"] = int(th.get("event_blackout_days", 1))
                         calib = state.get("calibration") if isinstance(state.get("calibration"), dict) else None
                         vh = state.get("val_hist") or {}
                         cur["val_enabled"] = bool(th.get("val_enabled", False))       # 基準反映現行開關（B-1）
                         if is_opt:
-                            grid = dict(eb.GRID)
+                            grid = dict(eb.GRIDS[grid_name])
                             cov = eb.val_hist_coverage(vh)
                             ab_note = ""
                             if cov and cov <= (datetime.now(ET) - timedelta(days=int(eb.PERIOD_DAYS.get(period, 252) * 7 / 5 * 0.5))).strftime("%Y-%m-%d"):
@@ -1714,7 +1808,7 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                                 if rec:
                                     eb.apply_params(state, rec["params"], {
                                         "as_of": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-                                        "period": period,
+                                        "period": period, "grid": grid_name,
                                         "holdout_ret": rec["holdout"]["total_ret"]})
                                     changed = True
                                     reply += ("\n\n✅ 已套用推薦參數到引擎（下一輪生效；"
@@ -2415,6 +2509,86 @@ def build_valreport(state: dict, today: str, with_ic: bool = False) -> str:
     return vr.report_text(vr.build_report(state, today, px_now, closes))
 
 
+def _throttle_line(state: dict) -> str:
+    """/autotrade 顯示用：反思節流狀態 + 進場品質濾網設定（純顯示，失敗回空字串）。"""
+    try:
+        th = state.get("thresholds") or {}
+        import reflection as _rfl
+        import trade_engine as _te
+        parts = []
+        if th.get("adaptive_throttle_enabled", True):
+            t = _rfl.throttle((state.get("reflections") or {}).get("history") or [])
+            if t["hit_rate"] is None:
+                parts.append(f"🎯 反思節流：樣本 {t['n']}/{_rfl.THROTTLE_MIN_N}，未啟動")
+            elif t["mult"] < 1.0:
+                parts.append(f"🎯 反思節流中：近 {t['n']} 次看多命中 {t['hit_rate']:.0%} → 風險 ×{t['mult']:g}、停加碼")
+            else:
+                parts.append(f"🎯 反思節流：近 {t['n']} 次看多命中 {t['hit_rate']:.0%}，正常")
+        else:
+            parts.append("🎯 反思節流：關閉")
+        ext = th.get("eng_entry_max_ext_atr", _te.ENGINE_DEFAULTS["entry_max_ext_atr"])
+        pext = th.get("eng_pyramid_max_ext_atr", _te.ENGINE_DEFAULTS["pyramid_max_ext_atr"])
+        nrm = th.get("eng_neutral_risk_mult", _te.ENGINE_DEFAULTS["neutral_risk_mult"])
+        parts.append(f"⏳ 追高濾網：進場 ≤{float(ext):g} ATR、加碼 ≤{float(pext):g} ATR｜中性 regime 風險 ×{float(nrm):g}")
+        return "\n".join(parts) + "\n"
+    except Exception:
+        return ""
+
+
+def _alpha_flags_line(state: dict) -> str:
+    """/alpha 尾行：旗標與閘門狀態（純顯示）。"""
+    try:
+        import alpha_spine as asp
+        import meta_label as ml
+        th = state.get("thresholds") or {}
+        rank = asp.load_rank() or {}
+        model = ml.load_model()
+        pool = "開" if th.get("alpha_pool_enabled", False) else "關"
+        meta = "開" if th.get("meta_enabled", False) else "關"
+        return (f"旗標：候選池 {pool}（前 {int(th.get('alpha_pool_top', 20))} 名；閘門 {'✅' if rank.get('gate_passed') else '➖'}）"
+                f"｜meta 部位 {meta}（閘門 {'✅' if ml.usable(model) else '➖'}）\n"
+                "`/alpha factors`｜`/alpha meta`｜`/set alpha_pool_enabled on`｜`/set meta_enabled on`")
+    except Exception:
+        return ""
+
+
+def _alpha_frames(state: dict, max_symbols: int = 200):
+    """互動用（/factor test）：選股池前 N ∪ watchlist 兩年行情 → 寬表與快照日。失敗回 (None, [])。"""
+    try:
+        import alpha_nightly as an
+        import alpha_spine as asp
+        import universe as un
+        syms = an.universe_symbols(un.load_latest_snapshot(), state.get("watchlist") or [], int(max_symbols))
+        if not syms:
+            return None, []
+        data = an.fetch_ohlcv(syms, "3y", 260)
+        uni = {k: v for k, v in data.items() if k != "SPY"}
+        if len(uni) < 10:
+            return None, []
+        frames = asp.wide_frames(uni)
+        return frames, asp.sample_dates(frames["close"].index)
+    except Exception as e:
+        print(f"_alpha_frames 失敗 {e}")
+        return None, []
+
+
+def _blackout_line(th: dict) -> str:
+    """/autotrade 顯示用：事件靜默窗狀態一行（純顯示，失敗回空字串）。"""
+    try:
+        import macro as _mc
+        today = datetime.now(ET).strftime("%Y-%m-%d")
+        if not th.get("event_blackout_enabled", True):
+            return "📅 事件靜默窗：關閉\n"
+        nb = int(th.get("event_blackout_days", 1))
+        on, why = _mc.event_blackout(today, nb)
+        nxt = _mc.next_fomc(today)
+        if on:
+            return f"📅 事件靜默中（{why}）：不開新倉/不加碼\n"
+        return f"📅 事件靜默窗：下次 FOMC {nxt or '未載入'}（決議前 {nb} 天起靜默）\n"
+    except Exception:
+        return ""
+
+
 def market_regime(state: dict | None = None) -> dict | None:
     """
     大盤風險濾網。v2：優先用市場氣象台（market_weather 五因子體質分，
@@ -2511,9 +2685,9 @@ def _index_snapshot() -> dict:
     return out
 
 
-def _upcoming_earnings(state: dict, max_days: int | None = None) -> list:
+def _upcoming_earnings(state: dict, max_days: int | None = None, extra: list[str] | None = None) -> list:
     """
-    回傳 watchlist 中 max_days 天內要公布財報的標的：[(ticker, date, days_until), ...]。
+    回傳 watchlist（∪ extra，如 Alpha 候選池）中 max_days 天內要公布財報的標的：[(ticker, date, days_until), ...]。
     每日快取（earnings_cache）避免重複慢呼叫。就地更新 state。
     """
     import datetime as _dt
@@ -2527,11 +2701,17 @@ def _upcoming_earnings(state: dict, max_days: int | None = None) -> list:
     except Exception:
         return []
     out = []
-    for tk in state.get("watchlist", []):
+    wl = list(state.get("watchlist", []))
+    extra_new = 0
+    for tk in list(dict.fromkeys(wl + [x for x in (extra or []) if isinstance(x, str)])):
         c = cache.get(tk)
         if c and c.get("checked") == today_s:
             ed_s = c.get("earnings")
         else:
+            if tk not in wl:
+                if extra_new >= 8:            # 候選池每輪最多新查 8 檔（慢呼叫；其餘下輪再補，L5）
+                    continue
+                extra_new += 1
             ed = fa.next_earnings_date(tk)
             ed_s = ed.isoformat() if ed else None
             cache[tk] = {"checked": today_s, "earnings": ed_s}
@@ -2729,6 +2909,18 @@ def daily_briefing(state: dict, force: bool = False) -> str | None:
     _hl = _health_line(state)
     if _hl:
         lines.append(_hl)
+    # 事件靜默／反思節流：靜默日多半無單、執行訊息不會發，晨報是唯一每日可見的地方（對抗驗證 M1）
+    try:
+        _th_b = state.get("thresholds") or {}
+        _bl = _blackout_line(_th_b).strip()
+        if _bl and ("靜默中" in _bl or "1 天後" in _bl):
+            lines.append(f"_{_bl}_")
+        _tl = _throttle_line(state)
+        for _ln in _tl.splitlines():
+            if _ln.startswith("🎯") and "節流中" in _ln:
+                lines.append(f"_{_ln}_")
+    except Exception:
+        pass
     # 最高頻的輸出反而漏了揭露（審查團 F24）
     lines.append("_每日晨報 · 分析教育用途非投資建議 · /set briefing_enabled off 可關閉_")
     return "\n".join(lines)
@@ -3238,13 +3430,53 @@ def run_autotrade(state: dict, results: list[dict]) -> str | None:
     equity = at._f(account.get("equity")) or 0.0
     bp = at._f(account.get("buying_power")) or 0.0
 
-    scored = []
-    for r in results:
+    # 候選池（A 段 Alpha 脊椎；ALPHA_SPINE.md §4）：rank.json 閘門過 → 前 k 名補掃描。
+    #   alpha_pool_enabled 開 → 併入真帳候選（並補掃「持有但不在 watchlist」的代碼，引擎對持倉不失明）；
+    #   關但 lanes_enabled 開 → 只給多線平行帳用（pool_only）。失敗只退回 watchlist。
+    pool_syms: list[str] = []
+    pool_rows: list[dict] = []
+    pool_available = False
+    _pool_on = bool(th.get("alpha_pool_enabled", False))
+    if _pool_on or th.get("lanes_enabled", True):
+        try:
+            import alpha_spine as _asp
+            _rank = _asp.load_rank()
+            _have = {r["ticker"] for r in results}
+            pool_syms = [x for x in _asp.pool_symbols(_rank, int(th.get("alpha_pool_top", 20))) if x not in _have]
+            pool_available = bool((_rank or {}).get("gate_passed"))
+            if _pool_on:
+                pool_syms += [x for x in positions if x not in _have and x not in pool_syms]
+            if th.get("lanes_enabled", True) and isinstance(state.get("lanes"), dict):
+                # 車道持倉（跌出前 k 名者）也要有報價，否則車道停損/追蹤停擺→5 天凍結價強平，績效失真（對抗驗證 Med-1）
+                for _lb in ((state["lanes"].get("lanes") or {}).values()):
+                    for _sym in (_lb.get("positions") or {}):
+                        if _sym not in _have and _sym not in pool_syms:
+                            pool_syms.append(_sym)
+            if pool_syms:
+                pool_rows = [dict(r, pool=True) for r in scan(pool_syms, th, calibration=None, quiet=True)]   # quiet：持倉代碼不進公開日誌（D14）
+                print(f"Autotrade: 候選池掃描 {len(pool_rows)} 檔（Alpha 脊椎 {(_rank or {}).get('as_of')}；{'併入真帳' if _pool_on else '僅平行帳'}）")
+        except Exception as e:
+            pool_syms, pool_rows, pool_available = [], [], False
+            print(f"Autotrade: 候選池失敗，略過 {e}")
+    if _pool_on and pool_rows:
+        results = list(results) + pool_rows
+
+    def _to_scored(r):
         pos = r.get("position") or {}
         price = r.get("price")
         rps = (price - pos["stop"]) if (pos.get("stop") and price) else None
-        scored.append({"ticker": r["ticker"], "score": r.get("score", 0),
-                       "price": price, "risk_per_share": rps})
+        return {"ticker": r["ticker"], "score": r.get("score", 0),
+                "price": price, "risk_per_share": rps,
+                "ext_atr": r.get("ext_atr"), "ret_5d": r.get("ret_5d"),          # 追高濾網（引擎缺欄不濾）
+                "vol_60": r.get("vol_60"), "mom_12_1": r.get("mom_12_1"), "ret_1m": r.get("ret_1m"),   # meta 特徵
+                "rsi": r.get("rsi"), "hi_dist_252": r.get("hi_dist_252"), "atr_pct": r.get("atr_pct"),
+                "volratio_20": r.get("volratio_20"),
+                "raw_score": r.get("score", 0),                                  # overlay 前原始評分（meta 特徵與訓練同義）
+                "pool": bool(r.get("pool"))}                                     # 候選池／持倉補掃列（shadow 不吃）
+
+    scored = [_to_scored(r) for r in results]
+    _in_real = {s_["ticker"] for s_ in scored}
+    pool_only_scored = [_to_scored(r) for r in pool_rows if r["ticker"] not in _in_real]   # 旗標關時只給平行帳
 
     config = {
         "buy_threshold":    th.get("at_buy_threshold", 0.5),
@@ -3258,7 +3490,7 @@ def run_autotrade(state: dict, results: list[dict]) -> str | None:
     # ——量化引擎重製的增量價值；/shadow 查看
     try:
         import shadow_book as sb
-        sb.run_shadow(state, [dict(s) for s in scored], dict(config),
+        sb.run_shadow(state, [dict(s) for s in scored if not s.get("pool")], dict(config),   # 對照組只看 watchlist（M4）
                       equity, datetime.now(ET).strftime("%Y-%m-%d"))
     except Exception as e:
         print(f"Shadow: 記帳失敗 {e}")
@@ -3269,10 +3501,15 @@ def run_autotrade(state: dict, results: list[dict]) -> str | None:
     try:
         import alpha_overlay as ao
         veto_days = int(th.get("ao_earnings_veto_days", 3))
-        _upcoming_earnings(state, max_days=max(veto_days, 5))   # 補新財報日快取（每日快取，便宜）
+        _upcoming_earnings(state, max_days=max(veto_days, 5), extra=pool_syms)   # 補新財報日快取（含候選池；每日快取，便宜）
         scored, ao_notes, size_mult = ao.enrich(state, scored, th)
         for n in ao_notes:
             print(f"Alpha: {n}")
+        if pool_only_scored:                                   # 平行帳用的候選池列也走同一疊加層（財報 veto 等；Med-2）
+            try:
+                pool_only_scored, _, _ = ao.enrich(state, pool_only_scored, th)
+            except Exception:
+                pass
     except Exception as e:
         print(f"Autotrade: alpha_overlay 失敗，跳過資訊疊加 {e}")
 
@@ -3289,6 +3526,72 @@ def run_autotrade(state: dict, results: list[dict]) -> str | None:
                 print(f"Valuation: 估值層上下文 {len(_vc)} 檔")
         except Exception as e:
             print(f"Valuation: 估值層上下文失敗，略過 {e}")
+
+    # 交易層 meta-labeling（B 段）：夜間訓練的勝率模型 → 每個候選 p(勝) → meta_mult（0=跳過）。
+    # 模型過閘門就打分（給多線平行帳用）；只有 meta_enabled 開才套用到真帳的 scored。
+    # 特徵與訓練同一函數（meta_label.features）；市場背景取 rank.json（SPY/MA50 三態、廣度，1 日延遲）
+    meta_by_sym: dict[str, tuple] = {}
+    meta_usable = False
+    try:
+        import alpha_nightly as _an
+        import alpha_spine as _asp2
+        import meta_label as _ml
+        _model = _ml.load_model()
+        _rk = _asp2.load_rank() or {}
+        _rk_age = (datetime.now(ET).date() - datetime.strptime(str(_rk.get("as_of", "1970-01-01"))[:10], "%Y-%m-%d").date()).days \
+            if _rk.get("as_of") else 999
+        if _ml.usable(_model) and _rk_age <= 7:
+            meta_usable = True
+            _mk = _rk.get("market") or {}
+            _ctx = {"regime": _mk.get("spy_regime"), "breadth_pct": _mk.get("breadth_pct")}
+            _cands = [s_ for s_ in (scored + pool_only_scored) if s_["ticker"] not in positions and float(s_.get("price") or 0) > 0]
+            _lookup = _an.FundLookup(_an.load_fin_stores([s_["ticker"] for s_ in _cands], _an.ROOT / "data" / "fin"),
+                                     _an.load_ledgers([ESTIMATES_FILE, _an.UNI_LEDGER]))
+            _today_s = datetime.now(ET).strftime("%Y-%m-%d")
+            _rows = []
+            for s_ in _cands:
+                _fq = _lookup(s_["ticker"], _today_s)
+                # score 特徵用 overlay 前的原始評分（訓練用 composite_series 原始值；M3）
+                _rows.append({**s_, "score": s_.get("raw_score", s_.get("score")),
+                              "quality": _fq.get("quality"), "rev": _fq.get("rev")})
+            for r_ in _ml.score_rows(_model, _rows, _ctx):
+                if "meta_mult" in r_:
+                    meta_by_sym[r_["ticker"]] = (r_["meta_p"], r_["meta_mult"])
+            print(f"Autotrade: meta 打分 {len(meta_by_sym)} 檔（{_model.get('kind', 'logit')}）")
+            if th.get("meta_enabled", False):
+                _thr = float(th.get("eng_buy_threshold", config["buy_threshold"]))
+                _skipped = []
+                for s_ in scored:
+                    if s_["ticker"] in meta_by_sym:
+                        s_["meta_p"], s_["meta_mult"] = meta_by_sym[s_["ticker"]]
+                        if s_["meta_mult"] == 0 and float(s_.get("score") or 0) >= _thr:
+                            _skipped.append(f"{s_['ticker']}({s_['meta_p']:.0%})")
+                if _skipped:
+                    ao_notes.append("🧪 meta 勝率低於門檻跳過：" + "、".join(_skipped[:6]))
+        else:
+            print("Autotrade: meta 模型未通過閘門／不存在，或 rank.json 市場背景過期（>7 日），略過")
+    except Exception as e:
+        meta_by_sym, meta_usable = {}, False
+        print(f"Autotrade: meta 打分失敗，略過 {e}")
+
+    # 總經事件靜默窗（FOMC 會期兩天）：全體 no_entry → 不開新倉/不加碼，出場機制照常。
+    # 2026-09 實案：FOMC 前一週引擎在油價/殖利率衝擊週密集進場+加碼，全數被掃出；
+    # 事件日方向是擲銅板，訊號在事件前沒有優勢。`/set event_blackout_enabled off` 關、
+    # `/set event_blackout_days N` 調窗（日曆日；1＝會期兩天）
+    if th.get("event_blackout_enabled", True):
+        try:
+            import macro as _mc_bo
+            _bo, _bo_why = _mc_bo.event_blackout(
+                datetime.now(ET).strftime("%Y-%m-%d"), int(th.get("event_blackout_days", 1)))
+            if _bo:
+                for s_ in scored + pool_only_scored:           # 平行帳的候選池列同樣靜默（Med-2）
+                    s_["no_entry"] = True
+                ao_notes.append(f"📅 {_bo_why} → 事件靜默：不開新倉、不加碼（出場照常）")
+                print(f"Autotrade: 事件靜默窗（{_bo_why}）")
+            elif _bo_why:
+                print(f"Autotrade: ⚠️ {_bo_why}")            # 日期表過期：不靜默但每輪提醒
+        except Exception as e:
+            print(f"Autotrade: 事件靜默窗判定失敗，略過 {e}")
 
     # Portfolio 層：相關性/集中度控制——與現有持倉高度相關的新倉縮半或跳過
     # （「10 檔高相關 megacap ≈ 貼著大盤」的直接解方；抓價失敗絕不擋交易）
@@ -3336,6 +3639,19 @@ def run_autotrade(state: dict, results: list[dict]) -> str | None:
         if size_mult != 1.0:
             # 恐貪縮倉必須在 eng_ 覆蓋之後套用，否則 /set eng_risk_pct 會把乘數蓋掉
             config["risk_pct"] = float(config["risk_pct"]) * size_mult
+        # 反思節流（訊號自覺）：近 30 次看多判斷命中率 < 40% → 新倉風險減半、暫停加碼。
+        # 不抬門檻（診斷：高分組命中率不比低分組好）。`/set adaptive_throttle_enabled off` 關
+        if th.get("adaptive_throttle_enabled", True):
+            try:
+                import reflection as _rfl_t
+                _tr = _rfl_t.throttle((state.get("reflections") or {}).get("history") or [])
+                if _tr["mult"] < 1.0:
+                    config["risk_pct"] = float(config["risk_pct"]) * float(_tr["mult"])
+                    config["pyramid_max_adds"] = 0
+                    ao_notes.append(_tr["note"])
+                    print(f"Autotrade: {_tr['note']}")
+            except Exception as e:
+                print(f"Autotrade: 反思節流失敗，略過 {e}")
         regime = None
         if th.get("regime_filter_enabled", True):
             rg = market_regime(state)
@@ -3350,7 +3666,9 @@ def run_autotrade(state: dict, results: list[dict]) -> str | None:
         print(f"Autotrade: trade_engine 失敗，退回舊決策邏輯 {e}")
         notes = []
         try:
-            orders = at.decide_orders(scored, positions, equity, bp, config)
+            # legacy 只做進場判斷、不認 no_entry → 先把 veto/事件靜默的候選濾掉（等價語意；對抗驗證 L4）
+            orders = at.decide_orders([s_ for s_ in scored if not s_.get("no_entry")],
+                                      positions, equity, bp, config)
         except Exception as e2:
             # 兩層都掛就本輪放棄，別讓例外穿出去毀掉 save_state（冷卻紀錄會遺失）
             print(f"Autotrade: 舊決策邏輯也失敗，本輪跳過 {e2}")
@@ -3370,6 +3688,23 @@ def run_autotrade(state: dict, results: list[dict]) -> str | None:
     except Exception as e:
         print(f"Mirror: 鏡像帳失敗，跳過 {e}")
         mirror_lines = []
+
+    # 多線平行帳（lanes.py）：現行／＋候選池／＋候選池＋meta 三條虛擬帳同輪記帳（不下單、不推播；/lanes 看）
+    if th.get("lanes_enabled", True):
+        try:
+            import lanes as _lanes
+            _ln_rows = []
+            for s_ in scored + pool_only_scored:
+                s2 = dict(s_)
+                if s_["ticker"] in meta_by_sym:
+                    s2["meta_p"], s2["meta_mult"] = meta_by_sym[s_["ticker"]]
+                _ln_rows.append(s2)
+            _ln_rg = market_regime(state) if th.get("regime_filter_enabled", True) else None
+            _lanes.run_lanes(state, _ln_rows, config, _ln_rg.get("regime") if _ln_rg else None,
+                             datetime.now(ET).strftime("%Y-%m-%d"), meta_usable=meta_usable, pool_available=pool_available,
+                             real_equity=equity)
+        except Exception as e:
+            print(f"Lanes: 多線平行帳失敗，跳過 {type(e).__name__}")   # 不印例外文字（可能含代碼，D14）
 
     if not orders:
         if mirror_lines:
@@ -3398,7 +3733,7 @@ def run_autotrade(state: dict, results: list[dict]) -> str | None:
             "error": None if ok else msg,
         })
     for n in notes:
-        if n.startswith(("⏸", "🚨")) or "曝險狀態" in n:
+        if n.startswith(("⏸", "🚨", "⏳", "🟡")) or "曝險狀態" in n:   # ⏳ 追高等回檔／🟡 中性縮量：只含代碼與 ATR 數字
             lines.append(f"_{n}_")
     if mirror_lines:
         lines.append("")
@@ -3408,7 +3743,7 @@ def run_autotrade(state: dict, results: list[dict]) -> str | None:
         # 🔗 相關性跳過/縮半與 🎭 帳戶級縮倉一律顯示（少量且都是「為什麼沒買/買少」
         # 的關鍵解釋）；🧠 個股疊加只附本輪有下單的（精確 token 比對——子字串比對
         # 會讓單字母 ticker 如 T/K/F 誤掛所有 note）
-        if n.startswith(("🔗", "🎭")):
+        if n.startswith(("🔗", "🎭", "📅", "🎯", "🧪")):    # 帳戶級「為什麼沒買/買少」說明一律顯示（每輪至多各一行）
             lines.append(n)
         else:
             toks = n.split()

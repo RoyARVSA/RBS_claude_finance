@@ -1,0 +1,88 @@
+name: RBS Alpha Nightly
+
+# 每個交易日收盤後一次：橫斷面 Alpha 排名（A）、meta-labeling 訓練（B）、基本面覆蓋輪替。
+# 產出 data/alpha/*（公開資料衍生、明文）；只 add 本輪觸碰的檔案，避免與 15 分鐘 cron 的 commit 互相覆蓋。
+on:
+  schedule:
+    - cron: '30 22 * * 1-5'   # 22:30 UTC = 18:30 EDT（夏令）／17:30 EST（冬令），皆在 16:00 ET 收盤後
+  workflow_dispatch: {}
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: alpha-nightly
+  cancel-in-progress: false
+
+jobs:
+  nightly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-scanner-v2
+          restore-keys: |
+            ${{ runner.os }}-pip-scanner-
+
+      - name: Install dependencies
+        # 與 signal_scan.yml 同釘版（供應鏈）+ lightgbm（meta 候選模型；缺則只訓練邏輯迴歸）。
+        # scipy 是 lightgbm 相依（釘版）。線上推論走 meta_label.predict_gbm 純 Python 樹遍歷，15 分鐘 cron 不需裝 lightgbm。
+        run: pip install yfinance==1.5.2 pandas==3.0.5 numpy==2.4.6 requests==2.34.2 scipy==1.17.1 lightgbm==4.6.0
+
+      - name: Run alpha nightly
+        env:
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}   # 三表備援（可選）
+          ALPHA_TOUCHED_FILE: /tmp/alpha_touched.txt
+        run: python alpha_nightly.py
+
+      - name: Commit outputs
+        run: |
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name  "github-actions[bot]"
+          if [ -f /tmp/alpha_touched.txt ]; then
+            while IFS= read -r f; do [ -n "$f" ] && git add "$f" 2>/dev/null || true; done < /tmp/alpha_touched.txt
+          fi
+          git diff --staged --quiet && echo "No alpha changes." || \
+            git commit -m "chore: alpha nightly (rank/meta/coverage) [skip ci]"
+
+      - name: Push (replay only this run's files on conflict)
+        run: |
+          # 只重放本輪觸碰的檔案：其他檔（state、journal、其他 data/fin）一律以遠端為準
+          mkdir -p /tmp/alpha_bak
+          if [ -f /tmp/alpha_touched.txt ]; then
+            while IFS= read -r f; do
+              [ -n "$f" ] && [ -f "$f" ] && mkdir -p "/tmp/alpha_bak/$(dirname "$f")" && cp "$f" "/tmp/alpha_bak/$f" || true
+            done < /tmp/alpha_touched.txt
+          fi
+          for i in 1 2 3; do
+            git push origin HEAD && exit 0
+            echo "push 失敗，同步遠端後重放本輪檔案 ($i)…"
+            git rebase --abort 2>/dev/null || true
+            git fetch origin "${GITHUB_REF_NAME}"
+            git reset --hard "origin/${GITHUB_REF_NAME}"
+            if [ -f /tmp/alpha_touched.txt ]; then
+              while IFS= read -r f; do
+                [ -n "$f" ] && [ -f "/tmp/alpha_bak/$f" ] && mkdir -p "$(dirname "$f")" && cp "/tmp/alpha_bak/$f" "$f" && git add "$f" || true
+              done < /tmp/alpha_touched.txt
+            fi
+            git diff --staged --quiet || git commit -m "chore: alpha nightly (rank/meta/coverage) [skip ci]"
+          done
+          git push origin HEAD || echo "::warning::push 最終失敗（本輪輸出未持久化，明晚重算）"

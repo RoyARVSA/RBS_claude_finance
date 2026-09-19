@@ -74,6 +74,34 @@ def evaluate_pending(state: dict, prices: dict, today: str) -> int:
     return len(matured)
 
 
+THROTTLE_WINDOW = 30      # 反思節流：看近 N 筆已結算看多判斷
+THROTTLE_MIN_N = 15       # 樣本不足不節流
+THROTTLE_LOW = 0.40       # 命中率低於此 → 節流
+THROTTLE_MULT = 0.5       # 節流時新倉風險預算倍數
+
+
+def throttle(history: list, window: int = THROTTLE_WINDOW, min_n: int = THROTTLE_MIN_N,
+             low: float = THROTTLE_LOW, mult: float = THROTTLE_MULT, source: str = "quant") -> dict:
+    """
+    反思節流（純函數）：近 window 筆已結算「看多」量化判斷命中率 < low → 新倉風險 × mult、暫停加碼。
+    只看多方：引擎只做多，空方判斷命中與進場無關。不動門檻——2026-09 診斷：|score|≥0.65 的命中率
+    （30%）不比 0.5–0.65（33%）好，抬門檻只會挑到更延伸的標的；縮量才是對「訊號正在失效」的正確反應。
+    回 {"mult","no_pyramid","hit_rate","n","note"}；樣本 < min_n → 不節流。
+    """
+    longs = [h for h in (history or [])
+             if h.get("hit") is not None and h.get("source", "quant") == source
+             and (h.get("score") or 0) > 0][-max(1, int(window)):]
+    n = len(longs)
+    if n < max(1, int(min_n)):
+        return {"mult": 1.0, "no_pyramid": False, "hit_rate": None, "n": n, "note": None}
+    rate = sum(1 for h in longs if h["hit"]) / n
+    if rate < float(low):
+        m = min(max(float(mult), 0.1), 1.0)
+        return {"mult": m, "no_pyramid": True, "hit_rate": rate, "n": n,
+                "note": f"🎯 近 {n} 次看多判斷命中率 {rate:.0%} < {float(low):.0%} → 新倉風險 ×{m:g}、暫停加碼（訊號節流）"}
+    return {"mult": 1.0, "no_pyramid": False, "hit_rate": rate, "n": n, "note": None}
+
+
 def summary_text(state: dict, n: int = 20) -> str | None:
     """近 n 次已結算判斷的命中率 + 最近兩筆失誤（給晨報/助理 context）。無資料回 None。"""
     hist = [h for h in _refl(state)["history"] if h.get("hit") is not None]
@@ -191,3 +219,21 @@ if __name__ == "__main__":
     assert len(st3["reflections"]["pending"]) == 1              # quant 那筆還在等
 
     print("✅ reflection 純邏輯測試通過")
+
+
+    # 反思節流：只數看多、樣本不足不動、低於 40% 減半+停加碼、恢復即解除
+    mk = lambda sc, hit, src="quant": {"ticker": "X", "score": sc, "fwd_ret": 0.01, "hit": hit, "source": src}
+    assert throttle([mk(0.7, False)] * 10)["mult"] == 1.0                                  # n=10 < 15
+    bad = [mk(0.7, False)] * 14 + [mk(0.7, True)] * 6                                       # 30%
+    t = throttle(bad)
+    assert t["mult"] == 0.5 and t["no_pyramid"] and abs(t["hit_rate"] - 0.3) < 1e-9 and "節流" in t["note"]
+    good = [mk(0.7, True)] * 12 + [mk(0.7, False)] * 8                                      # 60%
+    assert throttle(good)["mult"] == 1.0 and throttle(good)["note"] is None
+    mixed = bad + [mk(-0.7, False)] * 30                                                    # 空方失誤不算
+    assert throttle(mixed)["n"] == 20 and throttle(mixed)["mult"] == 0.5
+    assert throttle(bad + good)["mult"] == 1.0                                              # 只看最近 30 筆（後 30 = 10 bad… 檢查視窗）
+    recent_good = bad + [mk(0.7, True)] * 30
+    assert throttle(recent_good)["hit_rate"] == 1.0                                         # 視窗只含最近 30 筆
+    assert throttle(bad, mult=5.0)["mult"] == 1.0 and throttle([mk(0.7, None)] * 40)["n"] == 0
+    assert throttle([], min_n=0)["mult"] == 1.0                                              # min_n 0 不除以零
+    print("✅ 反思節流（看多命中率 <40% → 風險 ×0.5、停加碼）")

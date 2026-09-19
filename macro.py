@@ -208,6 +208,63 @@ def fetch_macro(api_key: str) -> dict:
     return out
 
 
+# ── 總經事件靜默窗（FOMC）─────────────────────────────────────────────────────
+# FOMC 例會（聯準會官方行事曆；聲明於第二日 14:00 ET）。2027 為 Fed 2025-09 公布的暫定表。
+# 只列「決議日」（第二日）；靜默窗 = 決議日往前 days_before 個日曆日 ～ 決議日當天。
+FOMC_DECISION_DATES = {
+    # 2024/2025 供 /engtest 歷史重放用（已開過的會，官方行事曆）
+    2024: ["01-31", "03-20", "05-01", "06-12", "07-31", "09-18", "11-07", "12-18"],
+    2025: ["01-29", "03-19", "05-07", "06-18", "07-30", "09-17", "10-29", "12-10"],
+    2026: ["01-28", "03-18", "04-29", "06-17", "07-29", "09-16", "10-28", "12-09"],
+    2027: ["01-27", "03-17", "04-28", "06-09", "07-28", "09-15", "10-27", "12-08"],
+}
+
+
+def fomc_dates(years=None) -> list[str]:
+    """全部 FOMC 決議日 ISO 字串（排序）。"""
+    ys = years or sorted(FOMC_DECISION_DATES)
+    return sorted(f"{y}-{md}" for y in ys for md in FOMC_DECISION_DATES.get(y, []))
+
+
+def next_fomc(today: str) -> str | None:
+    """today（含）之後最近一次 FOMC 決議日；表外年份回 None（呼叫端顯示「未載入」）。"""
+    t = str(today)[:10]
+    return next((d for d in fomc_dates() if d >= t), None)
+
+
+def event_blackout(today: str, days_before: int = 1, extra_dates: list[str] | None = None) -> tuple[bool, str]:
+    """
+    純函數：today 是否落在總經事件靜默窗內。回 (in_blackout, 說明)。
+    靜默窗 = 事件日往前 days_before 個「日曆日」到事件日當天（FOMC 週二/週三，
+    days_before=1 即會期兩天都靜默）。extra_dates：額外事件日（如 CPI）。
+    語意由呼叫端定義（引擎：不開新倉/不加碼、出場照常）；壞日期 → (False, "")。
+    """
+    import datetime as _dt
+    try:
+        t = _dt.date.fromisoformat(str(today)[:10])
+    except (TypeError, ValueError):
+        return False, ""
+    try:
+        nb = max(0, min(int(days_before), 10))
+    except (TypeError, ValueError):
+        nb = 1
+    all_fomc = fomc_dates()
+    if all_fomc and t.isoformat() > all_fomc[-1]:
+        return False, f"FOMC 日期表已過期（最後 {all_fomc[-1]}），請更新 FOMC_DECISION_DATES"   # 呼叫端可印警告
+    events = [(d, "FOMC 決議") for d in all_fomc]
+    for d in (extra_dates or []):
+        events.append((str(d)[:10], "總經數據"))
+    for d, label in sorted(events):
+        try:
+            ed = _dt.date.fromisoformat(d)
+        except ValueError:
+            continue
+        if ed - _dt.timedelta(days=nb) <= t <= ed:
+            when = "今日" if ed == t else f"{(ed - t).days} 天後（{d}）"
+            return True, f"{label}{when}"
+    return False, ""
+
+
 # ── CLI 自我測試（純邏輯）──────────────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -233,3 +290,21 @@ if __name__ == "__main__":
     print(" summary:", macro_summary_text({
         "fed_funds": {"value": 4.25}, "y10": {"value": 4.4},
         "curve": {"value": -0.3}, "cpi": {"value": 3.6}, "unemploy": {"value": 4.1}}))
+
+    print("\n=== event_blackout / next_fomc ===")
+    assert next_fomc("2026-09-14") == "2026-09-16" and next_fomc("2026-09-17") == "2026-10-28"
+    assert next_fomc("2028-01-01") is None
+    assert event_blackout("2026-09-14") == (False, "")            # 週一：決議前兩天，不靜默
+    assert event_blackout("2026-09-15")[0] and "1 天後" in event_blackout("2026-09-15")[1]   # 會期第一天
+    assert event_blackout("2026-09-16") == (True, "FOMC 決議今日")
+    assert event_blackout("2026-09-17") == (False, "")            # 決議次日恢復
+    assert event_blackout("2026-09-14", days_before=2)[0]         # 加大靜默窗
+    assert event_blackout("2026-09-14", days_before=0) == (False, "") and event_blackout("2026-09-16", days_before=0)[0]
+    assert event_blackout("2026-10-13", extra_dates=["2026-10-14"])[0] and "總經數據" in event_blackout("2026-10-13", extra_dates=["2026-10-14"])[1]
+    assert event_blackout("bad-date") == (False, "") and event_blackout("2026-09-16", days_before="x")[0]
+    assert len(fomc_dates([2026])) == 8 and len(fomc_dates()) == 32
+    _late = event_blackout("2028-03-01")
+    assert _late[0] is False and "過期" in _late[1]                 # 表外年份：不靜默但帶警告
+    import datetime as _dtt
+    assert max(fomc_dates()) >= f"{_dtt.date.today().year}-01-01", "FOMC 日期表需涵蓋今年（CI 提醒更新）"
+    print("  ✅ 靜默窗：會期兩天靜默、前後正常、extra/壞輸入安全")
