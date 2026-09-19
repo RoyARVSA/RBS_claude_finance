@@ -43,8 +43,9 @@ jobs:
             ${{ runner.os }}-pip-scanner-
 
       - name: Install dependencies
-        # 與 signal_scan.yml 完全同釘版（供應鏈）；夜間主流程不需 scipy（DSR 只在 /factor test 用、缺則優雅降級）
-        run: pip install yfinance==1.5.2 pandas==3.0.5 numpy==2.4.6 requests==2.34.2
+        # 與 signal_scan.yml 同釘版（供應鏈）+ lightgbm（meta 候選模型；缺則只訓練邏輯迴歸）。
+        # scipy 是 lightgbm 相依（釘版）。線上推論走 meta_label.predict_gbm 純 Python 樹遍歷，15 分鐘 cron 不需裝 lightgbm。
+        run: pip install yfinance==1.5.2 pandas==3.0.5 numpy==2.4.6 requests==2.34.2 scipy==1.17.1 lightgbm==4.6.0
 
       - name: Run alpha nightly
         env:

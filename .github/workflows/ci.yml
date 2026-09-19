@@ -52,7 +52,7 @@ jobs:
                    shadow_book behavior_check attribution state_crypto net_guard \
                    indicators mirror_book engine_backtest estimates_ledger universe \
                    fin_data quality company_model factor_eval playbook guidance \
-                   screener val_report alpha_spine meta_label factor_lab \
+                   screener val_report alpha_spine meta_label factor_lab lanes \
                    earnings_review; do
             echo "── $m ──"
             python3 "$m.py"

@@ -524,14 +524,15 @@ def _atr_value(close, high, low, period: int = 14) -> float:
     return float(atr) if not pd.isna(atr) else 0.0
 
 
-def _extension(close, high, low) -> dict:
+def _extension(close, high, low, volume=None) -> dict:
     """
     進場延伸度（追高濾網用，純函數）：距 MA20 幾個 ATR、近 5 日報酬。
     2026-09 診斷實案：強訊號進場後 5 日平均報酬為負、硬停損 6/14 在進場 1–2 天內被打到
     ——問題不在方向而在「買在延伸端」。資料不足的欄回 None（引擎視為不濾）。
     """
     out = {"atr": None, "ma20": None, "ext_atr": None, "ret_5d": None,
-           "vol_60": None, "mom_12_1": None, "ret_1m": None}        # 後三欄：meta-labeling 線上特徵（與夜間訓練同定義）
+           "vol_60": None, "mom_12_1": None, "ret_1m": None,        # meta-labeling 線上特徵（與夜間訓練同定義）
+           "hi_dist_252": None, "atr_pct": None, "volratio_20": None}
     try:
         if len(close) >= 20:
             atr = _atr_value(close, high, low)
@@ -548,6 +549,16 @@ def _extension(close, high, low) -> dict:
             out["ret_1m"] = round(float(close.iloc[-1] / close.iloc[-22] - 1), 4)
         if len(close) >= 253:
             out["mom_12_1"] = round(float(close.iloc[-22] / close.iloc[-253] - 1), 4)
+        if len(close) >= 252:
+            hi = float(close.iloc[-252:].max())
+            if hi > 0:
+                out["hi_dist_252"] = round(float(close.iloc[-1]) / hi - 1, 4)
+        if out["atr"] and len(close) >= 20 and float(close.iloc[-1]) > 0:
+            out["atr_pct"] = round(float(out["atr"]) / float(close.iloc[-1]), 5)
+        if volume is not None and len(volume) >= 21:
+            avg = float(volume.iloc[-21:-1].mean())
+            if avg > 0:
+                out["volratio_20"] = round(float(volume.iloc[-1]) / avg, 3)
     except Exception:
         pass
     return out
@@ -688,7 +699,7 @@ def scan(tickers: list[str], thresholds: dict, calibration: dict | None = None, 
                 "mtf_note": cs.get("mtf_note"),
                 "position": pos,
                 "signals": [s for s in signals if s],
-                **_extension(close, high, low),      # atr/ma20/ext_atr/ret_5d（引擎追高濾網）
+                **_extension(close, high, low, volume),   # atr/ma20/ext_atr/ret_5d…（引擎追高濾網 + meta 特徵）
             })
             flag = "🚨" if signals else "  "
             if quiet:
@@ -794,7 +805,7 @@ if __name__ == "__main__":
     print("✅ 7 短序列防炸")
 
     # 8) 延伸度：平穩上升趨勢 ext 小；末端跳空拉升 → ext_atr 顯著 > 2；短序列回 None
-    ex_up = _extension(s_up, hi_u, lo_u)
+    ex_up = _extension(s_up, hi_u, lo_u, v_up)
     assert {"atr", "ma20", "ext_atr", "ret_5d"} <= set(ex_up) and ex_up["atr"] > 0
     spike = list(up[:200]) + [up[199] * (1 + 0.06 * (i + 1)) for i in range(3)]   # 3 天拉 +18%
     s_sp, _ = _mk(spike)
@@ -804,6 +815,8 @@ if __name__ == "__main__":
     assert _extension(flat.iloc[:10], None, None)["ext_atr"] is None
     assert ex_up["vol_60"] is not None and ex_up["mom_12_1"] is not None and ex_up["ret_1m"] is not None
     assert abs(ex_up["mom_12_1"] - (float(s_up.iloc[-22]) / float(s_up.iloc[-253]) - 1)) < 1e-4
+    assert ex_up["hi_dist_252"] is not None and ex_up["hi_dist_252"] <= 0 and ex_up["atr_pct"] > 0 and abs(ex_up["volratio_20"] - 1.0) < 1e-6
+    assert _extension(s_up, hi_u, lo_u)["volratio_20"] is None
     print(f"✅ 8 延伸度（趨勢 ext {ex_up['ext_atr']:+.1f} ATR、噴出 {ex_sp['ext_atr']:+.1f} ATR）")
 
     # 9) composite_series 與逐日切片逐位相等（含 NaN 成交量、edge_weights、mtf）

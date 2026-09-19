@@ -113,7 +113,15 @@ regime 用 SPY/MA50 三態（線上讀 rank.json 的 `market`，1 日延遲，�
 
 ### 2.3 模型與驗證
 
-- numpy 邏輯迴歸（標準化、L2 λ=1.0、牛頓法/梯度下降），無新依賴；係數可讀、可存 JSON。
+- 兩個候選模型走**同一套** purged walk-forward：numpy 邏輯迴歸（標準化、L2、牛頓法）與 LightGBM
+  （夜間工作流有裝；num_leaves 7、學習率 0.05、每折用訓練段最後 15% 做 early stopping、最終棵數取各折中位數）。
+  擇優：先看閘門（含尺寸化是否改善 Sharpe），再比 OOS log-loss，同分取邏輯迴歸；兩者 OOS 都存進 `candidates` 供 `/alpha meta` 對照。
+  GBM 以精簡節點表存 JSON（150 棵約 25 KB、上限 400 棵約 63 KB），線上用 `meta_label.predict_gbm` 純 Python 樹遍歷推論（自測與 lightgbm
+  原生預測逐位一致），15 分鐘 cron 不加依賴。
+- 特徵 18 個：延伸度、5 日漲幅、評分、波動、12-1 動能、1 月反轉、SPY 三態 one-hot、廣度、品質(+缺值旗標)、
+  修正(+缺值旗標)、動能缺值旗標、RSI14、距 52 週高、ATR 占價比、20 日量比。
+- **AUC 的期望值**：交易勝負標籤的可預測度很低，業界 0.55–0.60 是常態、0.65 已屬優異（Qlib 基準最好的
+  橫斷面模型 IC 也只有 0.045）。閘門看的是 AUC≥0.55 **加上**尺寸化是否真的改善 Sharpe；AUC 0.7+ 通常代表洩漏。
 - purged walk-forward：依時間 4 折，訓練段結尾與測試段開頭之間 **embargo 46 個交易日**（＝最長標籤視窗 45 + 1）。
 - OOS 指標：AUC（rank 法）、log-loss vs 基準率、**尺寸化測試**：門檻相對基準勝率 b——size(p)=0（p<b−8pp）、
   線性 0.5→1.25（b−8pp..b+12pp）、1.25（p≥b+12pp）；比較 OOS 交易 R 序列的 mean/std（等額 vs 尺寸化）。
@@ -149,6 +157,15 @@ regime 用 SPY/MA50 三態（線上讀 rank.json 的 `market`，1 日延遲，�
 啟用順序：夜間跑 2 週 → `/alpha factors` 看哪些因子過閘 → `/alpha meta` 看 OOS → 先開 `alpha_pool_enabled`
 觀察 2 週 → 再開 `meta_enabled`。
 
+### 4.1 多線平行帳（`lanes.py`，`/lanes`；`lanes_enabled` 預設開）
+
+旗標關著的時候就能看「如果開了會怎樣」：每輪 cron 用同一台引擎、同一輪 scored/config/regime，各跑一本
+10 萬起始的虛擬帳——`base`（現行 watchlist）、`pool`（＋候選池）、`pool_meta`（＋候選池＋meta 部位）——
+掃描價成交含 0.05% 成本、每日淨值一點、殭屍倉防護同鏡像帳；`/lanes` 並排列出報酬／回撤／持倉／成交，
+附 SPY 與真帳同期。閘門沒過時車道會標註「＝現行」「＝候選池」（此時該車道與上一條相同）。
+車道持倉即使跌出前 k 名也會補掃報價（quiet）；候選池列同樣走 alpha overlay 與 FOMC 靜默窗，旗標開關前後語意一致。
+state["lanes"] 加密（虛擬持倉與真帳高度相關）；不推播每筆單。`/lanes reset` 重新起算。
+
 ## 5. PIT 與洩漏保證
 
 - 價格因子：只用 `iloc[:t+1]`；前瞻報酬從 t 之後第 1 個交易日起算（`factor_eval.forward_returns`）。
@@ -176,5 +193,7 @@ regime 用 SPY/MA50 三態（線上讀 rank.json 的 `market`，1 日延遲，�
 | `factor_lab.py` + `/factor` | ✅ 2026-09-19 |
 | `alpha_nightly.py` + `.github/workflows/alpha_nightly.yml` | ✅ 2026-09-19（首晚產出後 `/alpha factors` 可看） |
 | `/alpha`、候選池、meta_mult、旗標 | ✅ 2026-09-19（兩旗標預設關） |
+| LightGBM 候選 + 純 Python 推論 + 4 個新特徵 | ✅ 2026-09-19 |
+| `lanes.py` 多線平行帳 + `/lanes` | ✅ 2026-09-19（`lanes_enabled` 預設開） |
 | 網頁頁「🧬 Alpha 脊椎」 | 待辦（先 Telegram） |
 | 委員會自動提案因子 | 待辦（A/B 穩定後） |

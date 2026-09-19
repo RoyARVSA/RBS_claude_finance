@@ -81,6 +81,7 @@ Streamlit 網頁應用 + 獨立的訊號掃描 Bot（GitHub Actions 排程版 / 
 - **佈局計畫整合層**：`/playbook` 與網頁「🧭 佈局計畫」——同一套邏輯（`playbook.py`）把選股池、分析師修正動能、公司模型、品質旗標、技術評分、大盤 regime、持倉與論點收成一份分層計畫：迴避（品質否決／高於牛市情境／跌破失效價）、減碼（持有且區間位置 > 0.7）、累積候選（有安全邊際且品質不差；標示技術訊號是否已達門檻）、持有、觀察；每檔 conviction 只由可得成分構成並附成分數，權重帶有界且依 regime 打折。閒置輪每 7 天自動輪替更新模型、週報附摘要。**全部為參考：進場仍由技術訊號、出場仍由價格機制、估值層未過 holdout 不接引擎**
 - **產業路由與因子把關（估值層 P1.5/P2）**：金融股走剩餘收益模型（RIM：ROE 十年淡出至均值與股權成本的中點、配息＋回購率、持續係數 0.6 終值）、地產／高股息走股利 H-model（三年股利 CAGR → 長期 3%，5 年半衰）；`factor_eval.py` 提供 alphalens 式 Rank IC／ICIR／分位報酬／因子自相關與「21 日 IC > 0.03 且 ICIR > 0.3」配置門檻——MoS、修正動能、品質分累積夠歷史後先過這關，才談進部位
 - **Alpha 脊椎 / meta-labeling / 因子實驗室（A/B/C，2026-09-19；規劃 `ALPHA_SPINE.md`）**：把「18 檔擇時」換成「400 檔排名 + 每筆部位由歷史勝率決定」。夜間工作流 `alpha_nightly.yml`（收盤後一次）：(A) 選股池 broad ∪ watchlist 兩年行情 → 價格因子（12-1 動能／1 月反轉／延伸度／低波動，向量化）+ 基本面 PIT 因子（品質、預估修正）+ 核准的 DSL 因子 → 每因子週頻 Rank IC／ICIR／Newey-West t 閘門（不過＝權重 0、方向寫死不翻轉）→ ICIR 加權合成 → `data/alpha/rank.json`；(B) 用 `indicators.composite_series`（＝引擎評分的向量化版，逐位相等）對全池找「引擎進場條件成立」的時點，以引擎規則模擬單筆出場（停損／追蹤／時間柵欄）產生幾千筆 R 標籤，特徵＝延伸度／5 日漲幅／評分／波動／動能／反轉／SPY 三態／廣度／品質／修正（訓練與線上同一函數），numpy 邏輯迴歸 + purged walk-forward（4 折、embargo 46 日）→ `data/alpha/meta.json`，閘門＝OOS AUC≥0.55 且勝率尺寸化 Sharpe 勝等額且跳過率 ≤80%；(C) `/factor test <公式>` 白名單 DSL → 同一把尺評估 + DSR 記帳，`/factor add` 核准後夜間納入。線上：`/alpha [factors|meta]` 看狀態；`/set alpha_pool_enabled on` 讓前 N 名進引擎候選池（僅在 rank 閘門通過時）、`/set meta_enabled on` 讓部位乘勝率倍數（僅在 meta 閘門通過時）；**兩旗標預設關，先累積兩週看閘門再開**
+- **多線平行帳**（`/lanes`）：旗標還關著也能看「開了會怎樣」——每輪用同一台引擎、同一輪訊號跑三本 10 萬起始的虛擬帳（現行 watchlist／＋候選池／＋候選池＋meta 部位），並排報酬／回撤／成交，附 SPY 與真帳同期；閘門沒過的車道會標註等同上一條。meta 模型升級為「邏輯迴歸 vs LightGBM 同一套 purged walk-forward 擇優」，GBM 線上以純 Python 樹遍歷推論（不加依賴）
 - **進場品質層（2026-09）**：反思帳本診斷出「強訊號進場後 5 日平均為負、硬停損多在 1–2 天內被打到、加碼在頂」——問題是時點不是方向。修法：追高濾網（價格高於 MA20 >2 ATR 且 5 日急拉 >6% 不開新倉、加碼 >1.5 ATR 不加；平穩趨勢不擋）、中性 regime 新倉風險減半不加碼（氣象台廣度 <40 把「偏多」否決成中性）、反思節流（近 30 次看多命中 <40% → 風險再減半、停加碼）、FOMC 會期兩天事件靜默；`/autotrade` 看狀態、`/engtest opt entry` 樣本外驗證這組參數
 - **引擎歷史重放與參數學習**：`/engtest [3m|6m|1y|2y]` 把**整台波段引擎**（進場門檻、停損/追蹤/分批/死錢、保險絲、regime 三態）逐日重放過去 N 個月——每日評分只用當日以前 K 棒、t 日決策 t+1 開盤成交、單邊 0.05% 成本、對照 SPY 買進持有，回答「如果用現行參數過去會賺多少」；`/engtest opt [apply]` 掃 進場門檻×停損倍數×追蹤回落×分批R×死錢天數 108 組，三段 walk-forward（訓練排序/驗證挑選/holdout 只看一次把關）+ DSR 扣多重測試幸運上限——這是「從歷史學規則」的誠實版（參數搜索，非深度 RL：日 K 樣本太少會學到雜訊）；`/engtest opt entry` 換成進場品質網格 32 組（門檻×追高上限×加碼R×中性風險倍數）；`clear` 還原
 - **假設反駁器**：`/falsify` 對投資故事跑 8 類反駁測試——block bootstrap 漂移顯著性（誠實處理重疊視窗）、日期穩健性、晚進場、成本存活、事件日 CAR、regime/利率週期切分、動能混淆兩因子回歸、跨市場泛化——外加 **DSR 多重假設帳本**（試了幾個才挑到這個→折減）。**只能證偽、不能證實**，報告頁首永遠印這句話
@@ -198,6 +199,7 @@ alpha_spine.py          A 段：橫斷面因子面板 → IC 閘門 → ICIR 加
 meta_label.py           B 段：訊號樣本 + 引擎規則出場標籤 + purged walk-forward 邏輯迴歸 → data/alpha/meta.json
 factor_lab.py           C 段：因子 DSL（白名單）評估 + DSR 帳本 + 核准清單（/factor）
 alpha_nightly.py        夜間工作流進入點：抓價 → A → B → 基本面覆蓋輪替（alpha_nightly.yml）
+lanes.py                多線平行帳：現行／＋候選池／＋候選池＋meta 三條虛擬帳同輪記帳（/lanes）
 guidance.py             指引/KPI 萃取：LLM 定位轉錄 + 程式驗證（原文/數字回對、修訂、對帳；/guidance）
 playbook.py             佈局計畫整合層：分層/四象限/conviction/權重帶/組合層（/playbook、網頁 🧭）
 factor_eval.py          因子評估：Rank IC/ICIR/分位報酬/自相關 + 配置門檻（alphalens 式，純 pandas）

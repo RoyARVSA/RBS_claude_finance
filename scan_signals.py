@@ -52,6 +52,7 @@ Telegram 指令（傳給 Bot）：
   /plantest opt [apply]   – 參數尋優（ORB 分鐘×停損 ATR×目標 R:R，walk-forward 把關）
   /alpha [factors|meta]   – Alpha 脊椎：橫斷面排名／因子 IC 閘門／meta-labeling OOS（夜間工作流產出）
   /factor test|add|drop|list – 因子實驗室：DSL 公式 → IC/ICIR/NW t + DSR 帳本；核准者進夜間合成
+  /lanes [reset]          – 多線平行帳：現行／＋候選池／＋候選池＋meta 三條虛擬帳同輪比較（含 SPY、真帳同期）
   /screen                 – 候選篩選（選股池 ∪ 主題 − watchlist；Stage 3 限額；只建議）
   /valreport              – 估值治理月報（覆蓋/事後命中/穩定度/因子 IC/指引覆蓋；每月自動）
   /guidance TICKER [季別] – 指引/KPI 萃取（AV 逐字稿 + LLM 定位轉錄 + 程式驗證）
@@ -443,6 +444,7 @@ def _cmd_help() -> str:
         "`/plantest [apply|clear]` — 當日計畫 60 日回測；apply 套用校準（每週自動跑，`/set plan_autocal_enabled off` 關）\n"
         "`/plantest opt [apply]` — 參數尋優：ORB×停損×R:R 掃 27 組，holdout 段把關通過才推薦\n"
         "`/alpha [factors|meta]` — Alpha 脊椎（夜間工作流）：選股池 400 檔橫斷面排名（因子過 IC 閘門才配權）、因子 IC 表、meta-labeling 勝率模型 OOS 與閘門；`/set alpha_pool_enabled on` 讓前 N 名進候選池、`/set meta_enabled on` 讓部位吃勝率倍數（皆預設關）\n"
+        "`/lanes [reset]` — 多線平行帳：現行 watchlist／＋候選池／＋候選池＋meta 部位三條虛擬帳（各 10 萬起）同一輪訊號並排記帳，含 SPY 與真帳同期；旗標關著也在跑，看完再決定開不開（`/set lanes_enabled off` 關）\n"
         "`/factor test <公式>`｜`add <名稱> <公式>`｜`drop`｜`list` — 因子實驗室：DSL 公式（ret/mom/vol/ma_dist/ext/rsi/volratio/hi_dist/lo_dist）→ IC/ICIR/NW t + DSR 記帳；核准者夜間納入合成\n"
         "`/screen` — 候選篩選：選股池動能前 N ∪ AI 主題 − watchlist，逐批補品質/修正動能（≤8 檔/次、每週閉市輪自動刷新），綜合分排名；只建議、`/add` 後才進建模與佈局\n"
         "`/valreport` — 估值治理月報：覆蓋/過期/待審、各判定的事後命中率、公允價穩定度、MoS 因子 IC、指引覆蓋（每月自動推播；`/set valreport_enabled off` 關）\n"
@@ -1039,7 +1041,7 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                          "autotrade_enabled", "weekly_enabled", "plan_autocal_enabled",
                          "est_enabled", "uni_enabled", "model_auto_refresh", "val_enabled", "valreport_enabled",
                          "event_blackout_enabled", "adaptive_throttle_enabled",
-                         "alpha_pool_enabled", "meta_enabled"}
+                         "alpha_pool_enabled", "meta_enabled", "lanes_enabled"}
             float_keys = {"rsi_oversold", "rsi_overbought", "price_change_pct",
                           "vol_spike_ratio", "cooldown_hours",
                           "account_size", "risk_pct", "atr_mult", "briefing_hour_et",
@@ -1556,6 +1558,19 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                                 reply = gd.guidance_text(res, tk)
                 except Exception as e:
                     reply = f"❌ 指引萃取失敗：{e}"
+
+        elif cmd == "/lanes":
+            # 多線平行帳：現行／＋候選池／＋候選池＋meta 三條虛擬帳同輪比較（reset 重新起算）
+            try:
+                import lanes as _ln
+                if args and args[0].lower() == "reset":
+                    _ln.reset(state, datetime.now(ET).strftime("%Y-%m-%d"))
+                    changed = True
+                    reply = "🛣 多線平行帳已重置（下一輪 autotrade 起重新記帳）"
+                else:
+                    reply = _ln.lanes_text(state)          # 真帳同期基準由 run_lanes 記在 state["lanes"]
+            except Exception as e:
+                reply = f"❌ /lanes 失敗：{e}"
 
         elif cmd == "/alpha":
             # 橫斷面 Alpha 脊椎（A）與 meta-labeling（B）狀態：讀夜間工作流產出 data/alpha/*（ALPHA_SPINE.md）
@@ -3415,35 +3430,53 @@ def run_autotrade(state: dict, results: list[dict]) -> str | None:
     equity = at._f(account.get("equity")) or 0.0
     bp = at._f(account.get("buying_power")) or 0.0
 
-    # 候選池（A 段 Alpha 脊椎；ALPHA_SPINE.md §4）：旗標開且 rank.json 閘門過 → 前 k 名補掃描併入候選；
-    # 已持有但不在 watchlist 的代碼也一併補掃（引擎對持倉不失明）。失敗只退回 watchlist。
+    # 候選池（A 段 Alpha 脊椎；ALPHA_SPINE.md §4）：rank.json 閘門過 → 前 k 名補掃描。
+    #   alpha_pool_enabled 開 → 併入真帳候選（並補掃「持有但不在 watchlist」的代碼，引擎對持倉不失明）；
+    #   關但 lanes_enabled 開 → 只給多線平行帳用（pool_only）。失敗只退回 watchlist。
     pool_syms: list[str] = []
-    if th.get("alpha_pool_enabled", False):
+    pool_rows: list[dict] = []
+    pool_available = False
+    _pool_on = bool(th.get("alpha_pool_enabled", False))
+    if _pool_on or th.get("lanes_enabled", True):
         try:
             import alpha_spine as _asp
             _rank = _asp.load_rank()
             _have = {r["ticker"] for r in results}
             pool_syms = [x for x in _asp.pool_symbols(_rank, int(th.get("alpha_pool_top", 20))) if x not in _have]
-            pool_syms += [x for x in positions if x not in _have and x not in pool_syms]
+            pool_available = bool((_rank or {}).get("gate_passed"))
+            if _pool_on:
+                pool_syms += [x for x in positions if x not in _have and x not in pool_syms]
+            if th.get("lanes_enabled", True) and isinstance(state.get("lanes"), dict):
+                # 車道持倉（跌出前 k 名者）也要有報價，否則車道停損/追蹤停擺→5 天凍結價強平，績效失真（對抗驗證 Med-1）
+                for _lb in ((state["lanes"].get("lanes") or {}).values()):
+                    for _sym in (_lb.get("positions") or {}):
+                        if _sym not in _have and _sym not in pool_syms:
+                            pool_syms.append(_sym)
             if pool_syms:
-                _extra = scan(pool_syms, th, calibration=None, quiet=True)   # quiet：持倉代碼不進公開日誌（D14）
-                results = list(results) + [dict(r, pool=True) for r in _extra]
-                print(f"Autotrade: 候選池 +{len(_extra)} 檔（Alpha 脊椎 {(_rank or {}).get('as_of')}）")
+                pool_rows = [dict(r, pool=True) for r in scan(pool_syms, th, calibration=None, quiet=True)]   # quiet：持倉代碼不進公開日誌（D14）
+                print(f"Autotrade: 候選池掃描 {len(pool_rows)} 檔（Alpha 脊椎 {(_rank or {}).get('as_of')}；{'併入真帳' if _pool_on else '僅平行帳'}）")
         except Exception as e:
-            pool_syms = []
+            pool_syms, pool_rows, pool_available = [], [], False
             print(f"Autotrade: 候選池失敗，略過 {e}")
+    if _pool_on and pool_rows:
+        results = list(results) + pool_rows
 
-    scored = []
-    for r in results:
+    def _to_scored(r):
         pos = r.get("position") or {}
         price = r.get("price")
         rps = (price - pos["stop"]) if (pos.get("stop") and price) else None
-        scored.append({"ticker": r["ticker"], "score": r.get("score", 0),
-                       "price": price, "risk_per_share": rps,
-                       "ext_atr": r.get("ext_atr"), "ret_5d": r.get("ret_5d"),          # 追高濾網（引擎缺欄不濾）
-                       "vol_60": r.get("vol_60"), "mom_12_1": r.get("mom_12_1"), "ret_1m": r.get("ret_1m"),   # meta 特徵
-                       "raw_score": r.get("score", 0),                                  # overlay 前原始評分（meta 特徵與訓練同義）
-                       "pool": bool(r.get("pool"))})                                    # 候選池／持倉補掃列（shadow 不吃）
+        return {"ticker": r["ticker"], "score": r.get("score", 0),
+                "price": price, "risk_per_share": rps,
+                "ext_atr": r.get("ext_atr"), "ret_5d": r.get("ret_5d"),          # 追高濾網（引擎缺欄不濾）
+                "vol_60": r.get("vol_60"), "mom_12_1": r.get("mom_12_1"), "ret_1m": r.get("ret_1m"),   # meta 特徵
+                "rsi": r.get("rsi"), "hi_dist_252": r.get("hi_dist_252"), "atr_pct": r.get("atr_pct"),
+                "volratio_20": r.get("volratio_20"),
+                "raw_score": r.get("score", 0),                                  # overlay 前原始評分（meta 特徵與訓練同義）
+                "pool": bool(r.get("pool"))}                                     # 候選池／持倉補掃列（shadow 不吃）
+
+    scored = [_to_scored(r) for r in results]
+    _in_real = {s_["ticker"] for s_ in scored}
+    pool_only_scored = [_to_scored(r) for r in pool_rows if r["ticker"] not in _in_real]   # 旗標關時只給平行帳
 
     config = {
         "buy_threshold":    th.get("at_buy_threshold", 0.5),
@@ -3472,6 +3505,11 @@ def run_autotrade(state: dict, results: list[dict]) -> str | None:
         scored, ao_notes, size_mult = ao.enrich(state, scored, th)
         for n in ao_notes:
             print(f"Alpha: {n}")
+        if pool_only_scored:                                   # 平行帳用的候選池列也走同一疊加層（財報 veto 等；Med-2）
+            try:
+                pool_only_scored, _, _ = ao.enrich(state, pool_only_scored, th)
+            except Exception:
+                pass
     except Exception as e:
         print(f"Autotrade: alpha_overlay 失敗，跳過資訊疊加 {e}")
 
@@ -3489,45 +3527,52 @@ def run_autotrade(state: dict, results: list[dict]) -> str | None:
         except Exception as e:
             print(f"Valuation: 估值層上下文失敗，略過 {e}")
 
-    # 交易層 meta-labeling（B 段；預設關）：夜間訓練的勝率模型 → 每個候選 p(勝) → meta_mult（0=跳過）。
+    # 交易層 meta-labeling（B 段）：夜間訓練的勝率模型 → 每個候選 p(勝) → meta_mult（0=跳過）。
+    # 模型過閘門就打分（給多線平行帳用）；只有 meta_enabled 開才套用到真帳的 scored。
     # 特徵與訓練同一函數（meta_label.features）；市場背景取 rank.json（SPY/MA50 三態、廣度，1 日延遲）
-    if th.get("meta_enabled", False):
-        try:
-            import alpha_nightly as _an
-            import alpha_spine as _asp2
-            import meta_label as _ml
-            _model = _ml.load_model()
-            _rk = _asp2.load_rank() or {}
-            _rk_age = (datetime.now(ET).date() - datetime.strptime(str(_rk.get("as_of", "1970-01-01"))[:10], "%Y-%m-%d").date()).days \
-                if _rk.get("as_of") else 999
-            if _ml.usable(_model) and _rk_age <= 7:
-                _mk = _rk.get("market") or {}
-                _ctx = {"regime": _mk.get("spy_regime"), "breadth_pct": _mk.get("breadth_pct")}
-                _cands = [s_ for s_ in scored if s_["ticker"] not in positions and float(s_.get("price") or 0) > 0]
-                _lookup = _an.FundLookup(_an.load_fin_stores([s_["ticker"] for s_ in _cands], _an.ROOT / "data" / "fin"),
-                                         _an.load_ledgers([ESTIMATES_FILE, _an.UNI_LEDGER]))
-                _today_s = datetime.now(ET).strftime("%Y-%m-%d")
-                _rows = []
-                for s_ in _cands:
-                    _fq = _lookup(s_["ticker"], _today_s)
-                    # score 特徵用 overlay 前的原始評分（訓練用 composite_series 原始值；M3）
-                    _rows.append({**s_, "score": s_.get("raw_score", s_.get("score")),
-                                  "quality": _fq.get("quality"), "rev": _fq.get("rev")})
-                _by = {s_["ticker"]: s_ for s_ in _cands}
+    meta_by_sym: dict[str, tuple] = {}
+    meta_usable = False
+    try:
+        import alpha_nightly as _an
+        import alpha_spine as _asp2
+        import meta_label as _ml
+        _model = _ml.load_model()
+        _rk = _asp2.load_rank() or {}
+        _rk_age = (datetime.now(ET).date() - datetime.strptime(str(_rk.get("as_of", "1970-01-01"))[:10], "%Y-%m-%d").date()).days \
+            if _rk.get("as_of") else 999
+        if _ml.usable(_model) and _rk_age <= 7:
+            meta_usable = True
+            _mk = _rk.get("market") or {}
+            _ctx = {"regime": _mk.get("spy_regime"), "breadth_pct": _mk.get("breadth_pct")}
+            _cands = [s_ for s_ in (scored + pool_only_scored) if s_["ticker"] not in positions and float(s_.get("price") or 0) > 0]
+            _lookup = _an.FundLookup(_an.load_fin_stores([s_["ticker"] for s_ in _cands], _an.ROOT / "data" / "fin"),
+                                     _an.load_ledgers([ESTIMATES_FILE, _an.UNI_LEDGER]))
+            _today_s = datetime.now(ET).strftime("%Y-%m-%d")
+            _rows = []
+            for s_ in _cands:
+                _fq = _lookup(s_["ticker"], _today_s)
+                # score 特徵用 overlay 前的原始評分（訓練用 composite_series 原始值；M3）
+                _rows.append({**s_, "score": s_.get("raw_score", s_.get("score")),
+                              "quality": _fq.get("quality"), "rev": _fq.get("rev")})
+            for r_ in _ml.score_rows(_model, _rows, _ctx):
+                if "meta_mult" in r_:
+                    meta_by_sym[r_["ticker"]] = (r_["meta_p"], r_["meta_mult"])
+            print(f"Autotrade: meta 打分 {len(meta_by_sym)} 檔（{_model.get('kind', 'logit')}）")
+            if th.get("meta_enabled", False):
+                _thr = float(th.get("eng_buy_threshold", config["buy_threshold"]))
                 _skipped = []
-                for r_ in _ml.score_rows(_model, _rows, _ctx):
-                    if "meta_mult" in r_:
-                        _by[r_["ticker"]]["meta_mult"] = r_["meta_mult"]
-                        _by[r_["ticker"]]["meta_p"] = r_["meta_p"]
-                        if r_["meta_mult"] == 0 and float(_by[r_["ticker"]].get("score") or 0) >= float(th.get("eng_buy_threshold", config["buy_threshold"])):
-                            _skipped.append(f"{r_['ticker']}({r_['meta_p']:.0%})")
+                for s_ in scored:
+                    if s_["ticker"] in meta_by_sym:
+                        s_["meta_p"], s_["meta_mult"] = meta_by_sym[s_["ticker"]]
+                        if s_["meta_mult"] == 0 and float(s_.get("score") or 0) >= _thr:
+                            _skipped.append(f"{s_['ticker']}({s_['meta_p']:.0%})")
                 if _skipped:
                     ao_notes.append("🧪 meta 勝率低於門檻跳過：" + "、".join(_skipped[:6]))
-                print(f"Autotrade: meta 打分 {len(_cands)} 檔")
-            else:
-                print("Autotrade: meta 模型未通過閘門／不存在，或 rank.json 市場背景過期（>7 日），略過")
-        except Exception as e:
-            print(f"Autotrade: meta 打分失敗，略過 {e}")
+        else:
+            print("Autotrade: meta 模型未通過閘門／不存在，或 rank.json 市場背景過期（>7 日），略過")
+    except Exception as e:
+        meta_by_sym, meta_usable = {}, False
+        print(f"Autotrade: meta 打分失敗，略過 {e}")
 
     # 總經事件靜默窗（FOMC 會期兩天）：全體 no_entry → 不開新倉/不加碼，出場機制照常。
     # 2026-09 實案：FOMC 前一週引擎在油價/殖利率衝擊週密集進場+加碼，全數被掃出；
@@ -3539,7 +3584,7 @@ def run_autotrade(state: dict, results: list[dict]) -> str | None:
             _bo, _bo_why = _mc_bo.event_blackout(
                 datetime.now(ET).strftime("%Y-%m-%d"), int(th.get("event_blackout_days", 1)))
             if _bo:
-                for s_ in scored:
+                for s_ in scored + pool_only_scored:           # 平行帳的候選池列同樣靜默（Med-2）
                     s_["no_entry"] = True
                 ao_notes.append(f"📅 {_bo_why} → 事件靜默：不開新倉、不加碼（出場照常）")
                 print(f"Autotrade: 事件靜默窗（{_bo_why}）")
@@ -3643,6 +3688,23 @@ def run_autotrade(state: dict, results: list[dict]) -> str | None:
     except Exception as e:
         print(f"Mirror: 鏡像帳失敗，跳過 {e}")
         mirror_lines = []
+
+    # 多線平行帳（lanes.py）：現行／＋候選池／＋候選池＋meta 三條虛擬帳同輪記帳（不下單、不推播；/lanes 看）
+    if th.get("lanes_enabled", True):
+        try:
+            import lanes as _lanes
+            _ln_rows = []
+            for s_ in scored + pool_only_scored:
+                s2 = dict(s_)
+                if s_["ticker"] in meta_by_sym:
+                    s2["meta_p"], s2["meta_mult"] = meta_by_sym[s_["ticker"]]
+                _ln_rows.append(s2)
+            _ln_rg = market_regime(state) if th.get("regime_filter_enabled", True) else None
+            _lanes.run_lanes(state, _ln_rows, config, _ln_rg.get("regime") if _ln_rg else None,
+                             datetime.now(ET).strftime("%Y-%m-%d"), meta_usable=meta_usable, pool_available=pool_available,
+                             real_equity=equity)
+        except Exception as e:
+            print(f"Lanes: 多線平行帳失敗，跳過 {type(e).__name__}")   # 不印例外文字（可能含代碼，D14）
 
     if not orders:
         if mirror_lines:
