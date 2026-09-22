@@ -33,7 +33,12 @@ DEFAULTS = {
     "years": 5, "fade_years": 5, "terminal_growth": 0.03, "long_growth": 0.06,
     "erp": DEFAULT_ERP, "rf": DEFAULT_RF, "sbc_as_cost": True, "mid_year": True,
     "beta_floor": 0.6, "beta_cap": 2.0, "growth_floor": -0.30, "growth_cap": 0.60,
-    "roic_tv": None,               # None → 收斂至 WACC（價值中性）；可覆蓋（護城河證據才用）
+    "roic_tv": None,               # 固定終值 ROIC（None → 依 roic_tv_mode）；/model set roic_tv 可逐檔覆蓋
+    # 終值 ROIC 模式（2026-09 校準）：第一批四檔巨型股（AAPL/MSFT/NVDA/GOOGL）全部 exit、MoS −32%～−62%
+    # ——純「價值中性」（ROIC_TV=WACC）把歷史 ROIC 30%+ 的公司第 6 年起超額報酬歸零，系統性偏低到
+    # 判定失去鑑別力。"fade"：保留歷史 ROIC 對 WACC 溢價的 roic_keep 倍、上限 roic_cap（護城河會侵蝕，
+    # 但不會一夕歸零）；bear 情境仍用價值中性（溢價全失）；"neutral" 回到舊行為。
+    "roic_tv_mode": "fade", "roic_keep": 0.5, "roic_cap": 0.10,
     "prob": (0.25, 0.50, 0.25),    # bear / base / bull
     "mc_n": 2000, "mc_seed": 7,
 }
@@ -212,7 +217,29 @@ def derive_drivers(periods: list[dict], profile: dict | None = None, estimates: 
         tgr = wacc - 0.02
         if ov.get("tgr") is not None:
             clamped["tgr"] = tgr
-    roic_tv = _f(ov.get("roic_tv")) if ov.get("roic_tv") is not None else (c["roic_tv"] if c["roic_tv"] else wacc)
+    # 歷史 ROIC（近 3 期中位數；quality.roic_series 的投入資本口徑）供終值 ROIC 淡出
+    roic_hist = None
+    try:
+        import quality as _q
+        _rs = [v for _, v in _q.roic_series(periods[:4]) if v is not None and math.isfinite(v)]
+        _rs = _rs[-3:]
+        if _rs:
+            roic_hist = sorted(_rs)[len(_rs) // 2]
+    except Exception:
+        roic_hist = None
+    if ov.get("roic_tv") is not None:
+        roic_tv, prov["roic_tv"] = _f(ov["roic_tv"]), "override"
+    elif c["roic_tv"]:
+        roic_tv, prov["roic_tv"] = float(c["roic_tv"]), "fixed"
+    elif str(c.get("roic_tv_mode", "fade")) == "fade" and roic_hist is not None and roic_hist > wacc \
+            and (_f(c.get("roic_keep")) or 0.0) > 0 and (_f(c.get("roic_cap")) or 0.0) > 0:
+        keep = _clip(_f(c.get("roic_keep")) or 0.0, 0.0, 1.0)
+        cap = _clip(_f(c.get("roic_cap")) or 0.0, 0.0, 0.30)
+        roic_tv = wacc + min(keep * (roic_hist - wacc), cap)
+        prov["roic_tv"] = f"fade(hist {roic_hist:.0%}→保留 {keep:.0%}，上限 +{cap:.0%})"
+    else:
+        roic_tv, prov["roic_tv"] = wacc, "neutral"          # keep/cap=0 亦視為價值中性（標籤不誤導）
+    roic_cap_eff = _clip(_f(c.get("roic_cap")) or 0.0, 0.0, 0.30)
     if roic_tv < wacc:                                # 終值 ROIC 不得低於 WACC（否則成長毀值）
         roic_tv = wacc
         if ov.get("roic_tv") is not None:
@@ -223,7 +250,7 @@ def derive_drivers(periods: list[dict], profile: dict | None = None, estimates: 
             "opm_target": opm_target, "tax": tax, "da_pct": da_pct, "capex_pct": capex_pct,
             "sbc_pct": sbc_pct, "nwc_pct": nwc_pct, "shares": shares, "net_debt": net_debt,
             "debt": debt, "cash": cash, "beta_raw": raw_beta, "beta": beta, "rf": rf, "erp": erp,
-            "cost_debt": rd, "coverage": coverage, "wacc": wacc, "tgr": tgr, "roic_tv": roic_tv,
+            "cost_debt": rd, "coverage": coverage, "wacc": wacc, "tgr": tgr, "roic_tv": roic_tv, "roic_hist": roic_hist, "roic_cap": roic_cap_eff,
             "price": _f(pf.get("price")), "mkt_cap": mkt_cap, "sector": pf.get("sector"),
             "hist_cagr": cagr, "hist_yoy": yoy, "sbc_as_cost": bool(c["sbc_as_cost"]),
             "years": years, "fade_years": int(c["fade_years"]), "mid_year": bool(c["mid_year"]),
@@ -293,12 +320,13 @@ def value_drivers(d: dict, **tweak) -> dict:
 # ── 4. 情境 / 蒙地卡羅 / 敏感度 / 反向 DCF ────────────────────────────────
 
 def scenarios(d: dict, prob=None) -> dict:
-    """bear：成長 −50%|g|、目標營益率 −3pp、WACC +1pp；bull：成長 +25%|g|、+2pp、−0.5pp（不對稱、有界；|g| 讓負成長不反轉）。"""
+    """bear：成長 −50%|g|、目標營益率 −3pp、WACC +1pp、終值 ROIC 回到 WACC（護城河溢價全失）；
+    bull：成長 +25%|g|、+2pp、−0.5pp（不對稱、有界；|g| 讓負成長不反轉）。"""
     p = prob or DEFAULTS["prob"]
     lo, hi = DEFAULTS["growth_floor"], DEFAULTS["growth_cap"]
     bear = value_drivers(d, rev_g=[_clip(g - 0.5 * abs(g), lo, hi) for g in d["rev_g"]],   # 衝擊用 |g|（Med-2）
                          opm_target=d["opm_target"] - 0.03, wacc=d["wacc"] + 0.01,
-                         tgr=min(d["tgr"], d["wacc"] + 0.01 - 0.02), roic_tv=max(d["roic_tv"], d["wacc"] + 0.01))
+                         tgr=min(d["tgr"], d["wacc"] + 0.01 - 0.02), roic_tv=d["wacc"] + 0.01)   # bear：終值溢價全失（價值中性）
     base = value_drivers(d)
     bull = value_drivers(d, rev_g=[_clip(g + 0.25 * abs(g), lo, hi) for g in d["rev_g"]],
                          opm_target=d["opm_target"] + 0.02, wacc=max(d["wacc"] - 0.005, d["tgr"] + 0.02))
@@ -542,6 +570,7 @@ def audit(d: dict, base: dict, sc: dict) -> dict:
         "tv_pct_ok": base.get("tv_pct") is not None and base["tv_pct"] <= 0.75,   # >75% 才算失敗；偏低只是保守
         "implied_tv_multiple_ok": base.get("implied_tv_ebitda") is None or base["implied_tv_ebitda"] <= 25,
         "roic_consistency_ok": d["roic_tv"] >= d["wacc"],
+        "tv_premium_ok": (d["roic_tv"] - d["wacc"]) <= float(d.get("roic_cap", DEFAULTS["roic_cap"])) + 1e-9,   # 手動給超額溢價 → 進 review
         "scenario_width_ok": sc.get("width") is not None and sc["width"] >= 1.8,
         "shares_ok": bool(d.get("shares")) and d["shares"] > 0,
         "equity_positive": base.get("equity") is not None and base["equity"] > 0,
@@ -676,7 +705,8 @@ def model_text(res: dict, ticker: str = "") -> str:
                  + f"（{d['provenance'].get('g1', '')}）｜營益率 {d['opm_last']:.1%}→{d['opm_target']:.1%}")
     braw = "" if d.get("beta_raw") is None else f" 原 {d['beta_raw']:.2f}"
     lines.append(f"WACC {d['wacc']:.1%}（β {d['beta']:.2f}{braw}、"
-                 f"rf {d['rf']:.2%}、Rd {d['cost_debt']:.2%}）｜終端 g {d['tgr']:.1%}、ROIC 終值 {d['roic_tv']:.1%}｜稅 {d['tax']:.0%}")
+                 f"rf {d['rf']:.2%}、Rd {d['cost_debt']:.2%}）｜終端 g {d['tgr']:.1%}、ROIC 終值 {d['roic_tv']:.1%}"
+                 f"（{(d.get('provenance') or {}).get('roic_tv', 'neutral')}）｜稅 {d['tax']:.0%}")
     if sc.get("base") is not None:
         lines.append(f"公允價值：熊 {sc['bear']:.0f}｜*基 {sc['base']:.0f}*｜牛 {sc['bull']:.0f}"
                      + (f"｜機率加權 {sc['ev_weighted']:.0f}" if sc.get("ev_weighted") else "")
@@ -742,6 +772,27 @@ if __name__ == "__main__":
     assert d["provenance"]["g1"] == "history" and abs(d["rev_g"][0] - (10229 / 8012 - 1)) < 1e-4
     assert abs(d["beta"] - (0.67 * 2.08 + 0.33)) < 1e-9 and d["wacc"] < 0.1483 and d["tgr"] < d["wacc"]
     assert d["roic_tv"] >= d["wacc"] and d["net_debt"] == 2913 - 1828
+    # 終值 ROIC 淡出：VRT 歷史 ROIC ≈30% ≫ WACC → 保留一半溢價、上限 +10pp；bear 情境回到價值中性
+    assert d["roic_hist"] is not None and d["roic_hist"] > 0.2, d["roic_hist"]
+    assert abs(d["roic_tv"] - (d["wacc"] + min(0.5 * (d["roic_hist"] - d["wacc"]), 0.10))) < 1e-9
+    assert d["provenance"]["roic_tv"].startswith("fade")
+    d_neu = derive_drivers(periods, profile, cfg={"roic_tv_mode": "neutral"})
+    assert abs(d_neu["roic_tv"] - d_neu["wacc"]) < 1e-9 and d_neu["provenance"]["roic_tv"] == "neutral"
+    assert value_drivers(d)["per_share"] > value_drivers(d_neu)["per_share"]        # 淡出模式 > 價值中性
+    _sc_f, _sc_n = scenarios(d), scenarios(d_neu)
+    assert abs(_sc_f["bear"] - _sc_n["bear"]) < 1e-6                               # bear 不吃溢價（兩模式同 bear）
+    assert _sc_f["width"] > _sc_n["width"]                                          # 品質公司區間更寬（溢價＝不確定性）
+    # 低 ROIC 公司（ROIC < WACC）→ 自動退回價值中性
+    low = [dict(p_, operating_income=p_["revenue"] * 0.02, ebit=p_["revenue"] * 0.02) for p_ in periods]
+    d_low = derive_drivers(low, profile)
+    assert d_low["provenance"]["roic_tv"] == "neutral" and abs(d_low["roic_tv"] - d_low["wacc"]) < 1e-9
+    d_ovr = derive_drivers(periods, profile, overrides={"roic_tv": 0.45})
+    assert d_ovr["provenance"]["roic_tv"] == "override"
+    assert derive_drivers(periods, profile, cfg={"roic_keep": 0})["provenance"]["roic_tv"] == "neutral"   # keep=0 → 標 neutral
+    d_cap = derive_drivers(periods, profile, cfg={"roic_cap": 0.15})
+    assert abs(d_cap["roic_cap"] - 0.15) < 1e-9 and audit(d_cap, value_drivers(d_cap), scenarios(d_cap))["checks"]["tv_premium_ok"]
+    print(f"✅ 2b 終值 ROIC 淡出：hist {d['roic_hist']:.0%} → ROIC_TV {d['roic_tv']:.1%}（WACC {d['wacc']:.1%}）"
+          f"；每股 fade {value_drivers(d)['per_share']:.1f} vs neutral {value_drivers(d_neu)['per_share']:.1f}")
     d_est = derive_drivers(periods, profile, estimates={"est": {"0y": {"rev_growth": 0.37}, "+1y": {"rev_growth": 0.29}}})
     assert d_est["provenance"]["g1"].startswith("consensus") and abs(d_est["rev_g"][1] - 0.29) < 1e-4
     d_gd = derive_drivers(periods, profile, overrides={"guidance_rev": 14000, "opm_target": 0.24, "beta": 1.4, "tgr": 0.03})

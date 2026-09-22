@@ -43,7 +43,7 @@ HOLDOUT_MARGIN = 0.01         # best 須勝過 baseline holdout 報酬 +1 個百
 PERIOD_DAYS = {"3m": 63, "6m": 126, "1y": 252, "2y": 504}
 FETCH_PERIOD = {"3m": "2y", "6m": "2y", "1y": "2y", "2y": "3y"}   # 含 ~1 年暖機
 
-# 網格：進場門檻 × 停損倍數 × 追蹤回落 × 分批 R × 死錢天數 = 108 組
+# 出場網格（預設 /engtest opt）：進場門檻 × 停損倍數 × 追蹤回落 × 分批 R × 死錢天數 = 108 組
 GRID = {
     "buy_threshold":   (0.4, 0.5, 0.6),
     "stop_mult":       (1.0, 1.5),
@@ -51,11 +51,21 @@ GRID = {
     "scale_out_r":     (1.5, 2.5),
     "dead_money_days": (20, 30, 45),
 }
+# 進場品質網格（/engtest opt entry；2026-09 診斷：追高進場、加碼在頂、中性 regime 未縮量）= 32 組
+GRID_ENTRY = {
+    "buy_threshold":     (0.5, 0.6),
+    "entry_max_ext_atr": (1.5, 2.0, 3.0, 0),   # 0 = 關閉追高濾網
+    "pyramid_r":         (1.0, 2.0),           # 預設分批 1.5R 下 2.0 = 實質關閉加碼；若已 apply scale_out_r 2.5 則語意為「晚加碼」
+    "neutral_risk_mult": (0.5, 1.0),
+}
+GRIDS = {"exit": GRID, "entry": GRID_ENTRY}
 PARAM_LABELS = {          # 顯示用（Telegram Markdown 不能有底線）
     "val_enabled": "估值層",
     "buy_threshold": "進場門檻", "stop_mult": "停損倍數", "trail_pct": "追蹤回落",
     "scale_out_r": "分批R", "dead_money_days": "死錢天數", "trail_tight_pct": "收緊追蹤",
     "exit_threshold": "轉弱門檻", "max_positions": "最大檔數", "risk_pct": "單筆風險",
+    "entry_max_ext_atr": "追高上限ATR", "pyramid_max_ext_atr": "加碼延伸上限", "pyramid_r": "加碼R",
+    "pyramid_min_score": "加碼最低分", "neutral_risk_mult": "中性風險倍數", "event_blackout": "事件靜默",
 }
 
 
@@ -132,10 +142,16 @@ def precompute(data: dict[str, pd.DataFrame], days: int = 252,
                 continue
             atr = ind._atr_value(c, h, lo)
             d = str(df.index[i].date())
+            try:                                      # 延伸度＝(收盤−MA20)/ATR（與正式 scan 的 ext_atr 同義）
+                ma20 = float(c.rolling(20).mean().iloc[-1]) if len(c) >= 20 else None
+                ext = ((float(c.iloc[-1]) - ma20) / atr) if (ma20 is not None and atr > 0) else None
+            except Exception:
+                ext = None
             by_date.setdefault(d, {})[sym] = {
                 "score": sc, "close": float(c.iloc[-1]),
                 "open": float(df["Open"].iloc[i]) if "Open" in df else float(c.iloc[-1]),
                 "rps": (atr * atr_mult) if atr > 0 else None,
+                "ext_atr": ext,
             }
     dates = sorted(by_date)
     reg: dict[str, str | None] = {}
@@ -240,6 +256,15 @@ def val_hist_coverage(val_hist: dict) -> str | None:
     return min(ds) if ds else None
 
 
+def _blackout_day(d: str, cfg: dict) -> bool:
+    """FOMC 靜默日判定（macro.event_blackout；模組缺失回 False，不毀重放）。"""
+    try:
+        import macro as _mc
+        return bool(_mc.event_blackout(d, int(cfg.get("event_blackout_days", 1)))[0])
+    except Exception:
+        return False
+
+
 def replay(pre: dict, params: dict | None = None, dates: list[str] | None = None,
            equity0: float = START_EQUITY, val_hist: dict | None = None) -> dict:
     """
@@ -273,11 +298,15 @@ def replay(pre: dict, params: dict | None = None, dates: list[str] | None = None
         eq_curve.append((d, equity))
         expo.append(1 - book["cash"] / equity if equity > 0 else 0.0)
         scored = [{"ticker": s, "score": v["score"], "price": v["close"],
-                   "risk_per_share": v.get("rps")} for s, v in day.items() if s != "SPY"]
+                   "risk_per_share": v.get("rps"), "ext_atr": v.get("ext_atr")}
+                  for s, v in day.items() if s != "SPY"]
         if val_hist and cfg.get("val_enabled"):
             vc = val_ctx_from_hist(val_hist, d, closes)      # PIT：只用列日期 ≤ d 的估值
             for sc_ in scored:
                 sc_.update(vc.get(sc_["ticker"], {}))
+        if cfg.get("event_blackout", True) and _blackout_day(d, cfg):
+            for sc_ in scored:                              # 與正式 run_autotrade 同語意：FOMC 會期不開新倉/不加碼
+                sc_["no_entry"] = True
         pos_view = {}
         for s, p in book["positions"].items():
             px = closes.get(s) or book["last_px"].get(s) or p["entry"]
@@ -487,6 +516,7 @@ def run_text(rep: dict, params: dict | None, dates: list[str], bench: float | No
     m = rep["metrics"]
     import trade_engine as te
     p = {k: (params or {}).get(k, te.ENGINE_DEFAULTS[k]) for k in GRID}
+    p.update({k: params[k] for k in GRID_ENTRY if k in (params or {}) and k not in GRID})   # 進場品質參數（有覆蓋才顯示）
     if (params or {}).get("val_enabled"):
         p["val_enabled"] = True
     lines = [f"🧪 *引擎歷史重放*（{period_label or '期間'} {dates[0]}→{dates[-1]}，"
@@ -548,7 +578,7 @@ def opt_text(opt: dict, top_n: int = 5) -> str:
     else:
         lines.append("\n➖ 無組合同時滿足訓練樣本與驗證正期望——維持現行")
     lines.append("\n⚠️ 歷史尋優極易過擬合；可信的是 holdout 欄與 DSR。"
-                 "成交=次日開盤含成本、不含 Alpha 疊加。非投資建議")
+                 "成交=次日開盤含成本、不含 Alpha 疊加；regime 用 SPY/MA50 三態近似（無氣象台廣度否決）。非投資建議")
     return "\n".join(lines)
 
 
@@ -735,4 +765,26 @@ if __name__ == "__main__":
         assert t.count("*") % 2 == 0 and "_" not in t.replace("`/engtest opt`", ""), t
     assert "引擎歷史重放" in txt and "引擎參數學習" in txt2
     print("✅ 9 文字輸出（Markdown 安全）")
+
+    # 10) 事件靜默：FOMC 決議日（及前一日）不開新倉/不加碼——重放與正式同語意；關閉時可買
+    bo_days = [d for d in pre["dates"] if _blackout_day(d, {})]
+    assert bo_days and _blackout_day("2025-03-19", {}) and not _blackout_day("2025-03-20", {})
+    nxt = {d: pre["dates"][i + 1] for i, d in enumerate(pre["dates"][:-1])}
+    fill_after_bo = {nxt[d] for d in bo_days if d in nxt}
+    rep_bo = replay(pre, {"buy_threshold": 0.3, "entry_max_ext_atr": 0, "event_blackout": True})
+    buys_bo = [j for j in rep_bo["journal"] if j.get("side") == "buy" and j.get("date") in fill_after_bo]
+    assert buys_bo == [], buys_bo
+    rep_nb = replay(pre, {"buy_threshold": 0.3, "entry_max_ext_atr": 0, "event_blackout": False})
+    assert len([j for j in rep_nb["journal"] if j.get("side") == "buy"]) >= len([j for j in rep_bo["journal"] if j.get("side") == "buy"])
+    # 進場品質網格：ext_atr 進 scored、apply/clear 鍵名帶 eng_ 前綴並可還原
+    assert all("ext_atr" in v for d in pre["dates"][-5:] for v in pre["by_date"][d].values())
+    st_g = {"thresholds": {"eng_trail_pct": 0.08}}
+    wr = apply_params(st_g, {"entry_max_ext_atr": 1.5, "neutral_risk_mult": 1.0, "pyramid_r": 2.0})
+    assert set(wr) == {"eng_entry_max_ext_atr", "eng_neutral_risk_mult", "eng_pyramid_r"} and st_g["thresholds"]["eng_pyramid_r"] == 2.0
+    clear_params(st_g)
+    assert st_g["thresholds"] == {"eng_trail_pct": 0.08}
+    strict = replay(pre, {"buy_threshold": 0.3, "entry_max_ext_atr": 0.5, "entry_max_ret5d": 0})["metrics"]
+    loose_e = replay(pre, {"buy_threshold": 0.3, "entry_max_ext_atr": 0})["metrics"]
+    assert strict["n_trades"] <= loose_e["n_trades"]                       # 追高濾網越嚴交易越少
+    print(f"✅ 10 事件靜默重放（{len(bo_days)} 個靜默日無買單）、進場網格 apply/clear、追高濾網敏感度")
     print("\nengine_backtest selftest OK ✅")

@@ -42,7 +42,8 @@ SENSITIVE_KEYS = ("theses", "shadow", "engine", "thresholds",
                   "mirror",    # 鏡像帳：使用者真實布建與資金量，絕不落明文
                   "eng_opt",   # /engtest apply 的參數紀錄（策略參數）
                   "models", "val_hist",   # 公司模型人工覆蓋與估值歷史（使用者的研究判斷）
-                  "guidance")             # 指引/KPI 萃取結果（論點監測輸入）
+                  "guidance",             # 指引/KPI 萃取結果（論點監測輸入）
+                  "lanes")                # 多線平行帳：虛擬持倉 ≈ 引擎當下會持有什麼（與真帳高度相關）
 
 _MAGIC = "__enc__"
 
