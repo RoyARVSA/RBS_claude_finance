@@ -465,8 +465,12 @@ def decide(scored: list[dict], positions: dict, equity: float, buying_power: flo
             r_need = (adds + 1) * float(cfg["pyramid_r"])
             if _val_flag(s_rec.get("val_early")):    # 估值層：MoS>30% → 加碼門檻提早到 0.75×
                 r_need *= 0.75
+            # 加碼前追蹤停損必須已啟動（#57）：否則硬停損會打在放大後的整個部位上、虧損超出 risk_pct 預算。
+            # 預設 pyramid_r = trail_activate_r = 1.0，此條件恆同時成立（行為不變）；只在放寬追蹤啟動點時生效
+            r_peak_now = (max(float(rec.get("peak", entry)), px) - entry) / rps
             if adds < int(cfg["pyramid_max_adds"]) \
                     and r_now >= r_need \
+                    and r_peak_now >= float(cfg["trail_activate_r"]) \
                     and sc >= float(cfg["pyramid_min_score"]):
                 is_ext, ext, _r5 = _extended(s_rec, pyr_max_ext)
                 if is_ext:
@@ -923,6 +927,17 @@ if __name__ == "__main__":
     o_mn, _, _ = decide([{**base_m, "meta_mult": float("nan")}], {}, 100000, 100000, None, "risk_on", {}, T)
     assert o_m1[0]["qty"] == 100 and o_mh[0]["qty"] == 125 and o_ml[0]["qty"] == 50 and o_mx[0]["qty"] == 125 and o_mn[0]["qty"] == 100
     print("✅ 26 meta_mult（0 跳過、夾制、NaN=1）")
+
+    # 27) #57：追蹤未啟動不加碼（trail_activate_r 2.0、+1.25R → 不加）；預設參數（1.0）照常加碼
+    eng_27 = {"pos": {"WIN": {"entry": 100.0, "rps": 4.0, "peak": 105.0, "opened": "2026-07-01", "init_qty": 20, "adds": 0, "scaled_out": False}},
+              "stop_events": [], "cooldown": {}, "halted_until": None, "equity_peak": 100000}
+    row27 = {"ticker": "WIN", "score": 0.6, "price": 105.0, "risk_per_share": 4.0, "ext_atr": 1.0}
+    o27a, _, _ = decide([dict(row27)], {"WIN": mk_pos(20, 100.0, 105.0)}, 100000, 50000,
+                        {**eng_27, "pos": {"WIN": dict(eng_27["pos"]["WIN"])}}, "risk_on", {"trail_activate_r": 2.0}, T)
+    o27b, _, _ = decide([dict(row27)], {"WIN": mk_pos(20, 100.0, 105.0)}, 100000, 50000,
+                        {**eng_27, "pos": {"WIN": dict(eng_27["pos"]["WIN"])}}, "risk_on", {}, T)
+    assert not any(o["mechanism"] == "pyramid" for o in o27a) and any(o["mechanism"] == "pyramid" for o in o27b)
+    print("✅ 27 追蹤未啟動不加碼（#57）")
 
     print("\n─ engine_status_text ─")
     eng = mk_eng("AAPL", 100, 3)

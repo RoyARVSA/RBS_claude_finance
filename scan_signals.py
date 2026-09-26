@@ -61,7 +61,7 @@ Telegram 指令（傳給 Bot）：
   /universe [rebuild]     – 選股池快照（寬宇宙→品質/流動性/動能篩→候選前 N；月頻自動重建）
   /est [TICKER]           – 分析師預估快照（共識/修正動能/目標價/評等/SUE 歷史）；無參數看排行
   /engtest [期間]          – 整台引擎歷史重放（現行參數；次日開盤成交、含成本、對照 SPY）
-  /engtest opt [期間] [entry] [apply] – 引擎參數學習：出場網格 108 組／進場品質網格 32 組 × 三段 walk-forward + DSR；clear 還原
+  /engtest opt [期間] [entry|loose] [apply] – 引擎參數學習：出場 108／進場品質 32／放寬出場 36 組 × 三段 walk-forward + DSR，附舊邏輯基準；clear 還原
   /weekly                 – 立即生成每週深度週報（每週日 ET 18:00 後自動推送）
   /committee TICKER       – 機構決策會議：分析師×4→對辯→交易員→風控→PM（別名 /cmt）
   /set mtf_enabled on/off – 週線同向確認（日線分數與週線同向加強、背離減弱）
@@ -458,6 +458,7 @@ def _cmd_help() -> str:
         "`/engtest [3m|6m|1y|2y]` — 整台引擎歷史重放：現行參數過去 N 個月會賺多少（次日開盤成交、含成本、對照 SPY）\n"
         "`/engtest opt [1y] [apply]` — 引擎參數學習：進場門檻×停損×追蹤×分批×死錢 108 組（估值歷史夠長時再 ×2 做估值層開/關 A/B），三段 walk-forward + DSR，holdout 通過才推薦；apply 套用、`/engtest clear` 還原\n"
         "`/engtest opt entry [1y] [apply]` — 進場品質網格 32 組：門檻×追高上限(ATR)×加碼R×中性風險倍數——驗證 2026-09 診斷出的追高/加碼在頂問題\n"
+        "`/engtest opt loose [1y] [apply]` — 放寬出場網格 36 組：追蹤回落×收緊門檻（含不收緊）×分批R（含關閉）×停損倍數，並附舊邏輯（Shadow 同款）基準——驗證「動能行情中太早鎖利/停損」是否在樣本外成立（#56）\n"
         "`/weekly` — 立即生成每週深度週報（指數/強弱/計分板/RRG/下週行事曆）\n"
         "`/committee NVDA`（或 `/cmt`）— 開一場機構決策會議（需 LLM key，約 1-3 分）\n\n"
         "🤖 *模擬交易（Alpaca paper・分層引擎）*\n"
@@ -1765,7 +1766,9 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                 if is_opt and eb.PERIOD_DAYS.get(period, 0) < 80:
                     period = "6m"        # 三段 walk-forward 需 ≥80 個交易日（3m 恆不足）
                 do_apply = is_opt and any(a.lower() == "apply" for a in rest)
-                grid_name = "entry" if (is_opt and any(a.lower() == "entry" for a in rest)) else "exit"
+                _ra = [a.lower() for a in rest]
+                grid_name = ("loose" if "loose" in _ra else "entry" if "entry" in _ra else "exit") if is_opt else "exit"
+                _grid_lab = {"exit": "出場", "entry": "進場品質", "loose": "放寬出場"}[grid_name]
                 _n_comb = 1
                 for _vals in eb.GRIDS[grid_name].values():
                     _n_comb *= len(_vals)
@@ -1776,7 +1779,7 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                 else:
                     _tg_send(token, src_chat or chat_id,
                              f"🧪 引擎歷史重放（{len(syms)} 檔 × {period}"
-                             f"{f'、{_n_comb} 組{grid_name} 網格參數（有估值歷史時 ×2 做估值層 A/B）× 三段 walk-forward' if is_opt else ''}，"
+                             f"{f'、{_n_comb} 組{_grid_lab}網格參數（有估值歷史時 ×2 做估值層 A/B）× 三段 walk-forward' if is_opt else ''}，"
                              f"約 {'1-2' if is_opt else '1'} 分鐘）…")
                     try:
                         # 長操作前先落盤 last_update_id（runner 超時被殺也不會毒訊息迴圈）
@@ -1800,8 +1803,14 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                                 ab_note = f"\n估值層 A/B 已納入（估值歷史自 {cov}、{len(vh)} 檔；PIT 由列日期保證）"
                             elif cov:
                                 ab_note = f"\n估值層 A/B 略過：估值歷史自 {cov} 太短，覆蓋不到訓練段"
+                            _lg_cfg = {"buy_threshold": th.get("at_buy_threshold", 0.5),       # 與正式 Shadow 同參數（M2）
+                                       "exit_threshold": th.get("at_exit_threshold", -0.2),
+                                       "max_positions": int(th.get("at_max_positions", 10)),
+                                       "max_position_pct": th.get("at_max_position_pct", 0.15),
+                                       "risk_pct": th.get("risk_pct", 0.01)}
                             opt = eb.run_optimize(syms, period, baseline=cur,
-                                                  thresholds=th, calibration=calib, grid=grid, val_hist=vh)
+                                                  thresholds=th, calibration=calib, grid=grid, val_hist=vh,
+                                                  legacy_cfg=_lg_cfg)
                             reply = opt["text"] + ab_note
                             if do_apply:
                                 rec = opt.get("recommend")

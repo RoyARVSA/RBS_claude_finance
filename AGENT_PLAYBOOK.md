@@ -98,6 +98,32 @@ Prioritize accuracy over speed. Do NOT modify files.
 4. 授權檢查：MIT/Apache 可抄公式；AGPL（如 OpenBB）只可參考端點行為、不可逐字抄碼
 5. 照常對抗驗證——官方方法論不保證你的實作沒 bug（DCF 批次照樣抓出 2 個 Med）
 
+### T5 GitHub issue（發現問題就開，2026-09-26 使用者要求）
+
+**何時開**：任何要修的 bug、對抗驗證的 High/Med、績效或資料異常（例：Shadow 大幅領先引擎、夜間輸出出現 NaN）。
+先開 issue、再修；一個問題一個 issue。純 Low 且當下順手修掉的可以併在同一 issue 的留言。
+
+**內容格式**：`## 症狀`（看到什麼、在哪個檔/輸出）→ `## 原因` → `## 影響` → `## 修法`（或 `## 計畫`）。
+**公開 repo**：不寫持倉代碼與股數、淨值金額、chat id、金鑰、Actions 日誌原文；績效只用比例或定性描述。
+labels：`bug`（壞掉）、`enhancement`（改善/驗證計畫）、`documentation`。
+
+**收尾**：commit 訊息帶 `Fixes #N`（合併進 main 會自動關閉）或 `Refs #N`（還沒完）；
+修完在 issue 留言：原因、修法、驗證方式與結果、commit hash。
+
+**工具**（開發環境沒有 gh CLI；權杖在 `GH_TOKEN`，絕不 echo）：
+```bash
+# 建立（body 寫在檔案，避免 shell 轉義）
+python3 - "$TITLE" body.md bug <<'PY'
+import json, os, sys, urllib.request
+t, f, lab = sys.argv[1], sys.argv[2], sys.argv[3].split(",")
+req = urllib.request.Request("https://api.github.com/repos/RoyARVSA/RBS_claude_finance/issues", method="POST",
+    data=json.dumps({"title": t, "body": open(f, encoding="utf-8").read(), "labels": lab}).encode(),
+    headers={"Authorization": f"Bearer {os.environ['GH_TOKEN']}", "Accept": "application/vnd.github+json"})
+d = json.load(urllib.request.urlopen(req)); print(d["number"], d["html_url"])
+PY
+# 留言：POST .../issues/N/comments {"body": ...}；關閉：PATCH .../issues/N {"state":"closed","state_reason":"completed"}
+```
+
 ### T3 廣域搜尋/理解
 ```
 In /home/user/RBS_claude_finance, find <目標>。
