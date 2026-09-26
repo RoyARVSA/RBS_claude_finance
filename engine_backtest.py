@@ -58,7 +58,17 @@ GRID_ENTRY = {
     "pyramid_r":         (1.0, 2.0),           # 預設分批 1.5R 下 2.0 = 實質關閉加碼；若已 apply scale_out_r 2.5 則語意為「晚加碼」
     "neutral_risk_mult": (0.5, 1.0),
 }
-GRIDS = {"exit": GRID, "entry": GRID_ENTRY}
+# 放寬出場網格（/engtest opt loose；#56：動能行情中 +1.5R 先賣一半、5–8% 追蹤是否系統性賣掉贏家）= 36 組
+# trail_tighten_r 99 = 不再在 +2R 後改用 5% 收緊版——否則 trail_pct 只在 +1R~+2R 間生效、又常被保本地板蓋過，
+# 各 trail_pct 結果幾乎相同（對抗驗證 H1）。不放 trail_activate_r：調高它會讓加碼部位失去保本保護（#57）
+GRID_LOOSE = {
+    "trail_pct":       (0.08, 0.12, 0.20),
+    "trail_tighten_r": (2.0, 99.0),         # 99 = 不收緊
+    "scale_out_r":     (1.5, 3.0, 99.0),    # 99 = 關閉分批鎖利
+    "stop_mult":       (1.0, 1.5),
+}
+OFF_VALUE_KEYS = ("scale_out_r", "trail_tighten_r")    # 值 ≥ 50 代表「關閉」的參數
+GRIDS = {"exit": GRID, "entry": GRID_ENTRY, "loose": GRID_LOOSE}
 PARAM_LABELS = {          # 顯示用（Telegram Markdown 不能有底線）
     "val_enabled": "估值層",
     "buy_threshold": "進場門檻", "stop_mult": "停損倍數", "trail_pct": "追蹤回落",
@@ -66,6 +76,7 @@ PARAM_LABELS = {          # 顯示用（Telegram Markdown 不能有底線）
     "exit_threshold": "轉弱門檻", "max_positions": "最大檔數", "risk_pct": "單筆風險",
     "entry_max_ext_atr": "追高上限ATR", "pyramid_max_ext_atr": "加碼延伸上限", "pyramid_r": "加碼R",
     "pyramid_min_score": "加碼最低分", "neutral_risk_mult": "中性風險倍數", "event_blackout": "事件靜默",
+    "trail_activate_r": "追蹤啟動R", "trail_tighten_r": "收緊門檻R", "legacy": "舊邏輯",
 }
 
 
@@ -313,8 +324,17 @@ def replay(pre: dict, params: dict | None = None, dates: list[str] | None = None
             pos_view[s] = {"qty": p["qty"], "avg_entry_price": p["entry"],
                            "market_value": p["qty"] * px}
         try:
-            orders, engine, _notes = te.decide(scored, pos_view, equity, book["cash"],
-                                               engine, pre["regime"].get(d), cfg, d)
+            if cfg.get("legacy"):
+                # 舊邏輯（與正式 Shadow 同語意：評分 ≥ 門檻買、≤ 出場門檻賣；無停損/追蹤/分批；
+                # 正式 Shadow 在事件靜默之前呼叫 → 不受靜默影響，這裡同樣移除 no_entry；參數用 legacy_cfg（at_* 鍵）
+                import alpaca_trader as at
+                lg_rows = [{k: v for k, v in r.items() if k != "no_entry"} for r in scored]
+                lg_cfg = dict(cfg.get("legacy_cfg") or cfg)
+                orders = [dict(o, mechanism=o.get("mechanism") or ("legacy_exit" if o["side"] == "sell" else "legacy_entry"))
+                          for o in at.decide_orders(lg_rows, pos_view, equity, book["cash"], lg_cfg)]
+            else:
+                orders, engine, _notes = te.decide(scored, pos_view, equity, book["cash"],
+                                                   engine, pre["regime"].get(d), cfg, d)
         except Exception as e:                        # 單日炸掉不毀整段（記錄即可）
             orders = []
             journal.append({"date": d, "error": str(e)[:80]})
@@ -385,7 +405,7 @@ def split_dates(dates: list[str]) -> dict | None:
 
 
 def optimize(pre: dict, grid: dict | None = None, baseline: dict | None = None,
-             progress=None, val_hist: dict | None = None) -> dict:
+             progress=None, val_hist: dict | None = None, legacy_cfg: dict | None = None) -> dict:
     """
     網格逐組在三段各自完整重放（每段獨立起跑，段間不漏資訊）。
     挑選：train Sharpe 排序（n≥MIN_TRADES）→ 第一個 val 合格者（n≥VAL_MIN_TRADES
@@ -426,6 +446,12 @@ def optimize(pre: dict, grid: dict | None = None, baseline: dict | None = None,
             progress(i + 1, len(combos))
     out["results"] = results
     out["n_trials"] = len(results)
+    try:                                              # 舊邏輯基準（不參與挑選、不計入嘗試數；#56）
+        out["legacy"] = _run({"legacy": True, **({"legacy_cfg": dict(legacy_cfg)} if legacy_cfg else {})})
+        out["legacy"].pop("_holdout_eq", None)
+    except Exception as e:
+        out["legacy"] = None
+        out["legacy_error"] = type(e).__name__
     baseline_r = next((r for r in results if r["params"] == base_prm), None)
     out["baseline"] = baseline_r
     eligible = [r for r in results if r["train"]["n_trades"] >= MIN_TRADES]
@@ -507,8 +533,12 @@ def _pct(x) -> str:
 
 def _params_text(p: dict) -> str:
     def _v(v):
-        return ("開" if v else "關") if isinstance(v, bool) else f"{v:g}"
-    return "、".join(f"{PARAM_LABELS.get(k, k).replace('_', '·')} {_v(v)}" for k, v in p.items())
+        if isinstance(v, bool):
+            return "開" if v else "關"
+        return f"{v:g}"
+    return "、".join(f"{PARAM_LABELS.get(k, k).replace('_', '·')} "
+                    f"{'關' if (k in OFF_VALUE_KEYS and isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 50) else _v(v)}"
+                    for k, v in p.items())
 
 
 def run_text(rep: dict, params: dict | None, dates: list[str], bench: float | None,
@@ -516,7 +546,8 @@ def run_text(rep: dict, params: dict | None, dates: list[str], bench: float | No
     m = rep["metrics"]
     import trade_engine as te
     p = {k: (params or {}).get(k, te.ENGINE_DEFAULTS[k]) for k in GRID}
-    p.update({k: params[k] for k in GRID_ENTRY if k in (params or {}) and k not in GRID})   # 進場品質參數（有覆蓋才顯示）
+    p.update({k: params[k] for k in list(GRID_ENTRY) + list(GRID_LOOSE) + ["trail_activate_r"]
+              if k in (params or {}) and k not in GRID})   # 進場品質／放寬出場參數（有覆蓋才顯示）
     if (params or {}).get("val_enabled"):
         p["val_enabled"] = True
     lines = [f"🧪 *引擎歷史重放*（{period_label or '期間'} {dates[0]}→{dates[-1]}，"
@@ -559,6 +590,11 @@ def opt_text(opt: dict, top_n: int = 5) -> str:
 
     if opt["baseline"]:
         lines.append(f"基準（現行）：{_fmt(opt['baseline'])}")
+    if opt.get("legacy"):
+        lg = opt["legacy"]
+        lines.append(f"舊邏輯（Shadow 同款）：訓練 {_pct(lg['train']['total_ret'])}｜驗證 {_pct(lg['val']['total_ret'])}｜"
+                     f"holdout {_pct(lg['holdout']['total_ret'])}（{lg['holdout']['n_trades']}筆，回撤 {lg['holdout']['max_dd']:.0%}）"
+                     "——只當參照、不參與挑選")
     ranked = sorted([r for r in opt["results"] if r["train"]["n_trades"] >= MIN_TRADES],
                     key=lambda r: r["train"]["sharpe"], reverse=True)
     for i, r in enumerate(ranked[:top_n], 1):
@@ -602,14 +638,14 @@ def run(tickers: list[str], period: str = "1y", params: dict | None = None,
 
 def run_optimize(tickers: list[str], period: str = "1y", baseline: dict | None = None,
                  thresholds: dict | None = None, calibration: dict | None = None,
-                 grid: dict | None = None, val_hist: dict | None = None) -> dict:
+                 grid: dict | None = None, val_hist: dict | None = None, legacy_cfg: dict | None = None) -> dict:
     """參數學習進入點。回 optimize() 結果 + "text"。"""
     period = period if period in PERIOD_DAYS else "1y"
     data = fetch_history(tickers, FETCH_PERIOD[period])
     if len([s for s in data if s != "SPY"]) == 0:
         return {"results": [], "recommend": None, "text": "❌ 行情抓取失敗或資料不足，稍後再試"}
     pre = precompute(data, PERIOD_DAYS[period], thresholds, calibration)
-    opt = optimize(pre, grid, baseline, val_hist=val_hist)
+    opt = optimize(pre, grid, baseline, val_hist=val_hist, legacy_cfg=legacy_cfg)
     opt["text"] = opt_text(opt)
     return opt
 
@@ -787,4 +823,29 @@ if __name__ == "__main__":
     loose_e = replay(pre, {"buy_threshold": 0.3, "entry_max_ext_atr": 0})["metrics"]
     assert strict["n_trades"] <= loose_e["n_trades"]                       # 追高濾網越嚴交易越少
     print(f"✅ 10 事件靜默重放（{len(bo_days)} 個靜默日無買單）、進場網格 apply/clear、追高濾網敏感度")
+
+    # 11) 舊邏輯重放：只有 legacy 機制、無停損/追蹤；放寬出場網格可跑、分批關閉時無 scale_out；optimize 附舊邏輯基準
+    rep_lg = replay(pre, {"legacy": True, "buy_threshold": 0.3})
+    mechs = set(rep_lg["metrics"]["by_mech"])
+    assert rep_lg["journal"] and mechs <= {"legacy_exit", "exit"} and "stop_loss" not in mechs, mechs
+    rep_noso = replay(pre, {"buy_threshold": 0.3, "entry_max_ext_atr": 0, "scale_out_r": 99.0})
+    assert "scale_out" not in rep_noso["metrics"]["by_mech"]
+    assert len(list(product(*GRID_LOOSE.values()))) == 36 and all(k in __import__("trade_engine").ENGINE_DEFAULTS for k in GRID_LOOSE)
+    # H1：不收緊時不同 trail_pct 必須產生不同結果（網格不得退化）
+    outs = {tp: replay(pre, {"buy_threshold": 0.3, "entry_max_ext_atr": 0, "trail_pct": tp, "trail_tighten_r": 99.0,
+                             "scale_out_r": 99.0})["metrics"]["total_ret"] for tp in (0.08, 0.20)}
+    assert outs[0.08] != outs[0.20], outs
+    # M2：舊邏輯忽略事件靜默（同正式 Shadow）、吃 legacy_cfg
+    rep_bo_lg = replay(pre, {"legacy": True, "buy_threshold": 0.3, "event_blackout": True})
+    rep_nb_lg = replay(pre, {"legacy": True, "buy_threshold": 0.3, "event_blackout": False})
+    assert rep_bo_lg["metrics"]["total_ret"] == rep_nb_lg["metrics"]["total_ret"]
+    rep_hi = replay(pre, {"legacy": True, "legacy_cfg": {"buy_threshold": 0.95, "exit_threshold": -0.2}})
+    assert rep_hi["metrics"]["n_trades"] <= rep_lg["metrics"]["n_trades"]
+    assert "死錢天數 60" in _params_text({"dead_money_days": 60}) and "收緊門檻R 關" in _params_text({"trail_tighten_r": 99.0})
+    opt_l = optimize(pre, {"trail_pct": (0.08, 0.2), "scale_out_r": (1.5, 99.0)})
+    assert opt_l.get("legacy") and set(opt_l["legacy"]) >= {"train", "val", "holdout"}
+    assert "_holdout_eq" not in opt_l["legacy"] and opt_l["n_trials"] >= 4
+    txt_l = opt_text(opt_l); assert "舊邏輯" in txt_l and "**" not in txt_l
+    assert "分批R 關" in _params_text({"scale_out_r": 99.0})
+    print("✅ 11 舊邏輯重放／放寬出場網格（分批可關閉）／optimize 附舊邏輯基準")
     print("\nengine_backtest selftest OK ✅")

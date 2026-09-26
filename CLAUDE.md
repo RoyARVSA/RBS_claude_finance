@@ -24,6 +24,9 @@ Streamlit 金融儀表板（`app.py`，16 頁）+ Telegram 訊號 Bot（`scan_si
    建任務（TaskCreate；無此工具就寫計畫清單）→ 自我批判 → 實作＋**md 同步** →
    **子代理對抗驗證** → commit+push。（md 在 commit 前改完，避免文件與程式碼漂移。）
    驗證不可省：本專案幾乎每個功能的驗證都抓到過真 bug（統計見 AGENT_PLAYBOOK §1）。
+   **發現要修的問題 → 先開 GitHub issue 再修**（使用者要求，2026-09-26）：bug、驗證抓到的 High/Med、
+   績效/資料異常都開；commit 訊息帶 `Fixes #N`（或 `Refs #N`），修完在 issue 留言摘要（原因、修法、驗證結果）。
+   issue 內容受鐵律 1 約束：不放持倉、股數、淨值、chat id、金鑰。模板見 AGENT_PLAYBOOK T5（無 gh CLI 用 API）。
 4. 開發分支照 session 指示（通常 `claude/...`），`git push -u origin <branch>`；
    commit 訊息帶 session 指定 footer；**不開 PR** 除非使用者明說。
 5. 回測紀律：無前視（下一根 K 棒進場）、扣交易成本、walk-forward 樣本外驗證。
@@ -35,7 +38,7 @@ Streamlit 金融儀表板（`app.py`，16 頁）+ Telegram 訊號 Bot（`scan_si
 | 網頁頁面/UI | `app.py`（~4300 行、會持續漂移，以 `wc -l` 為準；**不要整檔讀**。導航：Grep `def page_` 找頁面、`PAGES = {` 看路由、`def _cached_` 找快取層、`def _run_.*_tool` 找 AI 助理工具執行器）|
 | Bot 訊號/指令/晨報 | `scan_signals.py`（排程進入點；指令 dispatch 搜 `elif cmd ==`）；`bot_daemon.py` 重用其全部邏輯 |
 | 技術指標 / 綜合評分 | `indicators.py`（RSI/MACD/布林/ATR/評分 `composite_score`/部位提示/回測校準/掃描 `scan`——外部一律走公開名，scan_signals 內的底線名是 re-export 向後相容）|
-| 回測引擎 | `backtest.py`（triple-barrier / walk-forward / 參數最佳化）+ `engine_backtest.py`（/engtest：整台 trade_engine 逐日重放、次日開盤成交含成本、108 組參數三段 walk-forward + DSR、apply 寫 thresholds eng_*）|
+| 回測引擎 | `backtest.py`（triple-barrier / walk-forward / 參數最佳化）+ `engine_backtest.py`（/engtest：整台 trade_engine 逐日重放、次日開盤成交含成本、出場 108／進場品質 32（entry）／放寬出場 36（loose）組三段 walk-forward + DSR、附舊邏輯 decide_orders 基準、apply 寫 thresholds eng_*）|
 | 部位與風險數學 | `quant_tools.py`（ATR/Kelly/風險平價）、`rbs_lib.py`（VaR/CVaR）|
 | 公司基本面 | `fundamentals.py`（主）+ `finnhub_data.py`（限流備援）|
 | 總經 / 產業掃描 / 選股庫 | `macro.py`（FRED + `event_blackout` FOMC 事件靜默窗，日期表 2024–2027）/ `sector_scan.py` / `stock_db.py`（含 AI 供應鏈瓶頸主題）|
@@ -67,6 +70,7 @@ Streamlit 金融儀表板（`app.py`，16 頁）+ Telegram 訊號 Bot（`scan_si
 - [ ] **新增 Bot 指令？** `scan_signals.py`：dispatch elif + `/help` 文字 + 檔頭 docstring；`GITHUB_ACTIONS.md` 指令表
 - [ ] README 同步：頁面表 / 功能列表 / 檔案結構
 - [ ] 子代理對抗驗證（模板：AGENT_PLAYBOOK §3），**High/Med 發現必修**，Low 視成本
+- [ ] 本輪發現的問題都有 GitHub issue（AGENT_PLAYBOOK T5）；commit 帶 `Fixes #N`、issue 留修正摘要
 - [ ] commit（footer）+ push
 - [ ] 回覆裡提醒使用者：**Reboot Streamlit app**（模組快取不清會 AttributeError）；Colab 用戶重跑 Cell 2
 

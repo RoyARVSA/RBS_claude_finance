@@ -180,6 +180,7 @@ state["lanes"] 加密（虛擬持倉與真帳高度相關）；不推播每筆�
 - 訓練用 MA50 三態 regime，線上氣象台仍控制曝險三態（兩者職責不同：一個是特徵、一個是保險絲）。
 - 邏輯迴歸不是 Qlib 的 LightGBM：特徵 12 個、樣本數千筆，線性模型更穩；等樣本 >2 萬再評估樹模型。
 - 兩年美股多頭樣本：OOS 閘門能擋過擬合，擋不住「regime 沒見過」。
+- 標籤的出場規則也用 `LABEL_CFG` 預設（追蹤 8%／+2R 收緊 5%／分批不模擬）；`/engtest opt apply` 改了 `eng_*` 之後，meta 標籤與實際引擎出場會脫鉤，需同步調整 `LABEL_CFG`。
 - 訓練的「訊號成立」用 `LABEL_CFG` 預設門檻（0.5／延伸 2 ATR／5 日 6%），夜間讀不到加密的 thresholds；使用者 `/set` 偏離預設時線上訊號分佈與訓練略有不同。
 - `score` 特徵：訓練用 `composite_series` 原始值（無校準權重）、線上用 overlay 前的 `raw_score`（watchlist 帶校準權重、候選池不帶）——已對齊到 overlay 前，校準差異屬已知小偏差。
 

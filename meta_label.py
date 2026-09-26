@@ -108,11 +108,14 @@ def simulate_exit(close: np.ndarray, open_: np.ndarray, i: int, rps: float, cfg:
     stop_line = entry - float(c["stop_mult"]) * rps
     peak = entry
     last = min(i + 1 + int(c["max_days"]), n - 1)
-    mech, exit_px, j_exit = "time", float(close[last]), last
+    # 時間柵欄出場價＝區間內最後一個有效收盤（寬表以宇宙日期聯集對齊，close[last] 可能缺值 → NaN 標籤，#55）
+    mech, exit_px, j_exit = "time", None, last
+    last_valid = None
     for j in range(i + 1, last + 1):
         px = float(close[j])
         if np.isnan(px):
             continue
+        last_valid = (j, px)
         peak = max(peak, px)
         r_peak = (peak - entry) / rps
         if r_peak < float(c["trail_activate_r"]) and px <= stop_line:
@@ -133,8 +136,14 @@ def simulate_exit(close: np.ndarray, open_: np.ndarray, i: int, rps: float, cfg:
                     and sc_j < float(c["buy_threshold"]):
                 mech, exit_px, j_exit = "dead_money", px, j
                 break
+    if exit_px is None:                         # 沒有觸發任何出場 → 時間柵欄
+        if last_valid is None:
+            return None                         # 進場後完全沒有有效收盤：無法標籤
+        j_exit, exit_px = last_valid            # 尾段缺值（資料缺口或下市）→ 以最後有效價結算
+        if j_exit < last:
+            mech = "data_end"                   # 與完整 45 日時間出場分開統計
     days = j_exit - (i + 1)
-    truncated = (mech == "time" and last == n - 1 and days < int(c["max_days"]))
+    truncated = (mech == "time" and last == n - 1 and (last - (i + 1)) < int(c["max_days"]))
     cost_r = 2 * float(c["cost_side"]) * entry / rps
     return {"r_mult": (exit_px - entry) / rps - cost_r, "days": int(days), "mech": mech,
             "entry": entry, "exit": exit_px, "truncated": bool(truncated)}
@@ -207,7 +216,7 @@ def build_samples(frames: dict[str, pd.DataFrame], scores: pd.DataFrame, ctx_by_
             if not (rps == rps) or rps <= 0:
                 continue
             lab = simulate_exit(cl, op, i, float(rps), c, score=sc)
-            if lab is None or lab["truncated"]:
+            if lab is None or lab["truncated"] or not np.isfinite(lab["r_mult"]):   # 非有限標籤一律丟棄（#55 防禦）
                 continue
             f = fund_lookup(sym, dates[i]) if fund_lookup else {}
             row = {"ext_atr": ex[i], "ret_5d": r5[i], "score": sc[i], "vol_60": vol60[i], "mom_12_1": mom[i],
@@ -373,6 +382,7 @@ def _logloss(y, p):
 
 def _sharpe_like(r: np.ndarray) -> float | None:
     r = np.asarray(r, dtype=float)
+    r = r[np.isfinite(r)]
     if len(r) < 2 or r.std(ddof=1) == 0:
         return None
     return float(r.mean() / r.std(ddof=1))
@@ -384,8 +394,12 @@ def purged_walk_forward(samples: list[dict], n_folds: int = N_FOLDS, embargo: in
     依時間位置切 n_folds+1 個等長區塊：第 f 折用區塊 <f 訓練（剔除 pos > 測試起點 − embargo 的樣本）、區塊 f 測試。
     回 OOS 合併指標 + 各折 + 閘門。
     """
+    n_in = len(samples or [])
+    samples = [s for s in (samples or []) if np.isfinite(s.get("r_mult", float("nan")))
+               and all(np.isfinite(v) for v in s.get("x", []))]
+    n_dropped = n_in - len(samples)
     if not samples:
-        return {"n_oos": 0, "gate_passed": False, "reason": "無樣本"}
+        return {"n_oos": 0, "gate_passed": False, "reason": "無樣本", "n_dropped": n_dropped}
     pos = np.array([s["pos"] for s in samples]); X = np.array([s["x"] for s in samples], dtype=float)
     y = np.array([1.0 if s["win"] else 0.0 for s in samples]); r = np.array([s["r_mult"] for s in samples], dtype=float)
     lo_p, hi_p = int(pos.min()), int(pos.max())
@@ -431,14 +445,25 @@ def purged_walk_forward(samples: list[dict], n_folds: int = N_FOLDS, embargo: in
            "logloss_base": _logloss(Y, np.full(len(Y), max(1e-6, min(1 - 1e-6, base)))),
            "equal_sharpe": eq_s, "sized_sharpe": sz_s,
            "equal_mean_r": float(Rr.mean()), "sized_mean_r": float((sizes * Rr).mean()),
-           "skip_rate": float((sizes == 0).mean()), "folds": folds, "calib": calib, "kind": kind,
+           "skip_rate": float((sizes == 0).mean()), "folds": folds, "calib": calib, "kind": kind, "n_dropped": n_dropped,
            "gbm_rounds": (int(np.median(best_iters)) if best_iters else None)}
     ok, why = gate(out)
     out["gate_passed"], out["reason"] = ok, why
     return out
 
 
+def _fin(x) -> bool:
+    try:
+        return x is not None and math.isfinite(float(x))
+    except (TypeError, ValueError):
+        return False
+
+
 def gate(oos: dict) -> tuple[bool, str]:
+    """任何比較值非有限（None/NaN/inf）一律不通過——NaN 比較恆 False 會讓「不通過」條件被跳過而誤放行（#58）。"""
+    for k in ("skip_rate", "auc", "sized_sharpe", "equal_sharpe"):
+        if not _fin(oos.get(k)):
+            return False, f"{k} 非有限值（{oos.get(k)}）"
     if (oos.get("n_oos") or 0) < GATE["n_oos_min"]:
         return False, f"OOS 樣本 {oos.get('n_oos', 0)} < {GATE['n_oos_min']}"
     if (oos.get("skip_rate") or 0) > GATE_MAX_SKIP:
@@ -457,6 +482,9 @@ def train(samples: list[dict], as_of: str, l2: float = 1.0, kinds: tuple | None 
     候選模型（logit；lightgbm 可用時再加 gbm）各自走同一套 purged walk-forward → 以 OOS log-loss 擇優
     （同分取 logit）→ 全樣本重訓勝者 → meta.json 內容（含兩者 OOS 對照 candidates）。
     """
+    n_raw = len(samples or [])
+    samples = [s for s in (samples or []) if np.isfinite(s.get("r_mult", float("nan")))
+               and all(np.isfinite(v) for v in s.get("x", []))]
     base = (float(np.mean([s["win"] for s in samples])) if samples else None)
     size_cfg = size_cfg_from_base(base)
     kinds = tuple(kinds) if kinds else (("logit", "gbm") if gbm_available() else ("logit",))
@@ -472,7 +500,7 @@ def train(samples: list[dict], as_of: str, l2: float = 1.0, kinds: tuple | None 
         return (0 if o.get("gate_passed") else 1, ll if ll is not None else 9.0, 0 if k == "logit" else 1)
     sel = sorted(cands, key=_key)[0]
     oos = cands[sel]
-    model = {"version": 2, "as_of": as_of, "features": list(FEATURES), "n": len(samples),
+    model = {"version": 2, "as_of": as_of, "features": list(FEATURES), "n": len(samples), "n_dropped": n_raw - len(samples),
              "base_rate": base, "kind": sel,
              "candidates": {k: {kk: o.get(kk) for kk in ("auc", "logloss", "logloss_base", "equal_sharpe", "sized_sharpe",
                                                           "skip_rate", "n_oos", "gate_passed", "reason", "gbm_rounds")}
@@ -586,6 +614,17 @@ if __name__ == "__main__":
     assert lab3["mech"] == "time" and lab3["days"] == 45 and not lab3["truncated"]
     lab4 = simulate_exit(np.array([100.0] * 10), None, 0, rps=2.0)
     assert lab4["truncated"]
+    # #55：時間柵欄那天收盤缺值 → 以區間內最後有效收盤結算（不得 NaN）；進場後全缺 → None
+    cl8 = np.array([100.0] * 60); cl8[46] = np.nan
+    lab8 = simulate_exit(cl8, cl8, 0, rps=2.0, cfg={"max_days": 45})
+    assert lab8["mech"] == "data_end" and np.isfinite(lab8["r_mult"]) and lab8["exit"] == 100.0 and lab8["days"] == 44, lab8
+    cl9 = np.array([100.0] + [np.nan] * 59); op9 = np.array([100.0] * 60)          # 開盤有價、進場後收盤全缺
+    assert simulate_exit(cl9, op9, 0, rps=2.0) is None
+    cl10 = np.array([100.0] * 30 + [np.nan] * 30)                                     # 尾段下市：最後有效價結算
+    lab10 = simulate_exit(cl10, cl10, 0, rps=2.0, cfg={"max_days": 45, "dead_money_days": 99})
+    assert lab10 is not None and np.isfinite(lab10["r_mult"])
+    # OOS 統計 NaN 安全：混入 NaN 標籤/特徵的樣本被丟棄並計數
+    assert _sharpe_like(np.array([1.0, np.nan, -0.5, 0.3])) is not None
     assert simulate_exit(cl, op, 6, 3.0) is None and simulate_exit(cl, op, 0, 0.0) is None
     # 訊號轉弱只在獲利中了結；死錢釋放（≥30 日、<+2%、評分 < 門檻）；虧損中轉弱不賣（等停損）
     cl5 = np.array([100, 100, 101, 102, 101.5] + [101.5] * 50, dtype=float)
@@ -638,6 +677,11 @@ if __name__ == "__main__":
     assert size_from_p(0.3) == 0.0 and size_from_p(0.65) == 1.25 and size_from_p(None) == 1.0 and 0.5 <= size_from_p(0.5) < 1.25
     sc_ = size_cfg_from_base(0.45); assert sc_["lo"] == 0.37 and sc_["hi"] == 0.57 and size_cfg_from_base(None) == SIZE
     assert not gate({"n_oos": 500, "auc": 0.6, "skip_rate": 0.95, "sized_sharpe": 0.1, "equal_sharpe": -0.5})[0]
+    _nan = float("nan")
+    for bad in ({"sized_sharpe": _nan, "equal_sharpe": _nan}, {"auc": _nan}, {"skip_rate": _nan}, {"sized_sharpe": float("inf")}):
+        g_ = {"n_oos": 500, "auc": 0.6, "skip_rate": 0.1, "sized_sharpe": 0.2, "equal_sharpe": 0.1, **bad}
+        assert not gate(g_)[0], g_                                                     # #58：非有限值不得放行
+    assert gate({"n_oos": 500, "auc": 0.6, "skip_rate": 0.1, "sized_sharpe": 0.2, "equal_sharpe": 0.1})[0]
     print("✅ 4 邏輯迴歸／AUC／尺寸映射")
 
     # 4b) LightGBM 候選：精簡樹表的純 Python 推論與 lightgbm 原生預測逐位一致（有裝才測）
@@ -691,6 +735,10 @@ if __name__ == "__main__":
         assert usable(m_both) or not m_both["gate_passed"]
         pb = predict_p(m_both, samples[0]["x"]); assert 0.0 <= pb <= 1.0
         print(f"   候選對照：{ {k: (round(v['auc'] or 0, 3), round(v['logloss'] or 0, 3)) for k, v in m_both['candidates'].items()} } → 選 {m_both['kind']}")
+    dirty = samples + [dict(samples[0], r_mult=float("nan")), dict(samples[1], x=[float("nan")] * len(FEATURES))]
+    m_dirty = train(dirty, "2026-09-19", kinds=("logit",))
+    assert m_dirty["n_dropped"] == 2 and m_dirty["oos"]["n_dropped"] == 0 and m_dirty["oos"]["equal_sharpe"] is not None
+    assert all(v["avg_r"] == v["avg_r"] for v in m_dirty["by_mech"].values())         # 無 NaN
     shuffled = [dict(s, win=bool(w), r_mult=(abs(s["r_mult"]) if w else -abs(s["r_mult"]))) for s, w in zip(samples, rng.permutation([s["win"] for s in samples]))]
     m_sh = train(shuffled, "2026-09-19", kinds=("logit",))
     assert not m_sh["gate_passed"], m_sh["reason"]
