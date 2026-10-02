@@ -40,7 +40,7 @@
     scored 每列附 ext_atr/ret_5d（已有）
     [meta_enabled 且 meta.json 閘門過] → 同一特徵函數 → p(勝) → meta_mult ∈ {0, 0.5…1.25}
     trade_engine：risk 預算 × val_mult × neutral_mult × meta_mult；meta_mult=0 → 跳過並說明
-  /alpha [rank|factors|meta]、/factor test|add|list（C 段）
+  /alpha rank|factors|meta、/factor test|add|list（C 段）
 ```
 
 ## 1. A 段：橫斷面 Alpha 脊椎（`alpha_spine.py`）

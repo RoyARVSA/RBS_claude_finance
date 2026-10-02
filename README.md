@@ -11,7 +11,7 @@ Streamlit 網頁應用 + 獨立的訊號掃描 Bot（GitHub Actions 排程版 / 
 
 ## 功能總覽
 
-### 📊 網頁儀表板（`app.py`，13 個頁面）
+### 📊 網頁儀表板（`app.py`，17 個頁面）
 
 | 頁面 | 功能 |
 |------|------|
@@ -22,6 +22,7 @@ Streamlit 網頁應用 + 獨立的訊號掃描 Bot（GitHub Actions 排程版 / 
 | 🔍 股票研究 | K 線+RSI、AI 深度報告、市場篩選器、**訊號回測 + 參數最佳化（含參數熱力圖與 walk-forward 逐段檢視）**、TradingView、**選擇權情緒(Put/Call、IV 偏斜)**、**🔨 假設反駁器（8 類測試推翻投資故事，只證偽不證實）** |
 | 🏢 公司分析 | **基本面體質：財務健康評分、估值旗標、三表趨勢、AI 解讀、分析師共識+EPS Beat 率、做空籌碼(FINRA/FTD)、台股三大法人買賣超(上市 TWSE + 上櫃 TPEX)、SEC 內部人交易(Form 4)、💰 DCF+Comps 內在價值估值（投行標準流程：FCF/WACC/期中折現/敏感度表＋同業倍數回推，方法論採 Anthropic 官方 financial-services skills）、📄 一鍵完整研究報告（彙整全部區塊下載）** |
 | 🗂️ 產業總覽 | **一次掃描整個市場：產業強弱 vs 風險散佈、鑽取個股（可加基本面）、RRG 板塊輪動象限圖** |
+| 🔄 GICS 輪動 | **S&P 500 成分股自建 GICS 四層（Sector→Industry Group→Industry→Sub-Industry）群組指數：RRG 四象限（Improving→Leading→Weakening→Lagging）、相對 SPX 強度折線、最強／最弱群組與成分股、RS 排名表；L1–L4 切換、Cap/Cap-fixed/Equal 權重、1M–12M、「只用完整週」、當時成分（PIT）；持倉產業曝險（只顯示）。畫面移植自使用者 gics_nn 專案原模板** |
 | 🚨 即時警報 | 監控清單、盤中走勢、訊號掃描、Telegram/Email 推播、**🎯 當日交易計畫（VWAP/ORB/RVOL 盤中訂單票：進場區間/停損/停利/股數，財報日自動迴避，可選 Alpaca IEX 即時價，一鍵送模擬 bracket 單）** |
 | 🛠️ 交易工具 | 部位大小、**波動率目標部位**、Kelly、風險報酬比、複利 |
 | 📉 模擬交易 | **Alpaca 紙上交易：帳戶績效、持倉、權益曲線 vs SPY、交易日誌（原因）、訊號實測勝率** |
@@ -80,7 +81,8 @@ Streamlit 網頁應用 + 獨立的訊號掃描 Bot（GitHub Actions 排程版 / 
 - **候選篩選與治理（P5/P6）**：`/screen` 從選股池與 AI 主題層挑 watchlist 之外的候選（Stage 3 每閉市日一批補品質與修正動能、品質否決剔除、綜合分排名；只建議不自動加入）；`/valreport` 每月治理月報——估值層準不準：各判定的事後命中率、公允價值穩定度、MoS 因子 IC（重疊修正）、覆蓋與過期、指引覆蓋
 - **佈局計畫整合層**：`/playbook` 與網頁「🧭 佈局計畫」——同一套邏輯（`playbook.py`）把選股池、分析師修正動能、公司模型、品質旗標、技術評分、大盤 regime、持倉與論點收成一份分層計畫：迴避（品質否決／高於牛市情境／跌破失效價）、減碼（持有且區間位置 > 0.7）、累積候選（有安全邊際且品質不差；標示技術訊號是否已達門檻）、持有、觀察；每檔 conviction 只由可得成分構成並附成分數，權重帶有界且依 regime 打折。閒置輪每 7 天自動輪替更新模型、週報附摘要。**全部為參考：進場仍由技術訊號、出場仍由價格機制、估值層未過 holdout 不接引擎**
 - **產業路由與因子把關（估值層 P1.5/P2）**：金融股走剩餘收益模型（RIM：ROE 十年淡出至均值與股權成本的中點、配息＋回購率、持續係數 0.6 終值）、地產／高股息走股利 H-model（三年股利 CAGR → 長期 3%，5 年半衰）；`factor_eval.py` 提供 alphalens 式 Rank IC／ICIR／分位報酬／因子自相關與「21 日 IC > 0.03 且 ICIR > 0.3」配置門檻——MoS、修正動能、品質分累積夠歷史後先過這關，才談進部位
-- **Alpha 脊椎 / meta-labeling / 因子實驗室（A/B/C，2026-09-19；規劃 `ALPHA_SPINE.md`）**：把「18 檔擇時」換成「400 檔排名 + 每筆部位由歷史勝率決定」。夜間工作流 `alpha_nightly.yml`（收盤後一次）：(A) 選股池 broad ∪ watchlist 兩年行情 → 價格因子（12-1 動能／1 月反轉／延伸度／低波動，向量化）+ 基本面 PIT 因子（品質、預估修正）+ 核准的 DSL 因子 → 每因子週頻 Rank IC／ICIR／Newey-West t 閘門（不過＝權重 0、方向寫死不翻轉）→ ICIR 加權合成 → `data/alpha/rank.json`；(B) 用 `indicators.composite_series`（＝引擎評分的向量化版，逐位相等）對全池找「引擎進場條件成立」的時點，以引擎規則模擬單筆出場（停損／追蹤／時間柵欄）產生幾千筆 R 標籤，特徵＝延伸度／5 日漲幅／評分／波動／動能／反轉／SPY 三態／廣度／品質／修正（訓練與線上同一函數），numpy 邏輯迴歸 + purged walk-forward（4 折、embargo 46 日）→ `data/alpha/meta.json`，閘門＝OOS AUC≥0.55 且勝率尺寸化 Sharpe 勝等額且跳過率 ≤80%；(C) `/factor test <公式>` 白名單 DSL → 同一把尺評估 + DSR 記帳，`/factor add` 核准後夜間納入。線上：`/alpha [factors|meta]` 看狀態；`/set alpha_pool_enabled on` 讓前 N 名進引擎候選池（僅在 rank 閘門通過時）、`/set meta_enabled on` 讓部位乘勝率倍數（僅在 meta 閘門通過時）；**兩旗標預設關，先累積兩週看閘門再開**
+- **Alpha 脊椎 / meta-labeling / 因子實驗室（A/B/C，2026-09-19；規劃 `ALPHA_SPINE.md`）**：把「18 檔擇時」換成「400 檔排名 + 每筆部位由歷史勝率決定」。夜間工作流 `alpha_nightly.yml`（收盤後一次）：(A) 選股池 broad ∪ watchlist 兩年行情 → 價格因子（12-1 動能／1 月反轉／延伸度／低波動，向量化）+ 基本面 PIT 因子（品質、預估修正）+ 核准的 DSL 因子 → 每因子週頻 Rank IC／ICIR／Newey-West t 閘門（不過＝權重 0、方向寫死不翻轉）→ ICIR 加權合成 → `data/alpha/rank.json`；(B) 用 `indicators.composite_series`（＝引擎評分的向量化版，逐位相等）對全池找「引擎進場條件成立」的時點，以引擎規則模擬單筆出場（停損／追蹤／時間柵欄）產生幾千筆 R 標籤，特徵＝延伸度／5 日漲幅／評分／波動／動能／反轉／SPY 三態／廣度／品質／修正（訓練與線上同一函數），numpy 邏輯迴歸 + purged walk-forward（4 折、embargo 46 日）→ `data/alpha/meta.json`，閘門＝OOS AUC≥0.55 且勝率尺寸化 Sharpe 勝等額且跳過率 ≤80%；(C) `/factor test <公式>` 白名單 DSL → 同一把尺評估 + DSR 記帳，`/factor add` 核准後夜間納入。線上：`/alpha rank|factors|meta` 看狀態；`/set alpha_pool_enabled on` 讓前 N 名進引擎候選池（僅在 rank 閘門通過時）、`/set meta_enabled on` 讓部位乘勝率倍數（僅在 meta 閘門通過時）；**兩旗標預設關，先累積兩週看閘門再開**
+- **GICS 產業輪動 + 分類神經網路**（網頁「🔄 GICS 輪動」、`/gics`；移植自使用者 gics_nn 專案）：S&P 500 成分股依 GICS 四層分類（163 個 Sub-Industry，代碼前綴式）自建市值加權群組指數，網頁嵌入原 Dashboard 模板（RRG、RS vs SPX、Strongest/Weakest、RS Ranking，L1–L4 切換），資料在 Streamlit 端從 Wikipedia 成分表、State Street SPY 官方持股權重與 Yahoo 收盤建置（快取 1 小時、不入庫）；新增「只用完整週」開關（RRG 最後一點不再週間跳動）與當時成分遮罩（降低存活者偏差）。每週六工作流 `gics_weekly.yml`：S&P 1500 對照表、公司資料快取、階層式神經網路（純 NumPy，四個 softmax 頭、只在 163 條合法路徑中解碼）5 折交叉驗證過門檻才替選股池／觀察清單中不在 S&P 1500 的代碼補分類（模型權重不入庫）、與 State Street／S&P 官方產業指數對帳；`/gics TICKER|verify|exposure`。GICS 為 MSCI 與 S&P 的商標，本對照表為工作用、非官方資料
 - **多線平行帳**（`/lanes`）：旗標還關著也能看「開了會怎樣」——每輪用同一台引擎、同一輪訊號跑三本 10 萬起始的虛擬帳（現行 watchlist／＋候選池／＋候選池＋meta 部位），並排報酬／回撤／成交，附 SPY 與真帳同期；閘門沒過的車道會標註等同上一條。meta 模型升級為「邏輯迴歸 vs LightGBM 同一套 purged walk-forward 擇優」，GBM 線上以純 Python 樹遍歷推論（不加依賴）
 - **進場品質層（2026-09）**：反思帳本診斷出「強訊號進場後 5 日平均為負、硬停損多在 1–2 天內被打到、加碼在頂」——問題是時點不是方向。修法：追高濾網（價格高於 MA20 >2 ATR 且 5 日急拉 >6% 不開新倉、加碼 >1.5 ATR 不加；平穩趨勢不擋）、中性 regime 新倉風險減半不加碼（氣象台廣度 <40 把「偏多」否決成中性）、反思節流（近 30 次看多命中 <40% → 風險再減半、停加碼）、FOMC 會期兩天事件靜默；`/autotrade` 看狀態、`/engtest opt entry` 樣本外驗證這組參數
 - **引擎歷史重放與參數學習**：`/engtest [3m|6m|1y|2y]` 把**整台波段引擎**（進場門檻、停損/追蹤/分批/死錢、保險絲、regime 三態）逐日重放過去 N 個月——每日評分只用當日以前 K 棒、t 日決策 t+1 開盤成交、單邊 0.05% 成本、對照 SPY 買進持有，回答「如果用現行參數過去會賺多少」；`/engtest opt [apply]` 掃 進場門檻×停損倍數×追蹤回落×分批R×死錢天數 108 組，三段 walk-forward（訓練排序/驗證挑選/holdout 只看一次把關）+ DSR 扣多重測試幸運上限——這是「從歷史學規則」的誠實版（參數搜索，非深度 RL：日 K 樣本太少會學到雜訊）；`/engtest opt entry` 換成進場品質網格 32 組（門檻×追高上限×加碼R×中性風險倍數）；`/engtest opt loose` 換成放寬出場網格 36 組（追蹤回落×收緊門檻 含不收緊×分批R 含關閉×停損倍數），且每次 opt 都附舊邏輯（Shadow 同款）基準；`clear` 還原
@@ -201,6 +203,14 @@ factor_lab.py           C 段：因子 DSL（白名單）評估 + DSR 帳本 + �
 actions_loop.py         Actions 長駐迴圈：每 15 分鐘一輪 main()、每分鐘回指令、每輪 persist（#60）
 scripts/persist_state.sh state 類檔案衝突安全 commit + push（排程與迴圈共用）
 alpha_nightly.py        夜間工作流進入點：抓價 → A → B → 基本面覆蓋輪替（alpha_nightly.yml）
+gics_taxonomy.py        GICS 四層分類表（11/25/74/163）與名稱比對
+gics_data.py            GICS 資料層：Wikipedia S&P 成分、Yahoo 收盤/公司資料、SPY 官方持股、分拆修正、成分期間遮罩
+gics_model.py           GICS 階層式神經網路（純 NumPy）+ TF-IDF/SVD 特徵（npz 存檔，無 pickle）
+gics_dashboard.py       GICS 輪動 Dashboard 資料組裝 + 模板嵌入、產業曝險
+gics_template.html      GICS 輪動 Dashboard 畫面（使用者原模板 + 完整週/PIT）
+gics_verify.py          GICS 數字對帳（vs State Street SPY 與 S&P 官方產業指數）
+gics_weekly.py          GICS 每週工作流：成分對照、公司資料、神經網路分類、對帳（gics_weekly.yml）
+scripts/check_dispatch.py CI：Bot 指令分派不得有重複的無條件分支
 lanes.py                多線平行帳：現行／＋候選池／＋候選池＋meta 三條虛擬帳同輪記帳（/lanes）
 guidance.py             指引/KPI 萃取：LLM 定位轉錄 + 程式驗證（原文/數字回對、修訂、對帳；/guidance）
 playbook.py             佈局計畫整合層：分層/四象限/conviction/權重帶/組合層（/playbook、網頁 🧭）

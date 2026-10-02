@@ -23,6 +23,14 @@ Thumbs.db
 .env.*
 .streamlit/secrets.toml
 secrets.toml
-alerts_config.json          # 警報頁可能存 Telegram token / Email 密碼
+# 警報頁可能存 Telegram token / Email 密碼（.gitignore 不支援行內註解，註解必須獨立一行，#62）
+alerts_config.json
 *.pem
 *.key
+
+# GICS 每週工作流的暫存（不入庫：原始 SPY xlsx、價格快取、對帳明細 CSV）
+data/gics/spy_holdings.xlsx
+data/gics/*.pkl
+data/gics/verify_report.csv
+data/gics/verify_label_mismatches.csv
+data/gics/model*.npz

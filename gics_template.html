@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GICS Sector Rotation</title>
+<style>
+:root{
+  --bg:#0b0c0e; --panel:#111316; --panel2:#15181c; --line:#23272d; --line2:#2d323a;
+  --tx:#e6e6e6; --tx2:#a3a8b0; --tx3:#6b717a; --acc:#f0a030;
+  --up:#4cc26a; --dn:#e0443a; --lead:#4caf50; --impr:#4f8fe6; --weak:#d4a72c; --lag:#e0443a;
+  --mono: ui-monospace,"JetBrains Mono","SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+  --sans: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans TC",sans-serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--tx);font-family:var(--mono);font-size:13px}
+.wrap{max-width:1680px;margin:0 auto;padding:14px 16px 40px}
+h1{font-size:20px;margin:0;letter-spacing:.5px;font-weight:800}
+h1 small{font-size:14px;color:var(--tx2);font-weight:400;margin-left:10px;letter-spacing:.3px}
+.titlebar{display:flex;align-items:baseline;flex-wrap:wrap;gap:6px;border-bottom:2px solid var(--tx);padding-bottom:8px}
+.note{margin:14px 0;border:1px solid #8a5a1c;border-left:4px solid var(--acc);background:#1c150c;padding:10px 14px;line-height:1.55;color:#f2e6d3}
+.note.demo{border-color:#8a1c1c;border-left-color:#e0443a;background:#1f0d0d}
+.panel{background:var(--panel);border:1px solid var(--line)}
+.controls{display:flex;flex-wrap:wrap;align-items:center;gap:8px 22px;padding:10px 14px}
+.ctl{display:flex;align-items:center;gap:6px}
+.ctl>span{color:var(--tx2);letter-spacing:.5px}
+.seg{display:flex;gap:4px}
+.seg button{font-family:var(--mono);font-size:13px;background:var(--panel2);color:var(--tx);border:1px solid var(--line2);padding:3px 9px;cursor:pointer;border-radius:2px}
+.seg button.on{background:var(--acc);color:#1a1206;border-color:var(--acc);font-weight:700}
+.seg button:hover:not(.on){border-color:var(--tx3)}
+input.num,input.txt{font-family:var(--mono);font-size:13px;background:var(--panel2);color:var(--tx);border:1px solid var(--line2);padding:3px 8px;border-radius:2px}
+input.num{width:64px} input.txt{width:92px;text-transform:uppercase}
+.asof{color:var(--tx2);font-family:var(--sans);font-size:12px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}
+@media(max-width:1000px){.grid2{grid-template-columns:1fr}}
+.ph{display:flex;justify-content:space-between;align-items:baseline;gap:10px;padding:10px 14px 8px;border-bottom:1px solid var(--line)}
+.ph b{color:var(--acc);letter-spacing:.6px;font-size:14px}
+.ph .sub{color:var(--tx2);font-size:13px;text-align:right}
+.chart{padding:4px 8px 8px;position:relative}
+svg{display:block;width:100%;height:auto}
+svg text{font-family:var(--mono)}
+.tip{position:absolute;pointer-events:none;background:#000d;border:1px solid var(--line2);padding:6px 8px;font-size:12px;line-height:1.45;display:none;z-index:5;white-space:nowrap}
+.legend{display:flex;flex-wrap:wrap;gap:4px 14px;justify-content:center;padding:8px 8px 0;font-size:12px;color:var(--tx2)}
+.legend i{display:inline-block;width:12px;height:12px;margin-right:5px;vertical-align:-2px}
+.legend .spx i{border:1px dashed var(--tx2);background:none}
+.sw{padding:4px 14px 14px}
+.grp{padding:12px 0 10px;border-bottom:1px solid var(--line)}
+.grp:last-child{border-bottom:none}
+.gh{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+.gh .gn{font-family:var(--sans);font-weight:700;font-size:16px}
+.gh .gv{margin-left:10px;font-weight:700;font-size:15px}
+.gh .rs{margin-left:10px;font-size:13px}
+.gh .q{margin-left:10px;font-size:13px;letter-spacing:.5px}
+.gh .meta{font-family:var(--sans);color:var(--tx2);font-size:12px}
+.chips{display:flex;flex-wrap:wrap;gap:5px}
+.chip{background:var(--panel2);border:1px solid var(--line2);padding:2px 7px;font-size:12.5px;white-space:nowrap}
+.chip b{font-weight:700;color:var(--tx);margin-right:6px}
+.pos{color:var(--up)} .neg{color:var(--dn)} .flat{color:var(--tx2)}
+table{width:100%;border-collapse:collapse}
+th{font-weight:400;color:var(--tx2);text-align:right;padding:8px 10px;border-bottom:1px solid var(--line2);cursor:pointer;user-select:none;white-space:nowrap}
+th:first-child{text-align:left}
+th.sorted{color:var(--acc)}
+td{padding:6px 10px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}
+td:first-child{text-align:left;border-left:3px solid transparent;line-height:1.2}
+td .code{color:var(--tx2);font-size:12px}
+tr.row{cursor:pointer} tr.row:hover td{background:#181b20}
+tr.row.plotted td{background:#14171b}
+.foot{padding:10px 14px;color:var(--tx2);font-family:var(--sans);font-size:12px;line-height:1.55;border-top:1px solid var(--line)}
+.lookup{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.crumb{font-family:var(--sans);font-size:12.5px;color:var(--tx)}
+.crumb .sep{color:var(--acc);margin:0 6px}
+.crumb .src{color:var(--tx3);margin-left:8px}
+.scroll{overflow-x:auto}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="titlebar"><h1>SECTOR ROTATION — GICS RELATIVE STRENGTH<small>SUB-SECTOR RS vs S&amp;P 500 · SPOT ROTATION EARLY</small></h1></div>
+  <div class="note" id="note"></div>
+
+  <div class="panel controls">
+    <div class="ctl"><span>LEVEL</span><div class="seg" data-k="level"><button data-v="1">L1</button><button data-v="2">L2</button><button data-v="3">L3</button><button data-v="4">L4</button></div></div>
+    <div class="ctl"><span>WEIGHTING</span><div class="seg" data-k="weight"><button data-v="cap">Cap-wtd</button><button data-v="fix" title="today's cap weights held constant over the whole window (look-ahead: favours today's winners)">Cap-fixed</button><button data-v="eq">Equal-wtd</button></div></div>
+    <div class="ctl"><span>LOOKBACK</span><div class="seg" data-k="lb"><button data-v="1M">1M</button><button data-v="3M">3M</button><button data-v="6M">6M</button><button data-v="12M">12M</button></div></div>
+    <div class="ctl"><span>MIN NAMES</span><input class="num" id="minNames" type="number" min="1" value="2"></div>
+    <div class="ctl"><span>PATH</span><div class="seg" data-k="path"><button data-v="arrows">Arrows</button><button data-v="tails">Tails</button></div></div>
+    <div class="ctl"><span>WEEK</span><div class="seg" data-k="week"><button data-v="all" title="include the current, unfinished week (the last point moves until Friday's close)">All</button><button data-v="done" title="RRG uses completed weeks only (last point = last Friday)">Complete</button></div></div>
+    <div class="asof" id="asof"></div>
+    <div class="ctl lookup"><span>GICS LOOKUP</span><input class="txt" id="lk" placeholder="NVDA"><div class="crumb" id="crumb"></div></div>
+  </div>
+
+  <div class="grid2">
+    <div class="panel">
+      <div class="ph"><b>RELATIVE ROTATION GRAPH</b><span class="sub" id="rrgSub"></span></div>
+      <div class="chart" id="rrgBox"><svg id="rrg" viewBox="0 0 1000 720"></svg><div class="tip" id="tip"></div></div>
+    </div>
+    <div class="panel">
+      <div class="ph"><b>RELATIVE STRENGTH vs SPX</b><span class="sub" id="rsSub">top 3 / bottom 3</span></div>
+      <div class="legend" id="legend"></div>
+      <div class="chart" id="rsBox"><svg id="rsc" viewBox="0 0 1000 680"></svg><div class="tip" id="tip2"></div></div>
+    </div>
+  </div>
+
+  <div class="grid2">
+    <div class="panel"><div class="ph"><b>STRONGEST</b><span class="sub" id="sSub"></span></div><div class="sw" id="strong"></div></div>
+    <div class="panel"><div class="ph"><b>WEAKEST</b><span class="sub" id="wSub"></span></div><div class="sw" id="weak"></div></div>
+  </div>
+
+  <div class="panel" style="margin-top:14px">
+    <div class="ph"><b>RS RANKING</b><span class="sub">click a row to plot it · click a header to sort</span></div>
+    <div class="scroll"><table id="rank"></table></div>
+    <div class="foot" id="foot"></div>
+  </div>
+</div>
+
+<script id="data" type="application/json">__DATA__</script>
+<script>
+"use strict";
+const D = JSON.parse(document.getElementById('data').textContent);
+const T = D.dates.length, NT = D.tickers.length, C = D.closes, SPX = D.spx;
+const LB = {'1M':21,'3M':63,'6M':126,'12M':252};
+const TAILW = {'1M':5,'3M':14,'6M':27,'12M':53};     // weekly points shown on the RRG path
+const RATIO_N = 10, MOM_N = 4;                         // RS-Ratio = RS vs 10-wk avg; RS-Momentum = RS-Ratio vs 4-wk avg
+const DIG = {1:2,2:4,3:6,4:8};
+const LVLN = {1:'Sector',2:'Industry Group',3:'Industry',4:'Sub-Industry'};
+const QC = {LEADING:'var(--lead)',IMPROVING:'var(--impr)',WEAKENING:'var(--weak)',LAGGING:'var(--lag)'};
+const QHEX = {LEADING:'#4caf50',IMPROVING:'#4f8fe6',WEAKENING:'#d4a72c',LAGGING:'#e0443a'};
+const PAL = ['#f0a030','#3b7dd8','#4caf50','#e0443a','#9b59d0','#3aa0b0','#e377c2','#bcbd22','#17becf','#c08552','#8fd14f','#ff7f7f'];
+const st = {level:1, weight:'cap', lb:'1M', minNames:2, path:'arrows', week:'all', extra:new Set(), hidden:new Set(), sortKey:null, sortDir:-1};
+
+// ---------- helpers
+const $ = id => document.getElementById(id);
+const pct = (x,d=1) => x==null||!isFinite(x) ? '—' : (x>=0?'+':'')+(x*100).toFixed(d)+'%';
+const cls = x => x==null ? 'flat' : x>0 ? 'pos' : x<0 ? 'neg' : 'flat';
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const trunc = (s,n) => s.length>n ? s.slice(0,n-1)+'…' : s;
+
+// weekly sample points (last trading day of each Mon-based week)
+const WK_ALL = (() => { const wk = s => Math.floor((Date.parse(s+'T00:00:00Z')/864e5 + 3)/7); const o=[];
+  for (let t=0;t<T;t++) if (t===T-1 || wk(D.dates[t+1])!==wk(D.dates[t])) o.push(t); return o; })();
+// completed weeks only: drop the last point unless the last close is a Friday (holiday Fridays are rare; noted in the footer)
+const LAST_IS_FRI = new Date(D.dates[T-1]+'T00:00:00Z').getUTCDay() === 5;
+const WK_DONE = LAST_IS_FRI ? WK_ALL : WK_ALL.slice(0, -1);
+let WK = WK_ALL;
+
+// ---------- group construction (cached per level/weight)
+const cache = {};
+function buildGroups(level, weight){
+  const key = level+weight+st.week; if (cache[key]) return cache[key];
+  const n = DIG[level], map = new Map();
+  for (let i=0;i<NT;i++){ const c = D.code8[i]; if(!c) continue; const g=c.slice(0,n); if(!map.has(g)) map.set(g,[]); map.get(g).push(i); }
+  const out = [];
+  for (const [code, mem] of map){
+    const idx = new Float64Array(T); idx[0]=100;
+    for (let t=1;t<T;t++){ let num=0, den=0;
+      for (const i of mem){ const a=C[i][t-1], b=C[i][t]; if(a>0 && b>0){ const w = weight==='cap' ? D.shares[i]*a : weight==='fix' ? D.shares[i]*(C[i][T-1]||a) : 1; num+=w*(b/a-1); den+=w; } }
+      idx[t] = idx[t-1]*(1+(den? num/den : 0)); }
+    const valid = mem.filter(i => C[i][T-1] > 0);
+    // current weights (for "top NAME w%")
+    let tw=0; const w = mem.map(i => { const v = C[i][T-1]>0 ? (weight==='eq' ? 1 : D.shares[i]*C[i][T-1]) : 0; tw+=v; return v; });
+    const top = mem.length ? mem[w.indexOf(Math.max(...w))] : null;
+    const g = {code, name: D.names_gics[code] || code, mem, valid, idx, top, topW: top!=null && tw ? Math.max(...w)/tw : 0};
+    g.rrg = rrgSeries(idx);
+    const last = g.rrg[g.rrg.length-1];
+    g.quad = !last ? 'LAGGING' : last.x>=100 ? (last.y>=100?'LEADING':'WEAKENING') : (last.y>=100?'IMPROVING':'LAGGING');
+    out.push(g);
+  }
+  return cache[key] = out;
+}
+function winRet(s, L){ const a = s[Math.max(0,T-1-L)]; return a>0 ? s[T-1]/a-1 : null; }
+function memRet(i, L){
+  const e = C[i][T-1]; if(!(e>0)) return null;
+  for (let t=Math.max(0,T-1-L); t<T-1; t++) if (C[i][t]>0) return e/C[i][t]-1;
+  return null;
+}
+function rsOf(g, lb){ const r = winRet(g.idx, LB[lb]), s = winRet(SPX, LB[lb]); return r==null||s==null ? null : (1+r)/(1+s)-1; }
+
+// JdK-style RS-Ratio / RS-Momentum on weekly relative strength
+function rrgSeries(idx){
+  const rs = WK.map(t => 100*idx[t]/SPX[t]); const ratio = [], pts = [];
+  for (let k=0;k<rs.length;k++){
+    if (k < RATIO_N-1){ ratio.push(null); continue; }
+    let m=0; for (let j=k-RATIO_N+1;j<=k;j++) m+=rs[j]; m/=RATIO_N;
+    ratio.push(100*rs[k]/m);
+  }
+  for (let k=0;k<rs.length;k++){
+    if (k < MOM_N-1 || ratio[k-MOM_N+1]==null) continue;
+    let a=0; for (let j=k-MOM_N+1;j<=k;j++) a+=ratio[j]; a/=MOM_N;
+    pts.push({x:ratio[k], y:100*ratio[k]/a, t:WK[k]});
+  }
+  return pts;
+}
+
+// ---------- state → view
+function view(){
+  const all = buildGroups(st.level, st.weight);
+  const gs = all.filter(g => g.mem.length >= st.minNames);
+  for (const g of gs){ g.rs = rsOf(g, st.lb); g.ret = winRet(g.idx, LB[st.lb]);
+    const rr = g.valid.map(i => memRet(i, LB[st.lb])).filter(x => x!=null);
+    g.breadth = rr.length ? rr.filter(x => x>0).length/rr.length : 0; }
+  const ranked = gs.filter(g => g.rs!=null).sort((a,b) => b.rs-a.rs);
+  const k = Math.min(3, Math.floor(ranked.length/2));
+  const top = ranked.slice(0,k), bot = ranked.slice(ranked.length-k).reverse();
+  const def = [...top, ...ranked.slice(ranked.length-k)];
+  const plotted = [...def.filter(g => !st.hidden.has(g.code)), ...gs.filter(g => st.extra.has(g.code) && !def.includes(g))];
+  plotted.forEach((g,i) => g.color = PAL[i % PAL.length]);
+  return {gs, ranked, top, bot, plotted};
+}
+
+// ---------- RRG
+function drawRRG(v){
+  const W=1000,H=720, m={l:78,r:20,t:14,b:58}, pw=W-m.l-m.r, ph=H-m.t-m.b;
+  const tl = TAILW[st.lb];
+  const series = v.gs.map(g => ({g, pts: g.rrg.slice(-tl)})).filter(s => s.pts.length);
+  let xs=[100], ys=[100]; series.forEach(s => s.pts.forEach(p => {xs.push(p.x); ys.push(p.y);}));
+  let x0=Math.min(...xs), x1=Math.max(...xs), y0=Math.min(...ys), y1=Math.max(...ys);
+  const px=(x1-x0)*0.06||1, py=(y1-y0)*0.06||1; x0-=px; x1+=px; y0-=py; y1+=py;
+  const X = x => m.l + (x-x0)/(x1-x0)*pw, Y = y => m.t + (1-(y-y0)/(y1-y0))*ph;
+  let s = `<defs>${Object.entries(QHEX).map(([q,c]) => `<marker id="ar-${q}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="${c}"/></marker>`).join('')}</defs>`;
+  // quadrants
+  const cx=X(100), cy=Y(100);
+  s += `<rect x="${m.l}" y="${m.t}" width="${cx-m.l}" height="${cy-m.t}" fill="#4f8fe6" opacity=".10"/>`;
+  s += `<rect x="${cx}" y="${m.t}" width="${m.l+pw-cx}" height="${cy-m.t}" fill="#4caf50" opacity=".10"/>`;
+  s += `<rect x="${cx}" y="${cy}" width="${m.l+pw-cx}" height="${m.t+ph-cy}" fill="#d4a72c" opacity=".10"/>`;
+  s += `<rect x="${m.l}" y="${cy}" width="${cx-m.l}" height="${m.t+ph-cy}" fill="#e0443a" opacity=".12"/>`;
+  // grid + ticks
+  const nice = (a,b,n) => { const st=Math.pow(10,Math.floor(Math.log10((b-a)/n))); const c=[1,2,2.5,5,10].map(k=>k*st).find(k=>(b-a)/k<=n)||st*10; const o=[]; for(let v=Math.ceil(a/c)*c; v<=b+1e-9; v+=c) o.push(+v.toFixed(6)); return o; };
+  nice(x0,x1,7).forEach(t => s += `<line x1="${X(t)}" x2="${X(t)}" y1="${m.t}" y2="${m.t+ph}" stroke="#ffffff" opacity=".06"/><text x="${X(t)}" y="${m.t+ph+22}" fill="#a3a8b0" font-size="15" text-anchor="middle">${+t.toFixed(2)}</text>`);
+  nice(y0,y1,8).forEach(t => s += `<line x1="${m.l}" x2="${m.l+pw}" y1="${Y(t)}" y2="${Y(t)}" stroke="#ffffff" opacity=".06"/><text x="${m.l-10}" y="${Y(t)+5}" fill="#a3a8b0" font-size="15" text-anchor="end">${+t.toFixed(2)}</text>`);
+  s += `<line x1="${cx}" x2="${cx}" y1="${m.t}" y2="${m.t+ph}" stroke="#c9ced6" opacity=".55"/><line x1="${m.l}" x2="${m.l+pw}" y1="${cy}" y2="${cy}" stroke="#c9ced6" opacity=".55"/>`;
+  s += `<text x="${m.l+10}" y="${m.t+24}" fill="#4f8fe6" font-size="16" font-weight="700">IMPROVING</text>`;
+  s += `<text x="${m.l+pw-10}" y="${m.t+24}" fill="#4caf50" font-size="16" font-weight="700" text-anchor="end">LEADING</text>`;
+  s += `<text x="${m.l+pw-10}" y="${m.t+ph-12}" fill="#d4a72c" font-size="16" font-weight="700" text-anchor="end">WEAKENING</text>`;
+  s += `<text x="${m.l+10}" y="${m.t+ph-12}" fill="#e0443a" font-size="16" font-weight="700">LAGGING</text>`;
+  s += `<text x="${m.l+pw/2}" y="${H-8}" fill="#a3a8b0" font-size="15" text-anchor="middle">RS-Ratio (level)</text>`;
+  s += `<text transform="translate(18 ${m.t+ph/2}) rotate(-90)" fill="#a3a8b0" font-size="15" text-anchor="middle">RS-Momentum</text>`;
+  // paths
+  const many = series.length > 24;
+  const focus = new Set(v.plotted.map(g => g.code));
+  const labelSet = focus;
+  // with many groups (L3/L4) only the plotted (top/bottom + clicked) groups get paths; the rest are faded dots
+  series.sort((a,b) => focus.has(a.g.code) - focus.has(b.g.code));
+  series.forEach(({g,pts}) => {
+    const c = QHEX[g.quad], last = pts[pts.length-1], first = pts[0];
+    if (many && !focus.has(g.code)){ s += `<circle class="pt" data-c="${g.code}" cx="${X(last.x)}" cy="${Y(last.y)}" r="5" fill="${c}" opacity=".35" style="cursor:pointer"/>`; return; }
+    if (st.path==='arrows'){
+      if (pts.length>1) s += `<line x1="${X(first.x)}" y1="${Y(first.y)}" x2="${X(last.x)}" y2="${Y(last.y)}" stroke="${c}" stroke-width="1.8" opacity=".85" marker-end="url(#ar-${g.quad})"/>`;
+    } else {
+      s += `<polyline points="${pts.map(p => X(p.x)+','+Y(p.y)).join(' ')}" fill="none" stroke="${c}" stroke-width="1.6" opacity=".8"/>`;
+      pts.slice(0,-1).forEach(p => s += `<circle cx="${X(p.x)}" cy="${Y(p.y)}" r="2.6" fill="${c}" opacity=".7"/>`);
+    }
+    s += `<circle class="pt" data-c="${g.code}" cx="${X(last.x)}" cy="${Y(last.y)}" r="${many?6:8}" fill="${c}" stroke="#0b0c0e" stroke-width="1.5" style="cursor:pointer"/>`;
+    if (!many || labelSet.has(g.code))
+      s += `<text x="${X(last.x) > W-230 ? X(last.x)-11 : X(last.x)+11}" text-anchor="${X(last.x) > W-230 ? 'end' : 'start'}" y="${Y(last.y)+5}" fill="#e6e6e6" font-size="${many?13:15}" font-weight="600" paint-order="stroke" stroke="#0b0c0e" stroke-width="3">${esc(trunc(g.name, many?22:24))}</text>`;
+  });
+  $('rrg').innerHTML = s;
+  $('rrgSub').textContent = `${LVLN[st.level]} · ${series.length} groups · ${({cap:'cap-wtd',fix:'cap-fixed',eq:'equal-wtd'})[st.weight]} · ${st.lb} path`;
+  // tooltip
+  const box=$('rrgBox'), tip=$('tip');
+  $('rrg').querySelectorAll('.pt').forEach(el => {
+    const g = v.gs.find(x => x.code===el.dataset.c), l = g.rrg[g.rrg.length-1];
+    el.onmousemove = e => { const r=box.getBoundingClientRect();
+      tip.innerHTML = `<b>${esc(g.name)}</b> <span style="color:#6b717a">${g.code}</span><br>RS-Ratio ${l.x.toFixed(2)} · RS-Mom ${l.y.toFixed(2)}<br>RS ${st.lb} <span class="${cls(g.rs)}">${pct(g.rs)}</span> · ${g.mem.length} names<br><span style="color:${QC[g.quad]}">${g.quad}</span>`;
+      tip.style.display='block'; tip.style.left=Math.min(e.clientX-r.left+14, r.width-230)+'px'; tip.style.top=(e.clientY-r.top+10)+'px'; };
+    el.onmouseleave = () => tip.style.display='none';
+    el.onclick = () => togglePlot(g.code, v);
+  });
+}
+
+// ---------- RS line chart
+function drawRS(v){
+  const W=1000,H=680, m={l:70,r:20,t:16,b:44}, pw=W-m.l-m.r, ph=H-m.t-m.b, L=LB[st.lb], t0=Math.max(0,T-1-L);
+  const TS = [t0, ...WK.filter(t => t>t0)];                 // weekly sample points inside the window
+  const lines = v.plotted.map(g => ({g, ys: TS.map(t => 100*(g.idx[t]/g.idx[t0])/(SPX[t]/SPX[t0]))}));
+  let lo=100, hi=100; lines.forEach(l => l.ys.forEach(y => {lo=Math.min(lo,y); hi=Math.max(hi,y);}));
+  const pad=(hi-lo)*0.06||1; lo-=pad; hi+=pad;
+  const n=TS.length, X = k => m.l + k/(n-1)*pw, Y = y => m.t + (1-(y-lo)/(hi-lo))*ph;
+  let s='';
+  const step = (hi-lo)/7, mag=Math.pow(10,Math.floor(Math.log10(step))), c=[1,2,2.5,5,10].map(k=>k*mag).find(k=>k>=step);
+  for (let t=Math.ceil(lo/c)*c; t<=hi; t+=c) s += `<line x1="${m.l}" x2="${m.l+pw}" y1="${Y(t)}" y2="${Y(t)}" stroke="#fff" opacity=".06"/><text x="${m.l-10}" y="${Y(t)+5}" fill="#a3a8b0" font-size="15" text-anchor="end">${+t.toFixed(2)}</text>`;
+  const nx = Math.min(5, n-1); for (let i=0;i<=nx;i++){ const k=Math.round(i*(n-1)/nx); s += `<line x1="${X(k)}" x2="${X(k)}" y1="${m.t}" y2="${m.t+ph}" stroke="#fff" opacity=".06"/><text x="${X(k)}" y="${m.t+ph+26}" fill="#a3a8b0" font-size="14" text-anchor="${i===0?'start':i===nx?'end':'middle'}">${D.dates[TS[k]].slice(5)}</text>`; }
+  s += `<line x1="${m.l}" x2="${m.l+pw}" y1="${Y(100)}" y2="${Y(100)}" stroke="#c9ced6" stroke-dasharray="6 5" opacity=".6"/>`;
+  lines.forEach(l => { s += `<polyline points="${l.ys.map((y,k)=>X(k).toFixed(1)+','+Y(y).toFixed(1)).join(' ')}" fill="none" stroke="${l.g.color}" stroke-width="2.2" stroke-linejoin="round"/>`; if (n<=15) l.ys.forEach((y,k) => s += `<circle cx="${X(k)}" cy="${Y(y)}" r="3" fill="${l.g.color}"/>`); });
+  s += `<line id="hov" x1="0" x2="0" y1="${m.t}" y2="${m.t+ph}" stroke="#fff" opacity="0"/><rect id="hit" x="${m.l}" y="${m.t}" width="${pw}" height="${ph}" fill="transparent"/>`;
+  $('rsc').innerHTML = s;
+  $('legend').innerHTML = lines.map(l => `<span><i style="background:${l.g.color}"></i>${esc(trunc(l.g.name,28))}</span>`).join('') + `<span class="spx"><i></i>S&amp;P 500</span>`;
+  $('rsSub').textContent = `top ${v.top.length} / bottom ${v.bot.length}` + (st.extra.size||st.hidden.size ? ' · custom' : '') + ` · ${st.lb}, rebased 100`;
+  const box=$('rsBox'), tip=$('tip2'), svg=$('rsc');
+  $('hit').onmousemove = e => { const r=svg.getBoundingClientRect(), sx=(e.clientX-r.left)/r.width*W, k=Math.max(0,Math.min(n-1,Math.round((sx-m.l)/pw*(n-1))));
+    const hv=$('hov'); hv.setAttribute('x1',X(k)); hv.setAttribute('x2',X(k)); hv.setAttribute('opacity','.3');
+    const rows = lines.map(l => [l.g, l.ys[k]]).sort((a,b) => b[1]-a[1]);
+    tip.innerHTML = `<b>${D.dates[TS[k]]}</b><br>` + rows.map(([g,y]) => `<span style="color:${g.color}">■</span> ${esc(trunc(g.name,26))} <b>${y.toFixed(2)}</b>`).join('<br>');
+    const br=box.getBoundingClientRect(); tip.style.display='block'; tip.style.left=Math.min(e.clientX-br.left+14, br.width-260)+'px'; tip.style.top=(e.clientY-br.top+10)+'px'; };
+  $('hit').onmouseleave = () => { tip.style.display='none'; $('hov').setAttribute('opacity','0'); };
+}
+
+// ---------- strongest / weakest
+function groupBlock(g){
+  const L = LB[st.lb];
+  const mem = g.mem.map(i => ({i, r: memRet(i,L)})).filter(x => x.r!=null).sort((a,b) => b.r-a.r);
+  const up = mem.length ? Math.round(100*mem.filter(x => x.r>0).length/mem.length) : 0;
+  const topTk = g.top!=null ? esc(D.tickers[g.top]) : '—';
+  return `<div class="grp"><div class="gh"><div><span class="gn">${esc(g.name)}</span><span class="gv ${cls(g.ret)}">${pct(g.ret)}</span><span class="rs ${cls(g.rs)}">RS ${pct(g.rs)}</span><span class="q" style="color:${QC[g.quad]}">${g.quad}</span></div>
+    <div class="meta">${g.mem.length} names · ${up}% up · top ${topTk} ${(g.topW*100).toFixed(1)}%</div></div>
+    <div class="chips">${mem.map(x => `<span class="chip" title="${esc(D.names[x.i])}"><b>${esc(D.tickers[x.i])}</b><span class="${cls(x.r)}">${pct(x.r)}</span></span>`).join('')}</div></div>`;
+}
+function drawSW(v){
+  $('strong').innerHTML = v.top.map(groupBlock).join('');
+  $('weak').innerHTML = v.bot.map(groupBlock).join('');
+  $('sSub').textContent = $('wSub').textContent = `${LVLN[st.level]} · ${st.lb} return · RS vs SPX`;
+}
+
+// ---------- ranking table
+function drawRank(v){
+  const cols = [['name','GROUP'],['n','N'],['1M','RS 1M'],['3M','RS 3M'],['6M','RS 6M'],['12M','RS 12M'],['breadth','BREADTH'],['quad','QUADRANT']];
+  const key = st.sortKey || st.lb, qo = {LEADING:3,IMPROVING:2,WEAKENING:1,LAGGING:0};
+  const val = (g,k) => k==='name' ? g.name : k==='n' ? g.mem.length : k==='breadth' ? g.breadth : k==='quad' ? qo[g.quad] : (rsOf(g,k) ?? -9);
+  const rows = [...v.gs].sort((a,b) => { const x=val(a,key), y=val(b,key); return (typeof x==='string' ? x.localeCompare(y) : x-y) * st.sortDir; });
+  const plotted = new Map(v.plotted.map(g => [g.code, g.color]));
+  let h = '<thead><tr>' + cols.map(([k,l]) => `<th data-k="${k}" class="${k===key?'sorted':''}">${l}${k===key?(st.sortDir<0?' ↓':' ↑'):''}</th>`).join('') + '</tr></thead><tbody>';
+  rows.forEach(g => {
+    const pc = plotted.get(g.code);
+    h += `<tr class="row${pc?' plotted':''}" data-c="${g.code}"><td style="border-left-color:${pc||'transparent'}">${esc(g.name)}<br><span class="code">${g.code} · ${g.valid.length}/${g.mem.length}</span></td><td>${g.mem.length}</td>` +
+      ['1M','3M','6M','12M'].map(k => { const r=rsOf(g,k); return `<td class="${cls(r)}">${pct(r)}</td>`; }).join('') +
+      `<td>${Math.round(g.breadth*100)}%</td><td style="color:${QC[g.quad]}">${g.quad}</td></tr>`;
+  });
+  $('rank').innerHTML = h + '</tbody>';
+  $('rank').querySelectorAll('th').forEach(th => th.onclick = () => { const k=th.dataset.k; if ((st.sortKey||st.lb)===k) st.sortDir*=-1; else { st.sortKey=k; st.sortDir = k==='name'?1:-1; } render(); });
+  $('rank').querySelectorAll('tr.row').forEach(tr => tr.onclick = () => togglePlot(tr.dataset.c, v));
+}
+function togglePlot(code, v){
+  const isDef = [...v.top, ...v.bot].some(g => g.code===code);
+  if (isDef) st.hidden.has(code) ? st.hidden.delete(code) : st.hidden.add(code);
+  else st.extra.has(code) ? st.extra.delete(code) : st.extra.add(code);
+  render();
+}
+
+// ---------- lookup
+function lookup(){
+  const q = $('lk').value.trim().toUpperCase().replace('.','-'), i = D.tickers.indexOf(q);
+  if (!q){ $('crumb').innerHTML=''; return; }
+  if (i<0){ $('crumb').innerHTML = `<span class="src">not in universe</span>`; return; }
+  const c8 = D.code8[i]; if (!c8){ $('crumb').innerHTML = `<span class="src">unclassified</span>`; return; }
+  const parts = [2,4,6,8].map((n,k) => `<span title="L${k+1} ${c8.slice(0,n)}">${esc(D.names_gics[c8.slice(0,n)]||c8.slice(0,n))}</span>`);
+  const src = D.src[i]==='nn' ? `NN ${(D.conf[i]*100).toFixed(0)}%` : 'table';
+  $('crumb').innerHTML = `<b>${esc(D.names[i])}</b>: ` + parts.join('<span class="sep">›</span>') + `<span class="src">${src}</span>`;
+}
+
+// ---------- wiring
+function render(){ const v = view(); drawRRG(v); drawRS(v); drawSW(v); drawRank(v); syncButtons(); }
+function syncButtons(){ document.querySelectorAll('.seg').forEach(sg => sg.querySelectorAll('button').forEach(b => b.classList.toggle('on', String(st[sg.dataset.k])===b.dataset.v))); }
+document.querySelectorAll('.seg').forEach(sg => sg.querySelectorAll('button').forEach(b => b.onclick = () => {
+  const k = sg.dataset.k; st[k] = k==='level' ? +b.dataset.v : b.dataset.v;
+  if (k==='week') WK = st.week==='done' ? WK_DONE : WK_ALL;
+  if (k==='level' || k==='lb' || k==='weight'){ st.extra.clear(); st.hidden.clear(); }
+  if (k==='lb' && st.sortKey && LB[st.sortKey]) st.sortKey=null;
+  render(); }));
+$('minNames').oninput = e => { st.minNames = Math.max(1, +e.target.value||1); render(); };
+$('lk').oninput = lookup;
+const nValid = D.code8.filter((c,i) => c && C[i][T-1]>0).length;
+$('asof').textContent = `AS OF ${D.dates[T-1]} · ${nValid}/${NT} names` + (D.built_at ? ` · built ${D.built_at.slice(5)}` : '') + (D.pit ? ' · PIT members' : '');
+$('note').innerHTML = (D.demo ? '<b>DEMO — synthetic prices, not market data.</b> ' + esc(D.demo_reason || 'Turn off 「離線示範資料」 above to load the real Yahoo Finance version.') + ' ' : '') +
+  `Relative strength of each GICS group vs the S&amp;P 500, built from constituent prices (${esc(D.source)}). ` +
+  (D.pit ? 'Point-in-time membership (days before a stock joined the index are excluded)' : 'Membership is current classification applied over the window') +
+  `; GICS map is a working table, not official GICS Direct${D.n_nn? `; ${D.n_nn} names classified by the neural network`:''}. Research tool, not investment advice.`;
+if (D.demo) $('note').classList.add('demo');
+$('foot').innerHTML = `Each GICS group is a daily ${'cap- or equal-weighted'} return index of its members (shares = SPY official holdings from State Street when available, else Yahoo shares outstanding; Cap-wtd = previous close × shares, i.e. buy-and-hold; Cap-fixed = today's cap weights held constant over the window, which flatters today's winners; S&amp;P 500 = SPY total return, same dividend treatment as the members). Lookbacks are trading-day windows (1M/3M/6M/12M = 21/63/126/252) ending on the last daily close; 'RS' = (1+group return)/(1+S&amp;P 500 return) − 1 over that window; 'return' = plain price return. Breadth = share of members with a positive return over the selected lookback. The rotation graph uses a weekly RS series: RS-Ratio = 100 × RS / ${RATIO_N}-week average of RS, RS-Momentum = 100 × RS-Ratio / its ${MOM_N}-week average (a JdK-style approximation, not the licensed RRG® formula). Quadrant is from the latest weekly point (WEEK = Complete drops the unfinished current week so the last point stops moving mid-week; a holiday-shortened week ending Thursday is treated as unfinished).${(D.corp_actions&&D.corp_actions.length)?' Corporate actions adjusted (spin-offs back-adjusted like the index provider does): '+D.corp_actions.map(esc).join('; ')+'.':''}${D.pit ? ' Point-in-time membership: days before a stock joined the S&amp;P 500 (constituent history table) are excluded from its group, which removes the \'added after the rally\' bias; names already removed from the index are still missing (no price history), so some survivorship bias remains.' : ' Membership is current classification applied over the whole window (survivorship bias).'} GICS map is a working table, not GICS Direct; GICS® is a trademark of MSCI and S&amp;P.`;
+render();
+</script>
+</body>
+</html>
