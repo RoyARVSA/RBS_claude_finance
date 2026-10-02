@@ -198,6 +198,8 @@ val_report.py           估值治理月報：覆蓋/事後命中/穩定度/因�
 alpha_spine.py          A 段：橫斷面因子面板 → IC 閘門 → ICIR 加權排名 → data/alpha/rank.json（/alpha）
 meta_label.py           B 段：訊號樣本 + 引擎規則出場標籤 + purged walk-forward 邏輯迴歸 → data/alpha/meta.json
 factor_lab.py           C 段：因子 DSL（白名單）評估 + DSR 帳本 + 核准清單（/factor）
+actions_loop.py         Actions 長駐迴圈：每 15 分鐘一輪 main()、每分鐘回指令、每輪 persist（#60）
+scripts/persist_state.sh state 類檔案衝突安全 commit + push（排程與迴圈共用）
 alpha_nightly.py        夜間工作流進入點：抓價 → A → B → 基本面覆蓋輪替（alpha_nightly.yml）
 lanes.py                多線平行帳：現行／＋候選池／＋候選池＋meta 三條虛擬帳同輪記帳（/lanes）
 guidance.py             指引/KPI 萃取：LLM 定位轉錄 + 程式驗證（原文/數字回對、修訂、對帳；/guidance）

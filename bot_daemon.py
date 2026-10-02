@@ -4,7 +4,7 @@ bot_daemon.py – 常駐版 Telegram Bot（即時回應，不用等排程）
 與原本 scan_signals.py 的關係：
   • 完全沿用 scan_signals.py 的所有邏輯（指令處理、訊號、評分）
   • 差別只在「執行方式」：
-      scan_signals.py  → GitHub Actions 每 15 分鐘跑一次（適合零成本、免主機）
+      scan_signals.py  → GitHub Actions（actions_loop.py 長駐迴圈：每分鐘回指令、每 15 分鐘掃描；零成本、免主機）
       bot_daemon.py    → 常駐迴圈，秒級回應指令 + 定時自動掃描（適合 VPS / 本機）
   • 兩者共用同一個 watchlist_state.json，可隨時「切換」——
     ⚠️ 但**絕不可同時跑**（審查團紅隊實測）：Telegram getUpdates 只容一個

@@ -6199,7 +6199,7 @@ def page_mirror_book():
         metric_card("持倉檔數", f"{len(pos)}")
     with c5:
         metric_card("距淨值峰", f"{-dd:.2%}", positive=dd < 0.05)
-    st.caption(f"最後更新 {last.get('date', '—')}（Bot 每 15 分鐘掃描並 commit state；"
+    st.caption(f"最後更新 {last.get('date', '—')}（Bot 長駐迴圈每 15 分鐘掃描、有變動才 commit state；"
                "起始淨值按你的買進成本計，收養持倉的既有浮虧會反映在報酬裡）")
 
     tab1, tab2, tab3, tab4 = st.tabs(["📊 持倉分布", "📈 淨值曲線", "🧾 交易歷史（為什麼交易）", "⚙️ 引擎狀態"])
