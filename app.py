@@ -236,6 +236,7 @@ with st.sidebar:
             "🔍 股票研究",
             "🏢 公司分析",
             "🗂️ 產業總覽",
+            "🔄 GICS 輪動",
             "🏦 機構選股",
             # 組合與風險
             "📈 持倉分析",
@@ -6199,7 +6200,7 @@ def page_mirror_book():
         metric_card("持倉檔數", f"{len(pos)}")
     with c5:
         metric_card("距淨值峰", f"{-dd:.2%}", positive=dd < 0.05)
-    st.caption(f"最後更新 {last.get('date', '—')}（Bot 每 15 分鐘掃描並 commit state；"
+    st.caption(f"最後更新 {last.get('date', '—')}（Bot 長駐迴圈每 15 分鐘掃描、有變動才 commit state；"
                "起始淨值按你的買進成本計，收養持倉的既有浮虧會反映在報酬裡）")
 
     tab1, tab2, tab3, tab4 = st.tabs(["📊 持倉分布", "📈 淨值曲線", "🧾 交易歷史（為什麼交易）", "⚙️ 引擎狀態"])
@@ -6705,6 +6706,82 @@ def _playbook_inputs() -> tuple[dict, dict | None, dict | None, dict, dict, bool
     return stt, ledger, universe, qmap, themes, locked
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def _cached_gics_payload(universe: str, pit: bool) -> dict:
+    """GICS 輪動 Dashboard 資料（Wikipedia 成分 + SPY 官方權重 + Yahoo 收盤；快取 1 小時，不落 repo）。"""
+    import gics_dashboard as gdb
+    return gdb.build_live(universe, pit=pit)
+
+
+def page_gics_rotation():
+    """GICS 產業輪動（移植自使用者 gics_nn 專案；畫面＝原 template 風格，資料在 Streamlit 端建置）。"""
+    import os as _os
+    import streamlit.components.v1 as _components
+    import gics_dashboard as gdb
+    st.title("🔄 GICS 產業輪動")
+    st.caption("S&P 500 成分股自建 GICS 四層群組指數 → RRG 四象限、相對 SPX 強度、最強／最弱、RS 排名。"
+               "GICS 對照表為工作用、非 MSCI/S&P 官方資料；研究工具，非投資建議。")
+    c1, c2, c3 = st.columns([1.2, 1, 1])
+    with c1:
+        # 先只開 S&P 500：S&P 400/600 尚無股數資料，市值權重會失真（#64）
+        uni = st.selectbox("股票池", ["sp500"], index=0, key="gics_uni", help="S&P 1500 待股數資料齊備後開放")
+    with c2:
+        pit = st.toggle("當時成分（PIT）", value=True, key="gics_pit",
+                        help="加入指數之前的日子不計入群組，降低「今天的成分套回過去」的偏差（僅 S&P 500）")
+    with c3:
+        demo = st.toggle("離線示範資料", value=False, key="gics_demo", help="不連網，用合成資料檢查畫面")
+    if st.button("🔄 重新抓資料", key="gics_refresh"):
+        _cached_gics_payload.clear()
+    try:
+        if demo:
+            payload = gdb.demo_payload()
+        else:
+            with st.spinner("建置中：Wikipedia 成分 → SPY 官方權重 → Yahoo 收盤（第一次約 1–3 分鐘，之後快取 1 小時）…"):
+                payload = _cached_gics_payload(uni, bool(pit))
+    except Exception as e:
+        st.error(f"資料建置失敗（{type(e).__name__}）——可能是 Yahoo／Wikipedia 暫時無法連線。先用示範資料檢查畫面。")
+        payload = gdb.demo_payload()
+        payload["demo_reason"] = "Live build failed (Yahoo / Wikipedia unreachable) — press 重新抓資料 to retry."
+    _components.html(gdb.render_html(payload), height=2900, scrolling=True)
+
+    # 持倉產業曝險（只顯示，不強制；GICS 第三階段）
+    with st.expander("🧮 持倉產業曝險（只顯示、不強制）", expanded=False):
+        key = _os.environ.get("ALPACA_KEY_ID", "")
+        secret = _os.environ.get("ALPACA_SECRET_KEY", "")
+        try:
+            key = key or st.secrets.get("ALPACA_KEY_ID", "")
+            secret = secret or st.secrets.get("ALPACA_SECRET_KEY", "")
+        except Exception:
+            pass
+        if not (key and secret):
+            st.info("未設定 Alpaca 金鑰，無法讀取持倉。")
+        else:
+            try:
+                import alpaca_trader as at
+                import gics_weekly as gw
+                positions = at.get_positions(key, secret)
+                if positions is None:
+                    raise RuntimeError("Alpaca API")
+                # 對照：每週 S&P 1500 表 + 神經網路分類，再補上這次 payload（與 /gics exposure 一致）
+                code_of = {t: r["code8"] for t, r in gw.lookup_table().items()}
+                if not payload.get("demo"):
+                    code_of.update(dict(zip(payload.get("tickers", []), payload.get("code8", []))))
+                hold = {s.upper().replace(".", "-"): abs(float((p or {}).get("market_value") or 0)) for s, p in positions.items()}
+                lvl = st.radio("層級", [1, 2, 3, 4], index=0, horizontal=True, key="gics_exp_lvl",
+                               format_func=lambda x: f"L{x}")
+                rows = gdb.sector_exposure(hold, code_of, level=lvl)
+                if not rows:
+                    st.caption("目前沒有持倉。")
+                else:
+                    st.dataframe(pd.DataFrame([{"群組": r["name"], "代碼": r["code"], "占比": f"{r['pct']:.1%}",
+                                                 "標的": "、".join(r["tickers"]),
+                                                 "提醒": "⚠️ 超過 40%" if r["warn"] else ""} for r in rows]),
+                                 use_container_width=True, hide_index=True)
+                    st.caption("只顯示、不改變自動交易；不在 S&P 500 清單的標的（ETF 等）歸「未分類」。")
+            except Exception as e:
+                st.warning(f"持倉讀取失敗（{type(e).__name__}）")
+
+
 def page_playbook():
     st.title("🧭 佈局計畫")
     st.caption("整合層：選股池 → 分析師修正 → 公司模型 → 品質 → 技術評分 → 大盤 regime → 持倉 → 論點，"
@@ -7067,6 +7144,7 @@ PAGES = {
     "🔍 股票研究":  page_stock_research,
     "🏢 公司分析":  page_company_analysis,
     "🗂️ 產業總覽":  page_sector_overview,
+    "🔄 GICS 輪動":  page_gics_rotation,
     "🚨 即時警報":  page_alerts,
     "🛠️ 交易工具":  page_trading_tools,
     "📉 模擬交易":  page_paper_trading,

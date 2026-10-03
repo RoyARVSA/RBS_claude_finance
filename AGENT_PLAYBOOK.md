@@ -107,7 +107,7 @@ Prioritize accuracy over speed. Do NOT modify files.
 **公開 repo**：不寫持倉代碼與股數、淨值金額、chat id、金鑰、Actions 日誌原文；績效只用比例或定性描述。
 labels：`bug`（壞掉）、`enhancement`（改善/驗證計畫）、`documentation`。
 
-**收尾**：commit 訊息帶 `Fixes #N`（合併進 main 會自動關閉）或 `Refs #N`（還沒完）；
+**收尾**：commit 訊息帶 `Fixes #N`（合併進 main 會自動關閉）或 `Refs #N`（還沒完）；**多個編號每個都要寫關鍵字**——`Fixes #55, fixes #57`，寫成 `Fixes #55 #57` 只會關第一個（2026-10-02 實案：#57、#58 沒自動關）；
 修完在 issue 留言：原因、修法、驗證方式與結果、commit hash。
 
 **工具**（開發環境沒有 gh CLI；權杖在 `GH_TOKEN`，絕不 echo）：

@@ -1,6 +1,6 @@
 # GitHub Actions 自動訊號掃描設定指引
 
-每 15 分鐘自動掃描 watchlist → 有訊號時推 Telegram 通知，並回應你傳的指令。
+每 15 分鐘自動掃描 watchlist → 有訊號時推 Telegram 通知，並在約 1 分鐘內回應你傳的指令（Actions 長駐迴圈，#60）。
 
 ---
 
@@ -82,7 +82,8 @@
 | AI | `/committee NVDA`（`/cmt`）— 機構決策會議：分析師×4→多空對辯→交易員→風控→投資經理，裁決自動記入計分板（需 `LLM_API_KEY`，約 1-3 分鐘） |
 | 風控 | `/risk [帳戶 風險%]`、`/protections`、`/calibrate` |
 | 模擬交易 | `/autotrade on\|off`、`/alpha`（資訊疊加層現況）、`/positions`、`/pnl`、`/journal [N]`、`/checkup`（行為體檢：追高/頻率/太早出場/持有期）、`/attrib`（機制歸因：各出場/進場機制損益/勝率/賣後追蹤）、`/shadow`（舊邏輯 vs 新引擎對照）、`/mirror [init 現金 代碼:股數:成本…\|reset]`（鏡像帳：引擎接管你的實倉起點自主模擬；`/attrib mirror`、`/checkup mirror` 看鏡像帳版歸因/體檢）、`/universe [rebuild]`（選股池快照：yf.screen 寬宇宙→品質/流動性/12-1 動能→候選前 N；每月自動重建、快照落 `data/universe/`；P0 只顯示）、`/est [TICKER]`（分析師預估快照：共識/修正動能/目標價/評等/財報驚奇史；每輪自動輪替刷新到 `estimates_ledger.json`，無參數看上修下修排行）、`/engtest [3m\|6m\|1y\|2y]`（整台引擎歷史重放：現行參數過去 N 個月報酬/回撤/機制分佈，次日開盤成交含成本、對照 SPY）、`/engtest opt [期間] [apply]`（引擎參數學習：出場網格 108 組 × 三段 walk-forward + DSR，holdout 通過才推薦；apply 寫入 eng_* 參數、`/engtest clear` 還原）、`/engtest opt entry [期間] [apply]`（進場品質網格 32 組：門檻×追高上限×加碼R×中性風險倍數）、`/engtest opt loose [期間] [apply]`（放寬出場網格 36 組：追蹤回落×收緊門檻 含不收緊×分批R 含關閉×停損倍數；所有 opt 結果都附舊邏輯（Shadow 同款）基準當參照）、`/rebalance [hrp\|max_sharpe\|min_vol\|erc\|equal]`（持倉再平衡顧問）、`/closeall` |
-| Alpha 脊椎 | `/alpha [factors\|meta]` — **橫斷面排名 / 因子 IC / meta-labeling**（夜間工作流 `alpha_nightly.yml` 產出 `data/alpha/rank.json`、`meta.json`）：選股池 400 檔的 ICIR 加權排名（因子過 IC 閘門才配權）、各因子 IC/ICIR/NW t/價差、勝率模型 OOS AUC 與尺寸化測試；`/set alpha_pool_enabled on`（前 `alpha_pool_top` 名進引擎候選池，僅閘門通過時）、`/set meta_enabled on`（部位乘勝率倍數 0–1.25，0＝跳過並說明）；`/factor test <公式>`｜`add <名稱> <公式>`｜`drop <名稱>`｜`list` — 因子實驗室（DSL：ret/mom/vol/ma_dist/ext/rsi/volratio/hi_dist/lo_dist；IC 閘門 + DSR 記帳；核准者夜間納入合成）。`/lanes [reset]` — 多線平行帳：現行／＋候選池／＋候選池＋meta 三條虛擬帳（各 10 萬起）同一輪訊號並排記帳，含 SPY 與真帳同期（`lanes_enabled` 預設開）。規劃與閘門見 `ALPHA_SPINE.md` |
+| GICS | `/gics TICKER` — GICS 四層分類（S&P 1500 對照表，不在表上的由每週神經網路補分類並標信心）；`/gics verify` — 每週六對帳報告（資料完整、分類 vs State Street、權重、重建指數 vs ^GSPC、各產業 vs S&P 官方產業指數）；`/gics exposure [L1-4]` — 持倉產業曝險（超過 40% 標示，只顯示不強制）。每週六 `gics_weekly.yml` 更新 `data/gics/` |
+| Alpha 脊椎 | `/alpha rank\|factors\|meta` — **橫斷面排名 / 因子 IC / meta-labeling**（無子指令的 `/alpha` 是資訊疊加層）（夜間工作流 `alpha_nightly.yml` 產出 `data/alpha/rank.json`、`meta.json`）：選股池 400 檔的 ICIR 加權排名（因子過 IC 閘門才配權）、各因子 IC/ICIR/NW t/價差、勝率模型 OOS AUC 與尺寸化測試；`/set alpha_pool_enabled on`（前 `alpha_pool_top` 名進引擎候選池，僅閘門通過時）、`/set meta_enabled on`（部位乘勝率倍數 0–1.25，0＝跳過並說明）；`/factor test <公式>`｜`add <名稱> <公式>`｜`drop <名稱>`｜`list` — 因子實驗室（DSL：ret/mom/vol/ma_dist/ext/rsi/volratio/hi_dist/lo_dist；IC 閘門 + DSR 記帳；核准者夜間納入合成）。`/lanes [reset]` — 多線平行帳：現行／＋候選池／＋候選池＋meta 三條虛擬帳（各 10 萬起）同一輪訊號並排記帳，含 SPY 與真帳同期（`lanes_enabled` 預設開）。規劃與閘門見 `ALPHA_SPINE.md` |
 | 候選/治理 | `/screen` — **候選篩選（P5）**：選股池動能前 N ∪ stock_db AI 供應鏈主題 − watchlist；Stage 3 每次 ≤8 檔補品質分（PIT 三表）與修正動能（yfinance 預估），加上選股池 12-1 動能 → 綜合分（品質 0.4／修正 0.3／動能 0.3，缺成分只降信心）；品質否決剔除；每個閉市日一批（≤8 檔）自動刷新 `state["screen"]`，單檔 7 天更新；**只建議，`/add` 後才進建模輪替與佈局計畫**、`/valreport` — **估值治理月報（P6）**：覆蓋/過期/待審/建不了模、各判定（accumulate/hold/trim/exit）列日到今日的事後報酬與命中率、公允價值穩定度（近 8 列變異係數）、MoS 因子 21/63 日 IC（有效期數與 Newey-West t）、指引萃取覆蓋；每月第一個閉市輪自動推播（`/set valreport_enabled off` 關） |
 | 指引 | `/guidance TICKER [季別]` — **指引/KPI 萃取（P4）**：Alpha Vantage `EARNINGS_CALL_TRANSCRIPT`（免費 key、占 25 次/日配額 1 次）→ 便宜 LLM 只做「定位 + 逐字轉錄」到封閉列舉 schema（revenue/eps/gross_margin/op_margin/capex/backlog/rpo/book_to_bill/fcf/segment_revenue…）→ **程式驗證**：quote 必須逐字存在原文、low/high 必須能由 quote 解析、修訂（raise/lower/maintain）由程式比對上一期中點 ±1%、實際值與財報對帳（差 >2% 標疑非 GAAP）、原文視為不受信任輸入（注入無效）、JSON 壞掉 → 棄權不猜。通過項目加密存 state 供論點監測 |
 | 估值層接引擎 | `/set val_enabled on\|off`（預設關）— val_hist 的 MoS → 部位乘數 0.5–1.25×（只乘風險預算）、市價高於牛市情境不加碼、MoS>30% 提早加碼（0.75R）、候選排序傾斜 ±0.1；**不觸發進場、不否決出場**。`/engtest opt` 會自動加入「估值層 開/關」A/B 維度（PIT 由 val_hist 列日期保證），holdout 沒贏就別開；`/rebalance bl` — Black-Litterman 用公允價值當觀點（信心＝情境寬度）配置權重 |
@@ -101,7 +102,7 @@
 
 1. 前往 repo → **Actions** 頁籤
 2. 若出現「Workflows aren't being run」警告，點 **I understand my workflows, go ahead and enable them**
-3. 在左欄找到 **RBS Signal Scanner** → 點 **Run workflow** 手動測試一次；另一條 **RBS Alpha Nightly**（`alpha_nightly.yml`，每交易日收盤後一次）首次也手動 Run 一次，之後 `/alpha factors` 才有資料
+3. 在左欄找到 **RBS Signal Scanner** → 點 **Run workflow** 手動測試一次；另一條 **RBS Alpha Nightly**（`alpha_nightly.yml`，每交易日收盤後一次）首次也手動 Run 一次，之後 `/alpha factors` 才有資料；**RBS GICS Weekly**（`gics_weekly.yml`，每週六一次）首次也手動 Run 一次，之後 `/gics` 與網頁 GICS 輪動的神經網路補分類、對帳報告才有資料
 
 ---
 
@@ -111,11 +112,14 @@
 
 ```yaml
 schedule:
-  - cron: '*/15 * * * *'   # 每 15 分鐘執行
+  - cron: '7 * * * *'      # 每小時觸發；每次在 actions_loop.py 內長駐最多 ~5.5 小時
 ```
 
-每 15 分鐘掃描一次，因此你傳的指令最多等 ~15 分鐘會被處理（要秒級即時回應請改用
-[常駐版](PERSISTENT_BOT.md)）。晨報僅在每交易日 ET 08:30 之後的那次掃描推送一次。
+GitHub 會大量丟棄 `*/15` 這種高頻排程（2026-09/10 實測一天只跑 3–8 次，指令等好幾小時，#60）。
+現在的做法：每小時觸發一次，每次觸發後 `actions_loop.py` 持續執行最多 330 分鐘——
+每 15 分鐘跑一輪完整掃描／自動交易、每 60 秒處理 Telegram 指令、每輪把 state commit 回 repo；
+同時只會有一個工作（下一個排隊，前一個結束立刻接手）。一天只要有幾次觸發成功就能覆蓋整個交易時段。
+手動 Run workflow 時 `loop_minutes` 填 `1` 可只跑一輪。晨報僅在每交易日 ET 08:30 之後推送一次。
 
 ---
 
@@ -167,18 +171,18 @@ python scan_signals.py
 ## 常見問題
 
 **Q: GitHub Actions cron 不準時怎麼辦？**
-A: GitHub 免費版 cron 可能延遲最多 15 分鐘，屬正常現象。
+A: GitHub 免費版排程常被延遲或丟棄（`*/15` 實測一天只跑 3–8 次，#60），所以改成每小時觸發＋長駐迴圈；只要一天有幾次觸發成功就能覆蓋交易時段。要立刻接手可在 Actions 頁手動 Run workflow（注意：手動短跑會取代排隊中的長工作）。
 
 **Q: Actions 跑完但沒收到 Telegram？**
 A: 可能是沒有訊號觸發（屬正常），或 Secrets 設定有誤。查看 Actions 執行 log 確認。
 
 **Q: 想調整掃描頻率？**
-A: 預設 `'*/15 * * * *'`（每 15 分鐘）。yfinance 本身有 ~15 分鐘延遲，再高頻無實質意義；
-想省額度可改 `'*/30 * * * *'`（每 30 分鐘）或 `'0 * * * *'`（每小時）。
+A: 排程是每小時觸發，實際掃描節奏由 workflow env 的 `ROUND_SEC`（預設 900 秒＝15 分鐘）決定，
+指令輪詢由 `POLL_SEC`（預設 60 秒）決定。yfinance 本身有 ~15 分鐘延遲，掃描再高頻無實質意義。
 
 **Q: 免費 GitHub Actions 額度夠嗎？**
 A: **公開 repo 無限制**（本專案即是）。私人 repo 每月 2000 分鐘免費，每次掃描約 1-2 分鐘、
-每 15 分鐘一次 ≈ 月用 ~2900-5800 分鐘會超額，私人 repo 建議改每小時或用[常駐版](PERSISTENT_BOT.md)。
+長駐迴圈幾乎整天佔用一個 runner，私人 repo 會超額——私人 repo 請把 `LOOP_MINUTES` 設 `1`（每小時一輪）或用[常駐版](PERSISTENT_BOT.md)。
 
 ---
 

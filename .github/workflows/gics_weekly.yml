@@ -1,0 +1,68 @@
+name: RBS GICS Weekly
+
+# 每週六一次：S&P 1500 GICS 成分對照、公司資料快取、分類神經網路（交叉驗證過門檻才更新分類結果）、數字對帳。
+# 產出 data/gics/*（公開資料衍生、明文；模型權重不入庫）。只 add 本輪觸碰的檔案。
+on:
+  schedule:
+    - cron: '23 14 * * 6'   # 週六 14:23 UTC（美股休市；避開整點尖峰）
+  workflow_dispatch: {}
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: gics-weekly
+  cancel-in-progress: false
+
+jobs:
+  weekly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        # 與其他工作流同釘版 + scikit-learn（TF-IDF/SVD）、lxml（Wikipedia 表格）、openpyxl（SPY 持股 xlsx）
+        run: pip install yfinance==1.5.2 pandas==3.0.5 numpy==2.4.6 requests==2.34.2 scipy==1.17.1 scikit-learn==1.7.2 lxml==5.3.0 openpyxl==3.1.5
+
+      - name: Run GICS weekly
+        env:
+          GICS_TOUCHED_FILE: /tmp/gics_touched.txt
+          PYTHONUNBUFFERED: '1'
+        run: python gics_weekly.py
+
+      - name: Commit and push (replay only this run's files on conflict)
+        if: always()          # 前面步驟失敗或逾時也要入庫已抓的公司資料快取（下週接著補，#64）
+        run: |
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name  "github-actions[bot]"
+          [ -f /tmp/gics_touched.txt ] || exit 0
+          while IFS= read -r f; do [ -n "$f" ] && git add "$f" 2>/dev/null || true; done < /tmp/gics_touched.txt
+          git diff --staged --quiet && { echo "No GICS changes."; exit 0; }
+          git commit -q -m "chore: gics weekly (members/classified/verify) [skip ci]"
+          mkdir -p /tmp/gics_bak
+          while IFS= read -r f; do [ -n "$f" ] && [ -f "$f" ] && mkdir -p "/tmp/gics_bak/$(dirname "$f")" && cp "$f" "/tmp/gics_bak/$f"; done < /tmp/gics_touched.txt
+          for i in 1 2 3; do
+            git push -q origin HEAD:"$GITHUB_REF_NAME" && exit 0
+            echo "push 失敗，同步遠端後重放本輪檔案 ($i)…"
+            git fetch -q origin "$GITHUB_REF_NAME"
+            git reset -q --hard FETCH_HEAD
+            while IFS= read -r f; do
+              [ -n "$f" ] && [ -f "/tmp/gics_bak/$f" ] && mkdir -p "$(dirname "$f")" && cp "/tmp/gics_bak/$f" "$f" && git add "$f"
+            done < /tmp/gics_touched.txt
+            git diff --staged --quiet || git commit -q -m "chore: gics weekly (members/classified/verify) [skip ci]"
+          done
+          git push -q origin HEAD:"$GITHUB_REF_NAME" || echo "::warning::push 最終失敗（下週重算）"

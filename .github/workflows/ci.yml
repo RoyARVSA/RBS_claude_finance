@@ -6,11 +6,15 @@ on:
   push:
     paths:
       - '**.py'
+      - '**.html'
+      - 'scripts/**'
       - 'requirements.txt'
       - '.github/workflows/ci.yml'
   pull_request:
     paths:
       - '**.py'
+      - '**.html'
+      - 'scripts/**'
       - 'requirements.txt'
       - '.github/workflows/ci.yml'
 
@@ -43,6 +47,10 @@ jobs:
           set -e
           python3 backtest.py --offline
           python3 alpha_nightly.py --offline
+          python3 actions_loop.py --selftest
+          python3 gics_weekly.py --offline
+          python3 scripts/check_dispatch.py
+          bash -n scripts/persist_state.sh
           for m in quant_tools rbs_lib fundamentals macro finnhub_data sector_scan \
                    assistant assistant_tools options_sentiment sec_insider perf_report \
                    portfolio_opt analyst_data short_data whales_13f ledger reflection \
@@ -53,6 +61,7 @@ jobs:
                    indicators mirror_book engine_backtest estimates_ledger universe \
                    fin_data quality company_model factor_eval playbook guidance \
                    screener val_report alpha_spine meta_label factor_lab lanes \
+                   gics_taxonomy gics_data gics_model gics_dashboard gics_verify \
                    earnings_review; do
             echo "── $m ──"
             python3 "$m.py"

@@ -7,8 +7,8 @@
 
 ## 專案一句話
 
-Streamlit 金融儀表板（`app.py`，16 頁）+ Telegram 訊號 Bot（`scan_signals.py` 排程版 /
-`bot_daemon.py` 常駐版），部署於 Streamlit Cloud + GitHub Actions（cron `*/15`；`alpha_nightly.yml` 每交易日收盤後一次）。
+Streamlit 金融儀表板（`app.py`，17 頁）+ Telegram 訊號 Bot（`scan_signals.py` 排程版 /
+`bot_daemon.py` 常駐版），部署於 Streamlit Cloud + GitHub Actions（`signal_scan.yml` 每小時觸發、`actions_loop.py` 長駐約 5.5 小時：每 15 分鐘一輪、每分鐘回指令；`alpha_nightly.yml` 每交易日收盤後一次；`gics_weekly.yml` 每週六一次）。
 使用者以繁體中文溝通；本專案為分析教育用途，所有輸出標「非投資建議」。
 
 ## 鐵律（違反 = 真實出過事故的等級）
@@ -36,7 +36,7 @@ Streamlit 金融儀表板（`app.py`，16 頁）+ Telegram 訊號 Bot（`scan_si
 | 要改什麼 | 檔案 |
 |---|---|
 | 網頁頁面/UI | `app.py`（~4300 行、會持續漂移，以 `wc -l` 為準；**不要整檔讀**。導航：Grep `def page_` 找頁面、`PAGES = {` 看路由、`def _cached_` 找快取層、`def _run_.*_tool` 找 AI 助理工具執行器）|
-| Bot 訊號/指令/晨報 | `scan_signals.py`（排程進入點；指令 dispatch 搜 `elif cmd ==`）；`bot_daemon.py` 重用其全部邏輯 |
+| Bot 訊號/指令/晨報 | `scan_signals.py`（單輪進入點 `main()`；指令 dispatch 搜 `elif cmd ==`）；`actions_loop.py`（Actions 長駐迴圈，呼叫 `main()` 與 `process_commands`，每輪 `scripts/persist_state.sh`；PITFALLS D18）；`bot_daemon.py`（VPS 常駐版）重用其全部邏輯 |
 | 技術指標 / 綜合評分 | `indicators.py`（RSI/MACD/布林/ATR/評分 `composite_score`/部位提示/回測校準/掃描 `scan`——外部一律走公開名，scan_signals 內的底線名是 re-export 向後相容）|
 | 回測引擎 | `backtest.py`（triple-barrier / walk-forward / 參數最佳化）+ `engine_backtest.py`（/engtest：整台 trade_engine 逐日重放、次日開盤成交含成本、出場 108／進場品質 32（entry）／放寬出場 36（loose）組三段 walk-forward + DSR、附舊邏輯 decide_orders 基準、apply 寫 thresholds eng_*）|
 | 部位與風險數學 | `quant_tools.py`（ATR/Kelly/風險平價）、`rbs_lib.py`（VaR/CVaR）|
@@ -51,6 +51,7 @@ Streamlit 金融儀表板（`app.py`，16 頁）+ Telegram 訊號 Bot（`scan_si
 | 估值 / 財報 / 論點 / 反駁器 | `valuation.py`（DCF+Comps）/ `earnings_review.py`（/preview）/ `thesis.py`（/thesis 失效價監測）/ `falsifier.py`（/falsify 只證偽不證實＋DSR 帳本）——皆移植自 Anthropic financial-services 方法論 |
 | 估值層接引擎（P3）/ 指引萃取（P4） | `trade_engine.decide` 讀 scored 的 `val_mult/val_tilt/val_no_add/val_early`（`engine_backtest.val_ctx_from_hist` 由 val_hist PIT 產生；`thresholds["val_enabled"]` 預設關）；`portfolio_opt.black_litterman` + `rebalance.views_from_val_hist`（/rebalance bl）；`guidance.py`（/guidance：AV 逐字稿 → LLM 定位轉錄 → 程式驗證；state["guidance"] 加密）|
 | Alpha 脊椎 / meta-labeling / 因子實驗室（A/B/C） | `alpha_spine.py`（橫斷面因子面板→IC 閘門→ICIR 加權排名→`data/alpha/rank.json`；`pool_symbols` 給引擎候選池）+ `meta_label.py`（訊號樣本→引擎規則出場標籤→`features()` 訓練=線上→numpy 邏輯迴歸 + purged walk-forward→`data/alpha/meta.json`；`score_rows` 給 meta_mult）+ `factor_lab.py`（白名單 DSL、DSR 帳本 state["factor_lab"] 明文）+ `alpha_nightly.py`（`.github/workflows/alpha_nightly.yml` 收盤後一次；`--offline` 自測）；`indicators.composite_series` 為引擎評分向量化版（自測逐位相等）；meta 候選 logit vs LightGBM 同套 purged CV 擇優、GBM 線上純 Python 推論 `predict_gbm`；`lanes.py`（/lanes：現行／＋候選池／＋候選池＋meta 三條虛擬帳同輪記帳，state["lanes"] 加密）；旗標 `alpha_pool_enabled`/`meta_enabled` 預設關、`lanes_enabled` 預設開；規劃 `ALPHA_SPINE.md` |
+| GICS 產業輪動 / 分類神經網路 | `gics_taxonomy.py`（四層表）+ `gics_data.py`（Wikipedia 成分、SPY 官方持股、分拆修正、`membership_mask` PIT）+ `gics_model.py`（純 NumPy 階層 MLP，npz 存讀 allow_pickle=False，TF-IDF 可從陣列重建）+ `gics_dashboard.py`（payload、`render_html` 嵌入 `gics_template.html`、`sector_exposure`）+ `gics_verify.py` + `gics_weekly.py`（週六 `gics_weekly.yml`：members/classified/verify 入庫，模型不入庫）；網頁 `page_gics_rotation`（Streamlit 端建置、快取 1 小時）；`/gics`；移植自使用者 gics_nn 專案，模板風格是使用者指定的標準 |
 | 候選篩選 / 治理月報（P5/P6） | `screener.py`（/screen：候選池 = universe.top ∪ 主題 − watchlist；Stage 3 ≤8 檔/次、state["screen"] 明文快取；`maybe_refresh_screen` 每閉市日一批）+ `val_report.py`（/valreport：覆蓋/事後命中/穩定度/MoS IC/指引；`_should_send_valreport` 每月一次）|
 | 佈局計畫整合層 | `playbook.py`（/playbook、網頁 `page_playbook`：彙整 last_scores/val_hist/data-fin 品質/預估帳本/universe/weather/engine.pos/theses → 分層四象限權重帶；`scan_signals.build_playbook` 組裝、`refresh_models` 閒置輪輪替建模）|
 | 估值層模型（P1/P2） | `fin_data.py`（PIT 三表、first-seen、data/fin/）+ `quality.py`（Piotroski/Altman/Beneish/Sloan/ROIC）+ `company_model.py`（/model：驅動推導→專業 WACC→DCF（終值 ROIC 淡出，bear 價值中性）→三情境/MC/反向 DCF→十條審核→訊號；金融 RIM／地產 DDM 路由；人工覆蓋 state["models"]、歷史 state["val_hist"] 皆加密）+ `factor_eval.py`（Rank IC/ICIR/分位/自相關、配置門檻）；網頁 `page_company_model`（滑桿即時重算、football field、匯出/匯入橋）|
@@ -71,7 +72,7 @@ Streamlit 金融儀表板（`app.py`，16 頁）+ Telegram 訊號 Bot（`scan_si
 - [ ] README 同步：頁面表 / 功能列表 / 檔案結構
 - [ ] 子代理對抗驗證（模板：AGENT_PLAYBOOK §3），**High/Med 發現必修**，Low 視成本
 - [ ] 本輪發現的問題都有 GitHub issue（AGENT_PLAYBOOK T5）；commit 帶 `Fixes #N`、issue 留修正摘要
-- [ ] commit（footer）+ push
+- [ ] commit（footer）+ push；**推送後核對遠端**：`git fetch && git rev-parse origin/<分支>` 必須等於 `git rev-parse HEAD`（PITFALLS D19：detached HEAD 時 push 會假裝成功）
 - [ ] 回覆裡提醒使用者：**Reboot Streamlit app**（模組快取不清會 AttributeError）；Colab 用戶重跑 Cell 2
 
 ## 遇到不確定時

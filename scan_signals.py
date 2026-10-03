@@ -50,7 +50,8 @@ Telegram 指令（傳給 Bot）：
   /today [帳戶 風險%]     – 當日交易計畫：VWAP/ORB/RVOL 訂單票（別名 /plan）
   /plantest [apply|clear] – 當日計畫 60 日歷史回測；apply 套用校準（每週亦自動跑）
   /plantest opt [apply]   – 參數尋優（ORB 分鐘×停損 ATR×目標 R:R，walk-forward 把關）
-  /alpha [factors|meta]   – Alpha 脊椎：橫斷面排名／因子 IC 閘門／meta-labeling OOS（夜間工作流產出）
+  /alpha rank|factors|meta – Alpha 脊椎：橫斷面排名／因子 IC 閘門／meta-labeling OOS（夜間工作流產出；無子指令＝資訊疊加層）
+  /gics TICKER|verify|exposure [L1-4] – GICS 四層分類查詢／每週數字對帳／持倉產業曝險（只顯示）
   /factor test|add|drop|list – 因子實驗室：DSL 公式 → IC/ICIR/NW t + DSR 帳本；核准者進夜間合成
   /lanes [reset]          – 多線平行帳：現行／＋候選池／＋候選池＋meta 三條虛擬帳同輪比較（含 SPY、真帳同期）
   /screen                 – 候選篩選（選股池 ∪ 主題 − watchlist；Stage 3 限額；只建議）
@@ -382,18 +383,45 @@ def _tg_get(token: str, method: str, params: dict | None = None) -> dict:
         return {}
 
 
+TG_LIMIT = 4000     # Telegram 單則上限 4096 字；留裕度給 Markdown 標記（#63）
+
+
+def _split_tg(text: str, limit: int = TG_LIMIT) -> list[str]:
+    """長訊息依換行切成多段（每段 ≤ limit）；單行超長才硬切。純函數。"""
+    text = text or ""
+    if len(text) <= limit:
+        return [text]
+    parts, cur = [], ""
+    for line in text.split("\n"):
+        while len(line) > limit:                       # 單行超長：硬切
+            if cur:
+                parts.append(cur); cur = ""
+            parts.append(line[:limit]); line = line[limit:]
+        if cur and len(cur) + 1 + len(line) > limit:
+            parts.append(cur); cur = line
+        else:
+            cur = f"{cur}\n{line}" if cur else line
+    if cur:
+        parts.append(cur)
+    return parts
+
+
 def _tg_send(token: str, chat_id: str, text: str) -> bool:
+    """送 Telegram 訊息：超過上限自動分段（#63）；Markdown 解析失敗（使用者輸入含底線等）改送純文字。"""
     url = f"https://api.telegram.org/bot{token}/sendMessage"
-    try:
-        r = requests.post(
-            url,
-            json={"chat_id": chat_id, "text": text, "parse_mode": "Markdown"},
-            timeout=15,
-        )
-        return r.ok
-    except Exception as e:
-        print(f"Telegram send error: {e}")
-        return False
+    ok = True
+    for part in _split_tg(text):
+        try:
+            r = requests.post(url, json={"chat_id": chat_id, "text": part, "parse_mode": "Markdown"}, timeout=15)
+            if not r.ok and r.status_code == 400:      # 多半是 Markdown 實體壞掉 → 純文字重送，至少讓使用者收到
+                r = requests.post(url, json={"chat_id": chat_id, "text": part}, timeout=15)
+            if not r.ok:
+                print(f"Telegram send failed: HTTP {r.status_code}")
+            ok = ok and r.ok
+        except Exception as e:
+            print(f"Telegram send error: {type(e).__name__}")
+            ok = False
+    return ok
 
 
 # ── Command processing ───────────────────────────────────────────────────────
@@ -443,7 +471,8 @@ def _cmd_help() -> str:
         "`/today [帳戶 風險%]`（或 `/plan`）— 當日交易計畫：VWAP/ORB 進場票（進場/停損/停利/股數）\n"
         "`/plantest [apply|clear]` — 當日計畫 60 日回測；apply 套用校準（每週自動跑，`/set plan_autocal_enabled off` 關）\n"
         "`/plantest opt [apply]` — 參數尋優：ORB×停損×R:R 掃 27 組，holdout 段把關通過才推薦\n"
-        "`/alpha [factors|meta]` — Alpha 脊椎（夜間工作流）：選股池 400 檔橫斷面排名（因子過 IC 閘門才配權）、因子 IC 表、meta-labeling 勝率模型 OOS 與閘門；`/set alpha_pool_enabled on` 讓前 N 名進候選池、`/set meta_enabled on` 讓部位吃勝率倍數（皆預設關）\n"
+        "`/alpha rank|factors|meta` — Alpha 脊椎（夜間工作流）：選股池 400 檔橫斷面排名（因子過 IC 閘門才配權）、因子 IC 表、meta-labeling 勝率模型 OOS 與閘門；`/set alpha_pool_enabled on` 讓前 N 名進候選池、`/set meta_enabled on` 讓部位吃勝率倍數（皆預設關）\n"
+        "`/gics TICKER|verify|exposure [L1-4]` — GICS 四層分類（S&P 1500 對照表＋每週神經網路補分類）、每週數字對帳（vs State Street／S&P 官方指數）、持倉產業曝險（超過 40% 標示，只顯示不強制）\n"
         "`/lanes [reset]` — 多線平行帳：現行 watchlist／＋候選池／＋候選池＋meta 部位三條虛擬帳（各 10 萬起）同一輪訊號並排記帳，含 SPY 與真帳同期；旗標關著也在跑，看完再決定開不開（`/set lanes_enabled off` 關）\n"
         "`/factor test <公式>`｜`add <名稱> <公式>`｜`drop`｜`list` — 因子實驗室：DSL 公式（ret/mom/vol/ma_dist/ext/rsi/volratio/hi_dist/lo_dist）→ IC/ICIR/NW t + DSR 記帳；核准者夜間納入合成\n"
         "`/screen` — 候選篩選：選股池動能前 N ∪ AI 主題 − watchlist，逐批補品質/修正動能（≤8 檔/次、每週閉市輪自動刷新），綜合分排名；只建議、`/add` 後才進建模與佈局\n"
@@ -1272,7 +1301,8 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
             except Exception as e:
                 reply = f"❌ 氣象台讀取失敗：{e}"
 
-        elif cmd == "/alpha":
+        elif cmd == "/alpha" and not (args and args[0].lower() in ("rank", "factors", "meta")):
+            # 無子指令 → 資訊疊加層；rank/factors/meta 交給下方 Alpha 脊椎分支（#61：原本兩個無條件分支，後者永遠執行不到）
             try:
                 import alpha_overlay as ao
                 reply = ao.overlay_text(state, datetime.now(ET).strftime("%Y-%m-%d"))
@@ -1560,6 +1590,32 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                 except Exception as e:
                     reply = f"❌ 指引萃取失敗：{e}"
 
+        elif cmd == "/gics":
+            # GICS 四層分類（S&P 1500 對照表 + 每週神經網路分類）、每週對帳、持倉產業曝險（只顯示、不強制）
+            try:
+                import gics_weekly as gw
+                table = gw.lookup_table()
+                sub = args[0].lower() if args else ""
+                if sub == "verify":
+                    reply = gw.verify_text()
+                elif sub == "exposure":
+                    lvl = int(args[1][-1]) if len(args) > 1 and args[1][-1:] in "1234" else 1
+                    key, secret = _alpaca_keys()
+                    if not (key and secret):
+                        reply = "⚠️ 未設定 Alpaca key，無法讀取持倉"
+                    else:
+                        import alpaca_trader as at
+                        pos = at.get_positions(key, secret)
+                        reply = "❌ 持倉讀取失敗，稍後再試" if pos is None else gw.exposure_text(pos, table, lvl)
+                elif sub:
+                    reply = gw.lookup_text(args[0], table)
+                else:
+                    reply = ("🔄 *GICS*：`/gics NVDA` 查四層分類｜`/gics verify` 每週數字對帳｜"
+                             "`/gics exposure [L1-4]` 持倉產業曝險（只顯示）｜網頁「🔄 GICS 輪動」看 RRG 與 RS 排名"
+                             + (f"\n對照表 {len(table)} 檔" if table else "\n對照表尚未產生（每週六工作流）"))
+            except Exception as e:
+                reply = f"❌ /gics 失敗：{type(e).__name__}"
+
         elif cmd == "/lanes":
             # 多線平行帳：現行／＋候選池／＋候選池＋meta 三條虛擬帳同輪比較（reset 重新起算）
             try:
@@ -1574,11 +1630,11 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                 reply = f"❌ /lanes 失敗：{e}"
 
         elif cmd == "/alpha":
-            # 橫斷面 Alpha 脊椎（A）與 meta-labeling（B）狀態：讀夜間工作流產出 data/alpha/*（ALPHA_SPINE.md）
+            # /alpha rank|factors|meta：橫斷面 Alpha 脊椎（A）與 meta-labeling（B）狀態（data/alpha/*，ALPHA_SPINE.md）
             try:
                 import alpha_spine as asp
                 import meta_label as ml
-                sub = args[0].lower() if args else "rank"
+                sub = args[0].lower()
                 rank = asp.load_rank()
                 if sub == "factors":
                     reply = asp.factors_text(rank)
@@ -2556,7 +2612,7 @@ def _alpha_flags_line(state: dict) -> str:
         meta = "開" if th.get("meta_enabled", False) else "關"
         return (f"旗標：候選池 {pool}（前 {int(th.get('alpha_pool_top', 20))} 名；閘門 {'✅' if rank.get('gate_passed') else '➖'}）"
                 f"｜meta 部位 {meta}（閘門 {'✅' if ml.usable(model) else '➖'}）\n"
-                "`/alpha factors`｜`/alpha meta`｜`/set alpha_pool_enabled on`｜`/set meta_enabled on`")
+                "`/alpha rank`｜`/alpha factors`｜`/alpha meta`｜`/set alpha_pool_enabled on`｜`/set meta_enabled on`")
     except Exception:
         return ""
 
