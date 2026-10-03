@@ -274,6 +274,15 @@
 - **規則**：「Actions 排程頻率」不是保證值，看 `state["health"]` 的實際輪數與最大間隔；異常時查
   `GET /repos/.../actions/workflows/signal_scan.yml/runs` 的每日觸發數。
 
+### D19. detached HEAD 時 push 回報「up-to-date」，commit 其實沒上遠端（#65）
+
+- **症狀**：commit 後 `git push -u origin <分支>` 沒報錯，使用者卻看不到可合併的內容；遠端分支停在舊 commit。
+- **原因**：工作目錄不在分支上（detached HEAD，例如子代理做過 checkout/stash），新 commit 只掛在 HEAD；
+  push 推的是分支名稱指向的舊 commit → `Everything up-to-date`。加 `-q`、只看 `tail -1` 會漏看。
+- **修法**：`git branch -f <分支> HEAD && git checkout <分支>`（先確認是 fast-forward）再推。
+- **規則**：推送前 `git status -sb` 第一行必須是 `## <分支>...`；推送後 `git fetch` 並確認
+  `git rev-parse origin/<分支>` == `git rev-parse HEAD`，不一致不得回報「已推送」。
+
 ## E. 統計 / 回測
 
 ### E1. 重疊視窗的假樣本數

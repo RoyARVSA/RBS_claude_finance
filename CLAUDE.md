@@ -72,7 +72,7 @@ Streamlit 金融儀表板（`app.py`，17 頁）+ Telegram 訊號 Bot（`scan_si
 - [ ] README 同步：頁面表 / 功能列表 / 檔案結構
 - [ ] 子代理對抗驗證（模板：AGENT_PLAYBOOK §3），**High/Med 發現必修**，Low 視成本
 - [ ] 本輪發現的問題都有 GitHub issue（AGENT_PLAYBOOK T5）；commit 帶 `Fixes #N`、issue 留修正摘要
-- [ ] commit（footer）+ push
+- [ ] commit（footer）+ push；**推送後核對遠端**：`git fetch && git rev-parse origin/<分支>` 必須等於 `git rev-parse HEAD`（PITFALLS D19：detached HEAD 時 push 會假裝成功）
 - [ ] 回覆裡提醒使用者：**Reboot Streamlit app**（模組快取不清會 AttributeError）；Colab 用戶重跑 Cell 2
 
 ## 遇到不確定時
