@@ -61,7 +61,7 @@ jobs:
       - name: Install dependencies
         # 釘版（審查團 F14）：此環境載有全部 Secrets，未釘版等於每 15 分鐘
         # 對供應鏈投毒開門。版本取自 2026-08 production 實跑紀錄。
-        run: pip install yfinance==1.5.2 pandas==3.0.5 numpy==2.4.6 requests==2.34.2
+        run: pip install yfinance==1.5.2 pandas==3.0.5 numpy==2.4.6 requests==2.34.2 scipy==1.17.1
 
       - name: Run signal scanner
         env:

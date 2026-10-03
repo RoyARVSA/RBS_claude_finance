@@ -283,6 +283,17 @@
 - **規則**：推送前 `git status -sb` 第一行必須是 `## <分支>...`；推送後 `git fetch` 並確認
   `git rev-parse origin/<分支>` == `git rev-parse HEAD`，不一致不得回報「已推送」。
 
+### D20. 本地有、Actions 沒裝的套件 → 功能在 Bot 端靜默退化（#68、#69）
+
+- **症狀**：`/engtest opt` 顯示「DSR 不可用（No module named 'scipy'）」；`/rebalance`（hrp/max_sharpe/min_vol）
+  恆回「歷史數據不足」——本地自測全過。
+- **原因**：`signal_scan.yml` 是釘版的精簡安裝清單（不是 requirements.txt），延遲 import 的套件只在執行到才炸，
+  被 `except` 吞掉後變成誤導的錯誤訊息。
+- **修法**：能用標準庫就用（常態分配用 `statistics.NormalDist`，與 scipy 精度相同）；
+  真的需要就加進 `signal_scan.yml` 的 pip 行並釘版（與其他工作流同版本）。
+- **規則**：Bot 指令路徑新增第三方 import 時，核對 `signal_scan.yml` 的安裝清單；
+  可用 `sys.modules['套件']=None` 模擬未安裝來測退化路徑。
+
 ## E. 統計 / 回測
 
 ### E1. 重疊視窗的假樣本數

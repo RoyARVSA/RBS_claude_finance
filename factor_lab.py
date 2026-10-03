@@ -198,7 +198,7 @@ def test_factor(expr: str, frames: dict, dates: list[str], horizon: int = 21, le
         else:
             dsr = {"dsr": None, "sr_star": None, "note": "5 日 IC 有效期數 < 30"}
     except ImportError:
-        dsr = {"dsr": None, "sr_star": None, "note": "scipy 不可用（Actions 環境未安裝；本地可算）"}
+        dsr = {"dsr": None, "sr_star": None, "note": "falsifier 模組載入失敗"}
     except Exception as e:
         dsr = {"dsr": None, "sr_star": None, "note": f"DSR 失敗（{type(e).__name__}）"}
     return {"expr": expr, "ic": h.get("mean"), "icir": h.get("icir"), "t_nw": h.get("t_nw"), "n_eff": h.get("n_eff"),
