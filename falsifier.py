@@ -388,7 +388,8 @@ def deflated_sharpe(sr: float, T: int, n_trials: int,
     要贏過那個幸運兒才算數。N 恆被低估（腦中試過的不進帳本）⇒ DSR 恆偏樂觀，
     輸出永遠掛此警語。trial_srs 給了就用其變異數，否則用 SR 估計誤差近似。
     """
-    from scipy.stats import norm
+    from statistics import NormalDist                 # 標準庫：Actions 端不裝 scipy 也能算（#68）
+    norm = NormalDist()
     if T < 30:
         return {"dsr": None, "sr_star": None, "note": "樣本太短"}
     if n_trials <= 1:
@@ -400,8 +401,9 @@ def deflated_sharpe(sr: float, T: int, n_trials: int,
             v = (1 + 0.5 * sr * sr) / max(T, 2)          # SR 估計變異近似
         v = max(v, 1e-12)
         e_inv = 1.0 / (n_trials * math.e)
-        sr_star = math.sqrt(v) * ((1 - EULER_GAMMA) * norm.ppf(1 - 1 / n_trials)
-                                  + EULER_GAMMA * norm.ppf(1 - e_inv))
+        _p1 = min(1 - 1 / n_trials, 1 - 1e-16)          # inv_cdf(1.0) 會丟例外（scipy 回 inf）；夾住防 /falsify trials 灌超大值
+        sr_star = math.sqrt(v) * ((1 - EULER_GAMMA) * norm.inv_cdf(_p1)
+                                  + EULER_GAMMA * norm.inv_cdf(min(1 - e_inv, 1 - 1e-16)))
     denom = 1 - skew * sr + (kurt - 1) / 4 * sr * sr
     if denom <= 0:
         return {"dsr": None, "sr_star": round(sr_star, 4), "note": "高階動差異常"}
