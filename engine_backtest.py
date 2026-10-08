@@ -153,16 +153,20 @@ def precompute(data: dict[str, pd.DataFrame], days: int = 252,
                 continue
             atr = ind._atr_value(c, h, lo)
             d = str(df.index[i].date())
-            try:                                      # 延伸度＝(收盤−MA20)/ATR（與正式 scan 的 ext_atr 同義）
+            try:                                      # 延伸度＝(收盤−MA20)/ATR（與正式 scan 的 ext_atr 同義、同捨入）
                 ma20 = float(c.rolling(20).mean().iloc[-1]) if len(c) >= 20 else None
-                ext = ((float(c.iloc[-1]) - ma20) / atr) if (ma20 is not None and atr > 0) else None
+                ext = round((float(c.iloc[-1]) - ma20) / atr, 2) if (ma20 is not None and atr > 0) else None
             except Exception:
                 ext = None
+            try:                                      # 近 5 日報酬（indicators._extension 同定義）——追高濾網第二條件；
+                r5 = round(float(c.iloc[-1] / c.iloc[-6] - 1), 4) if len(c) >= 6 else None   # 缺它濾網會比正式嚴（#72）
+            except Exception:
+                r5 = None
             by_date.setdefault(d, {})[sym] = {
                 "score": sc, "close": float(c.iloc[-1]),
                 "open": float(df["Open"].iloc[i]) if "Open" in df else float(c.iloc[-1]),
                 "rps": (atr * atr_mult) if atr > 0 else None,
-                "ext_atr": ext,
+                "ext_atr": ext, "ret_5d": r5,
             }
     dates = sorted(by_date)
     reg: dict[str, str | None] = {}
@@ -296,6 +300,7 @@ def replay(pre: dict, params: dict | None = None, dates: list[str] | None = None
     pending: list[dict] = []
     eq_curve: list[tuple[str, float]] = []
     expo: list[float] = []
+    lock_days = {"dd": 0, "regime": 0, "halt": 0}
     for d in dates:
         day = pre["by_date"].get(d) or {}
         if pending:
@@ -309,7 +314,7 @@ def replay(pre: dict, params: dict | None = None, dates: list[str] | None = None
         eq_curve.append((d, equity))
         expo.append(1 - book["cash"] / equity if equity > 0 else 0.0)
         scored = [{"ticker": s, "score": v["score"], "price": v["close"],
-                   "risk_per_share": v.get("rps"), "ext_atr": v.get("ext_atr")}
+                   "risk_per_share": v.get("rps"), "ext_atr": v.get("ext_atr"), "ret_5d": v.get("ret_5d")}
                   for s, v in day.items() if s != "SPY"]
         if val_hist and cfg.get("val_enabled"):
             vc = val_ctx_from_hist(val_hist, d, closes)      # PIT：只用列日期 ≤ d 的估值
@@ -333,8 +338,13 @@ def replay(pre: dict, params: dict | None = None, dates: list[str] | None = None
                 orders = [dict(o, mechanism=o.get("mechanism") or ("legacy_exit" if o["side"] == "sell" else "legacy_entry"))
                           for o in at.decide_orders(lg_rows, pos_view, equity, book["cash"], lg_cfg)]
             else:
+                # regime_filter=False 對應正式的 /set regime_filter_enabled off（regime 傳 None）
+                _rg = pre["regime"].get(d) if cfg.get("regime_filter", True) else None
                 orders, engine, _notes = te.decide(scored, pos_view, equity, book["cash"],
-                                                   engine, pre["regime"].get(d), cfg, d)
+                                                   engine, _rg, cfg, d)
+                _code = ((engine or {}).get("last_exposure") or {}).get("code")
+                if _code in lock_days:                        # 曝險鎖定天數（#71 可見性）
+                    lock_days[_code] += 1
         except Exception as e:                        # 單日炸掉不毀整段（記錄即可）
             orders = []
             journal.append({"date": d, "error": str(e)[:80]})
@@ -343,6 +353,19 @@ def replay(pre: dict, params: dict | None = None, dates: list[str] | None = None
     m = _metrics(eq, trades, equity0)
     m["exposure"] = float(np.mean(expo)) if expo else 0.0
     m["open_positions"] = len(book["positions"])
+    m["lock_days"] = lock_days
+    # 持有天數按部位（symbol, 開倉日）計：分批出場的半倉與餘倉算同一筆、取最後出場日；
+    # 期末未平倉以段末為設限值納入（抱最久的贏家常在這裡，排除會低估持有期——審查 Low）
+    by_lot: dict[tuple, int] = {}
+    for t in trades:
+        k_ = (t["symbol"], t["opened"])
+        by_lot[k_] = max(by_lot.get(k_, 0), int(t["hold_days"]))
+    if dates:
+        for sym, L in lots.items():
+            k_ = (sym, L["opened"])
+            by_lot[k_] = max(by_lot.get(k_, 0), max(0, (pd.Timestamp(dates[-1]) - pd.Timestamp(L["opened"])).days))
+    m["hold_med"] = float(np.median(list(by_lot.values()))) if by_lot else None
+    m["beta"] = _beta(eq, pre.get("spy"))
     return {"equity": eq, "trades": trades, "metrics": m, "journal": journal,
             "book": book, "engine": engine}
 
@@ -391,6 +414,40 @@ def bench_return(pre: dict, dates: list[str]) -> float | None:
     except Exception:
         pass
     return None
+
+
+def ew_return(pre: dict, dates: list[str], detail: bool = False):
+    """宇宙等權買進持有同期報酬（SPY 除外）：每檔各取段內**第一個與最後一個有收盤的日子**再平均——
+    不用首日／末日交集（各檔暖機起點不同、偶發缺 K 棒時交集會只剩一兩檔，審查 Med）。
+    與策略報酬對照：觀察清單是事後挑的，等權持有常常就贏過任何擇時（選擇偏誤的量尺）。
+    detail=True 回 (報酬, 納入檔數, 宇宙檔數)。"""
+    firsts: dict[str, float] = {}
+    lasts: dict[str, float] = {}
+    for d in dates or []:
+        for sym, v in (pre["by_date"].get(d) or {}).items():
+            c = v.get("close")
+            if sym == "SPY" or not c or c <= 0:
+                continue
+            firsts.setdefault(sym, float(c))
+            lasts[sym] = float(c)
+    rets = [lasts[s_] / firsts[s_] - 1 for s_ in firsts]
+    val = float(np.mean(rets)) if rets else None
+    return (val, len(rets), int(pre.get("n_syms") or len(rets))) if detail else val
+
+
+def _beta(eq: pd.Series, spy: pd.Series | None) -> float | None:
+    """策略日報酬對 SPY 的 beta（同日對齊；樣本 < 20 回 None）。"""
+    if spy is None or eq is None or len(eq) < 21:
+        return None
+    try:
+        r = eq.pct_change()
+        b = spy.reindex(eq.index).pct_change()
+        df = pd.concat([r, b], axis=1).dropna()
+        if len(df) < 20 or float(df.iloc[:, 1].var()) <= 0:
+            return None
+        return float(df.iloc[:, 0].cov(df.iloc[:, 1]) / df.iloc[:, 1].var())
+    except Exception:
+        return None
 
 
 # ── 3. 參數學習（walk-forward + DSR）─────────────────────────────────────
@@ -446,6 +503,11 @@ def optimize(pre: dict, grid: dict | None = None, baseline: dict | None = None,
             progress(i + 1, len(combos))
     out["results"] = results
     out["n_trials"] = len(results)
+    # 分段對照（顯示用、不參與挑選）：SPY 與宇宙等權買進持有——分辨「贏在擇時」還是「贏在曝險／選股偏誤」
+    out["bench"] = {}
+    for seg in ("train", "val", "holdout"):
+        _ew, _n, _N = ew_return(pre, sp[seg], detail=True)
+        out["bench"][seg] = {"spy": bench_return(pre, sp[seg]), "ew": _ew, "ew_n": _n, "ew_N": _N}
     try:                                              # 舊邏輯基準（不參與挑選、不計入嘗試數；#56）
         out["legacy"] = _run({"legacy": True, **({"legacy_cfg": dict(legacy_cfg)} if legacy_cfg else {})})
         out["legacy"].pop("_holdout_eq", None)
@@ -541,8 +603,20 @@ def _params_text(p: dict) -> str:
                     for k, v in p.items())
 
 
+def _num(x, fmt: str = "{:.2f}") -> str:
+    return "—" if x is None else fmt.format(x)
+
+
+def _lock_text(m: dict) -> str:
+    """鎖定天數（#71）：回撤鎖／大盤偏空／停損保險絲；全 0 回空字串。"""
+    ld = m.get("lock_days") or {}
+    parts = [f"{lab} {ld[k]} 交易日" for k, lab in (("dd", "回撤鎖"), ("regime", "偏空停新倉"), ("halt", "保險絲"))
+             if ld.get(k)]                              # 重放逐交易日計數（引擎的空手重置門檻是日曆日）
+    return "、".join(parts)
+
+
 def run_text(rep: dict, params: dict | None, dates: list[str], bench: float | None,
-             period_label: str = "") -> str:
+             period_label: str = "", ew: float | None = None) -> str:
     m = rep["metrics"]
     import trade_engine as te
     p = {k: (params or {}).get(k, te.ENGINE_DEFAULTS[k]) for k in GRID}
@@ -559,6 +633,10 @@ def run_text(rep: dict, params: dict | None, dates: list[str], bench: float | No
              f"均報酬 {_pct(m['avg_ret'])}"]
     if bench is not None:
         lines.append(f"SPY 買進持有同期 {_pct(bench)}（超額 {_pct(m['total_ret'] - bench)}）")
+    if ew is not None:
+        lines.append(f"清單等權買進持有 {_pct(ew)}（觀察清單是事後挑的——贏不過它代表擇時沒有加值）")
+    lines.append(f"beta {_num(m.get('beta'))}｜持有天數中位 {_num(m.get('hold_med'), '{:.0f}')} 日曆日"
+                 + (f"｜鎖定：{_lock_text(m)}" if _lock_text(m) else ""))
     if m["by_mech"]:
         from behavior_check import MECH_LABELS
         lines.append("*出場機制*：")
@@ -583,10 +661,11 @@ def opt_text(opt: dict, top_n: int = 5) -> str:
 
     def _fmt(r):
         tr, va, ho = r["train"], r["val"], r["holdout"]
+        _lk = (ho.get("lock_days") or {}).get("dd")
         return (f"{_params_text(r['params'])} → 訓練 {_pct(tr['total_ret'])}"
                 f"(S{tr['sharpe']:.1f},{tr['n_trades']}筆)｜驗證 {_pct(va['total_ret'])}"
                 f"({va['n_trades']}筆)｜holdout {_pct(ho['total_ret'])}"
-                f"({ho['n_trades']}筆，回撤 {ho['max_dd']:.0%})")
+                f"({ho['n_trades']}筆，回撤 {ho['max_dd']:.0%}{f'，回撤鎖 {_lk} 交易日' if _lk else ''})")
 
     if opt["baseline"]:
         lines.append(f"基準（現行）：{_fmt(opt['baseline'])}")
@@ -595,6 +674,22 @@ def opt_text(opt: dict, top_n: int = 5) -> str:
         lines.append(f"舊邏輯（Shadow 同款）：訓練 {_pct(lg['train']['total_ret'])}｜驗證 {_pct(lg['val']['total_ret'])}｜"
                      f"holdout {_pct(lg['holdout']['total_ret'])}（{lg['holdout']['n_trades']}筆，回撤 {lg['holdout']['max_dd']:.0%}）"
                      "——只當參照、不參與挑選")
+    bm = opt.get("bench") or {}
+    if bm:
+        lines.append("📊 *分段對照*（曝險/beta/持有天數：現行／舊邏輯）")
+        for seg, lab in (("train", "訓練"), ("val", "驗證"), ("holdout", "holdout")):
+            b_ = bm.get(seg) or {}
+            ba = (opt.get("baseline") or {}).get(seg) or {}
+            lg_ = (opt.get("legacy") or {}).get(seg) or {}
+            _cov = (f"（{b_['ew_n']}/{b_['ew_N']} 檔）" if b_.get("ew_n") is not None
+                    and b_.get("ew_N") and b_["ew_n"] < b_["ew_N"] else "")
+            parts = [f"SPY {_pct(b_.get('spy'))}", f"等權持有 {_pct(b_.get('ew'))}{_cov}",
+                     f"曝險 {_num(ba.get('exposure'), '{:.0%}')}／{_num(lg_.get('exposure'), '{:.0%}')}",
+                     f"beta {_num(ba.get('beta'))}／{_num(lg_.get('beta'))}",
+                     f"持有中位 {_num(ba.get('hold_med'), '{:.0f}')}／{_num(lg_.get('hold_med'), '{:.0f}')} 日曆日"]
+            if _lock_text(ba):
+                parts.append("現行鎖定：" + _lock_text(ba))
+            lines.append(f"・{lab}：" + "｜".join(parts))
     ranked = sorted([r for r in opt["results"] if r["train"]["n_trades"] >= MIN_TRADES],
                     key=lambda r: r["train"]["sharpe"], reverse=True)
     for i, r in enumerate(ranked[:top_n], 1):
@@ -632,8 +727,9 @@ def run(tickers: list[str], period: str = "1y", params: dict | None = None,
         return {"rep": None, "pre": pre, "text": "❌ 可重放的交易日不足 40 天"}
     rep = replay(pre, params, val_hist=val_hist)
     bench = bench_return(pre, pre["dates"])
-    return {"rep": rep, "pre": pre, "dates": pre["dates"], "bench": bench,
-            "text": run_text(rep, params, pre["dates"], bench, period)}
+    ew = ew_return(pre, pre["dates"])
+    return {"rep": rep, "pre": pre, "dates": pre["dates"], "bench": bench, "ew": ew,
+            "text": run_text(rep, params, pre["dates"], bench, period, ew=ew)}
 
 
 def run_optimize(tickers: list[str], period: str = "1y", baseline: dict | None = None,
@@ -848,4 +944,52 @@ if __name__ == "__main__":
     txt_l = opt_text(opt_l); assert "舊邏輯" in txt_l and "**" not in txt_l
     assert "分批R 關" in _params_text({"scale_out_r": 99.0})
     print("✅ 11 舊邏輯重放／放寬出場網格（分批可關閉）／optimize 附舊邏輯基準")
+
+    # 12) #72 ret_5d 進重放：與 indicators._extension 同定義；有 ret_5d 時「延伸但平穩」放行 → 進場不少於缺欄版
+    import indicators as _ind
+    _n12 = 0
+    for d_ in pre["dates"][::20]:                       # 與正式 scan 的 indicators._extension 逐欄對照（同定義同捨入）
+        for s_, v in pre["by_date"][d_].items():
+            _x = _ind._extension(data[s_]["Close"].loc[:d_], data[s_]["High"].loc[:d_], data[s_]["Low"].loc[:d_])
+            assert v["ret_5d"] == _x["ret_5d"] and v["ext_atr"] == _x["ext_atr"], (d_, s_, v, _x)
+            _n12 += 1
+    pre_no5 = {**pre, "by_date": {d: {s_: {k: x for k, x in v.items() if k != "ret_5d"} for s_, v in day.items()}
+                                  for d, day in pre["by_date"].items()}}
+    _p12 = {"buy_threshold": 0.3, "entry_max_ext_atr": 0.5}
+    buys_5 = len([j for j in replay(pre, _p12)["journal"] if j.get("side") == "buy"])
+    buys_no5 = len([j for j in replay(pre_no5, _p12)["journal"] if j.get("side") == "buy"])
+    assert buys_5 > buys_no5, (buys_5, buys_no5)        # 嚴格大於：scored rows 漏帶 ret_5d 的回歸會被抓到
+    print(f"✅ 12 ret_5d／ext_atr 與 indicators._extension 一致（{_n12} 筆）、進重放（買單 {buys_no5} → {buys_5}，#72）")
+
+    # 13) #71 回撤鎖重置 + 鎖定天數統計：崩跌→盤整的合成行情，N=0（永不重置）鎖得比 N=10 久
+    crash = {f"C{i}": _synthetic(seed=40 + i, drift=-0.004, vol=0.03, n=300) for i in range(4)}
+    for i in range(4):                                   # 後半段轉為溫和上漲
+        df_ = crash[f"C{i}"]
+        tail = _synthetic(seed=60 + i, drift=0.0015, vol=0.015, n=150, start=str(df_.index[-1].date()))
+        k_ = float(df_["Close"].iloc[-1]) / float(tail["Close"].iloc[0])
+        crash[f"C{i}"] = pd.concat([df_, (tail.iloc[1:] * [k_, k_, k_, k_, 1])])
+    crash["SPY"] = _synthetic(seed=99, drift=0.0004, vol=0.01, n=449)
+    pre_c = precompute(crash, days=380, thresholds={"mtf_enabled": False})
+    _pc = {"buy_threshold": 0.2, "entry_max_ext_atr": 0, "max_dd_halt": 0.05}
+    lk0 = replay(pre_c, {**_pc, "dd_reset_flat_days": 0})["metrics"]
+    lk10 = replay(pre_c, {**_pc, "dd_reset_flat_days": 10})["metrics"]
+    assert set(lk0["lock_days"]) == {"dd", "regime", "halt"}
+    assert lk0["lock_days"]["dd"] > 0 and lk10["lock_days"]["dd"] < lk0["lock_days"]["dd"], (lk0["lock_days"], lk10["lock_days"])
+    print(f"✅ 13 回撤鎖：永不重置鎖 {lk0['lock_days']['dd']} 交易日 → 空手 10 日曆日重置後 {lk10['lock_days']['dd']} 交易日（#71）")
+
+    # 14) 分段對照：bench/等權持有/beta/持有天數，文字含對照列且 Markdown 安全
+    assert set(opt["bench"]) == {"train", "val", "holdout"} and opt["bench"]["holdout"]["ew"] is not None
+    assert opt["baseline"]["holdout"].get("beta") is not None and "hold_med" in opt["baseline"]["holdout"]
+    t14 = opt_text(opt)
+    assert "分段對照" in t14 and "等權持有" in t14 and t14.count("*") % 2 == 0 and "_" not in t14, t14
+    r14 = run_text(rep, {"buy_threshold": 0.3}, pre["dates"], 0.05, "1y", ew=0.1)
+    assert "等權買進持有" in r14 and "beta" in r14 and "_" not in r14.replace("`/engtest opt`", "")
+    _pre14 = {"n_syms": 2, "by_date": {"d1": {"A": {"close": 10.0}}, "d2": {"A": {"close": 11.0}, "B": {"close": 20.0}},
+                                       "d3": {"B": {"close": 22.0}}}}
+    _e14 = ew_return(_pre14, ["d1", "d2", "d3"], detail=True)            # A 末日缺、B 首日缺 → 各取自己的首末日
+    assert abs(_e14[0] - 0.10) < 1e-9 and _e14[1:] == (2, 2), _e14
+    _rf_on = replay(pre_c, {**_pc, "dd_reset_flat_days": 0})["metrics"]["lock_days"]["regime"]
+    _rf_off = replay(pre_c, {**_pc, "dd_reset_flat_days": 0, "regime_filter": False})["metrics"]["lock_days"]["regime"]
+    assert _rf_off == 0 and _rf_on >= _rf_off, (_rf_on, _rf_off)          # 大盤濾網關閉 → 不因偏空停新倉
+    print("✅ 14 分段對照（SPY／等權持有 各檔自取首末日／曝險／beta／持有天數按部位／鎖定交易日）")
     print("\nengine_backtest selftest OK ✅")

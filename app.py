@@ -6184,7 +6184,10 @@ def page_mirror_book():
     pos = m.get("positions") or {}
     lp = m.get("last_px") or {}
     eng = m.get("engine") or {}
-    peak = max(float(eng.get("equity_peak") or 0), eq)
+    # 真實高水位取淨值歷史（引擎 equity_peak 會在回撤鎖空手重置時下修，#71——不能拿來顯示距峰）
+    _hist_eq = [float(h.get("equity") or 0) for h in (m.get("history") or []) if isinstance(h, dict)]
+    peak = max(_hist_eq + [float(eng.get("equity_hwm") or 0),
+                           float(eng.get("equity_peak") or 0) if not _hist_eq else 0.0, eq])
     dd = (1 - eq / peak) if peak > 0 else 0.0
     ret = (eq / start - 1) if start > 0 else 0.0
 

@@ -71,6 +71,9 @@ ENGINE_DEFAULTS = {
     "account_cooldown_days": 3,   # 全帳戶冷卻天數（HALTED）
     "symbol_cooldown_days":  5,   # 個股停損後禁止再進場天數
     "max_dd_halt":        0.10,   # 帳戶自高點回撤 ≥ 10% → REDUCING（停新倉）
+    "dd_reset_flat_days": 10,     # 回撤鎖重置（#71）：broker 空手滿 N 個日曆日 → 高點重置為目前淨值、
+                                  # 解除回撤鎖。高點只升不降，空手時淨值不動、回撤永不縮小，
+                                  # 不重置會永久 REDUCING（實測重放鎖 187 天 0 筆買進）；≤0 = 不重置
 }
 
 
@@ -190,6 +193,8 @@ def decide(scored: list[dict], positions: dict, equity: float, buying_power: flo
     cfg["entry_max_ret5d"] = min(max(_val_num(cfg.get("entry_max_ret5d"), ENGINE_DEFAULTS["entry_max_ret5d"], -1.0, 5.0), 0.0), 5.0)
     cfg["neutral_risk_mult"] = min(max(_val_num(cfg.get("neutral_risk_mult"), 0.5, 0.1, 1.0), 0.1), 1.0)
     cfg["neutral_pyramid"] = _val_flag(cfg.get("neutral_pyramid"))
+    cfg["dd_reset_flat_days"] = int(round(_val_num(cfg.get("dd_reset_flat_days"), ENGINE_DEFAULTS["dd_reset_flat_days"], 0, 365)))
+    cfg["stop_mult"] = _val_num(cfg.get("stop_mult"), ENGINE_DEFAULTS["stop_mult"], 0.25, 5.0)   # 部位分母用，防 0/負值
     engine = engine if isinstance(engine, dict) and engine.get("pos") is not None \
         else new_engine_state()
     equity = float(equity)
@@ -210,13 +215,42 @@ def decide(scored: list[dict], positions: dict, equity: float, buying_power: flo
 
     # equity 高水位 → 回撤
     peak_eq = max(float(engine.get("equity_peak") or 0), equity)
+    # 回撤鎖重置（#71 方案 b）：高點只升不降 → 空手時淨值不動、回撤永不縮小、REDUCING 永久不解除。
+    # broker 空手（無 ≥1 股的持倉；零股殘量不算持倉）滿 dd_reset_flat_days 個日曆日 → 高點重置為目前淨值
+    held_any = any(abs(float((p or {}).get("qty") or 0)) >= 1 for p in positions.values())
+    flat_since = engine.get("flat_since")
+    if flat_since:
+        try:
+            _d(flat_since)
+        except Exception:
+            flat_since = None                       # 壞值 → 從今天重新起算
+    if held_any:
+        flat_since = None
+    elif not flat_since:
+        flat_since = today
+    engine["flat_since"] = flat_since
+    flat_days = _days_between(flat_since, today) if flat_since else 0
+    n_reset = int(cfg["dd_reset_flat_days"])
+    # 只在回撤鎖「真的鎖著」時重置：回撤未達門檻（例如大盤偏空停新倉而空手）時重置高點，
+    # 等於把 10% 保護改成「距上次空手 10%」，累積回撤可遠超門檻而鎖不觸發（對抗驗證 Med）
+    if n_reset > 0 and not held_any and flat_days >= n_reset and peak_eq > equity > 0 \
+            and (1 - equity / peak_eq) >= float(cfg["max_dd_halt"]):
+        notes.append(f"🔓 回撤鎖重置：空手 {flat_days} 天 ≥ {n_reset} 天 → "
+                     f"高點重置為目前淨值（原回撤 {1 - equity / peak_eq:.1%}）")
+        peak_eq = equity
     engine["equity_peak"] = peak_eq
+    engine["equity_hwm"] = max(float(engine.get("equity_hwm") or 0), equity)   # 永不重置的高水位（只供顯示距峰）
     dd = (1 - equity / peak_eq) if peak_eq > 0 else 0.0
 
     exp_state, exp_reason = exposure_state(
         regime, dd, engine.get("halted_until"), today, cfg)
+    dd_lock = exp_state == "REDUCING" and dd >= float(cfg["max_dd_halt"])
     if exp_state != "ACTIVE":
-        notes.append(f"曝險狀態 {exp_state}：{exp_reason}")
+        _rs = ""
+        if dd_lock and n_reset > 0:
+            _rs = (f"（空手 {flat_days}/{n_reset} 天後重置高點）" if not held_any
+                   else f"（持倉出清後空手 {n_reset} 天重置高點）")
+        notes.append(f"曝險狀態 {exp_state}：{exp_reason}{_rs}")
     tighten = exp_state != "ACTIVE"
     neutral = (regime == "neutral")
     if neutral and exp_state == "ACTIVE" and (float(cfg["neutral_risk_mult"]) < 1.0 or not cfg["neutral_pyramid"]):
@@ -379,6 +413,16 @@ def decide(scored: list[dict], positions: dict, equity: float, buying_power: flo
     for sym in [s for s, until in cd.items() if _days_between(today, until) <= 0]:
         del cd[sym]
 
+    # 曝險狀態快照（#71 可見性）：/protections 顯示、/engtest 重放統計鎖定天數。
+    # engine 屬加密區塊（state_crypto.SENSITIVE_KEYS），只存比例不存金額
+    engine["last_exposure"] = {
+        "date": today, "state": exp_state,
+        "code": ("halt" if exp_state == "HALTED" else "dd" if dd_lock
+                 else "regime" if exp_state == "REDUCING" else "ok"),
+        "dd": round(dd, 6), "max_dd": float(cfg["max_dd_halt"]),
+        "flat_days": flat_days if not held_any else None, "reset_days": n_reset,
+    }
+
     # ── Portfolio 層：新進場（僅 ACTIVE）
     held = {s for s in positions if s not in exited}
     bp = float(buying_power)
@@ -424,7 +468,9 @@ def decide(scored: list[dict], positions: dict, equity: float, buying_power: flo
             vmult *= mmult
             if neutral:
                 vmult *= float(cfg["neutral_risk_mult"])      # 中性 regime：只縮風險預算（上限/現金不放大）
-            qty = int(min((equity * float(cfg["risk_pct"]) * vmult) / rps,
+            # 股數以「實際停損距離 = stop_mult × rps」計（#73）：停損放寬時部位自動縮小，
+            # 打到停損的虧損恆為 risk_pct；R 單位（追蹤/分批/加碼門檻）仍是 rps。預設 stop_mult 1 行為不變
+            qty = int(min((equity * float(cfg["risk_pct"]) * vmult) / (rps * float(cfg["stop_mult"])),
                           (equity * float(cfg["max_position_pct"])) / px,
                           bp / px) * scale)
             if qty >= 1:
@@ -503,8 +549,9 @@ def decide(scored: list[dict], positions: dict, equity: float, buying_power: flo
 
 def engine_status_text(engine: dict | None, today: str, cfg: dict | None = None) -> str:
     """給 /protections 用的引擎保險絲狀態摘要（Telegram legacy Markdown：單 *）。"""
-    cfg = {**ENGINE_DEFAULTS, **(cfg or {})}
-    e = engine or {}
+    _ov = dict(cfg or {})                             # 呼叫端明確給的覆蓋（/protections 傳 eng_*）
+    cfg = {**ENGINE_DEFAULTS, **_ov}
+    e = engine if isinstance(engine, dict) else {}
     win = int(cfg["stoploss_guard_days"])
     recent = [ev for ev in e.get("stop_events", []) if _days_between(ev, today) <= win]
     halted = e.get("halted_until")
@@ -519,6 +566,33 @@ def engine_status_text(engine: dict | None, today: str, cfg: dict | None = None)
         lines.append(f"🚨 全帳戶冷卻中（至 {halted}）——停損保險絲觸發")
     else:
         lines.append(f"🟢 保險絲正常（{win} 天內硬停損 {n_recent}/{int(cfg['stoploss_guard_n'])} 次）")
+    le = e.get("last_exposure") if isinstance(e.get("last_exposure"), dict) else None
+    if le:                                            # 回撤鎖可見性（#71）：最近一輪 decide 的快照 × 目前設定
+        try:
+            dd_ = float(le.get("dd") or 0)
+            # 門檻／天數：呼叫端覆蓋（/set 後即時反映）> 快照（未傳 cfg 的呼叫端，如網頁鏡像帳）> 預設
+            mx_ = _val_num(_ov.get("max_dd_halt", le.get("max_dd")), ENGINE_DEFAULTS["max_dd_halt"], 0.0, 1.0)
+            n_rs = int(round(_val_num(_ov.get("dd_reset_flat_days", le.get("reset_days")),
+                                      ENGINE_DEFAULTS["dd_reset_flat_days"], 0, 365)))
+            snap = le.get("date", "—")
+            if le.get("code") != "halt" and dd_ >= mx_:
+                fd = le.get("flat_days")
+                if fd is not None and e.get("flat_since"):
+                    fd = max(int(fd), _days_between(e["flat_since"], today))       # 快照後又過了幾天（休市日也算）
+                if n_rs <= 0:
+                    when = "不自動重置（空手重置天數＝0）"
+                elif fd is None:
+                    when = f"持倉出清後空手 {n_rs} 天重置高點"
+                elif fd >= n_rs:
+                    when = "已滿空手天數，下一輪交易重置高點"
+                else:
+                    when = f"空手 {fd}/{n_rs} 天後重置高點"
+                lines.append(f"🔒 回撤鎖：自高點回撤 {dd_:.1%} ≥ {mx_:.0%} → 停開新倉；{when}（{snap} 快照）")
+            else:
+                st_ = {"regime": "大盤偏空 REDUCING", "halt": "停損保險絲 HALTED"}.get(le.get("code"), "ACTIVE")
+                lines.append(f"📉 自高點回撤 {dd_:.1%}（≥ {mx_:.0%} 停新倉）｜曝險 {st_}（{snap} 快照）")
+        except Exception:
+            pass
     cd = {s: u for s, u in (e.get("cooldown") or {}).items()
           if _days_between(today, u) > 0}
     if cd:
@@ -938,6 +1012,72 @@ if __name__ == "__main__":
                         {**eng_27, "pos": {"WIN": dict(eng_27["pos"]["WIN"])}}, "risk_on", {}, T)
     assert not any(o["mechanism"] == "pyramid" for o in o27a) and any(o["mechanism"] == "pyramid" for o in o27b)
     print("✅ 27 追蹤未啟動不加碼（#57）")
+
+    # 28) #71 回撤鎖重置：空手滿 N 天 → 高點重置、恢復進場；未滿 / 有持倉 / N=0 → 維持鎖定
+    good = [{"ticker": "GOOD", "score": 0.9, "price": 50.0, "risk_per_share": 2.5}]
+    e28 = new_engine_state()
+    e28["equity_peak"] = 100000
+    o28, e28, n28 = decide(good, {}, 88000, 88000, e28, "risk_on", None, "2026-07-01")
+    assert o28 == [] and e28["flat_since"] == "2026-07-01" and e28["last_exposure"]["code"] == "dd", e28
+    assert any("空手 0/10 天" in n for n in n28), n28
+    o28, e28, _ = decide(good, {}, 88000, 88000, e28, "risk_on", None, "2026-07-10")       # 9 天：仍鎖
+    assert o28 == [] and e28["equity_peak"] == 100000
+    o28, e28, n28 = decide(good, {}, 88000, 88000, e28, "risk_on", None, "2026-07-11")    # 10 天：重置
+    assert e28["equity_peak"] == 88000 and any("回撤鎖重置" in n for n in n28), n28
+    assert [o["symbol"] for o in o28] == ["GOOD"] and e28["last_exposure"]["code"] == "ok", (o28, e28)
+    # 有持倉：flat_since 清空、不重置（虧損部位還在 → 回撤是真的）
+    e28b = mk_eng("LOSS", 100, 3)
+    e28b["equity_peak"], e28b["flat_since"] = 100000, "2026-06-01"
+    _, e28b, _ = decide(good, {"LOSS": mk_pos(10, 100, 99)}, 88000, 50000, e28b, "risk_on", None, "2026-07-11")
+    assert e28b["flat_since"] is None and e28b["equity_peak"] == 100000
+    # N=0 → 舊行為（永不重置）；壞 flat_since → 從今天起算、不炸
+    e28c = new_engine_state()
+    e28c.update(equity_peak=100000, flat_since="2026-01-01")
+    o28c, e28c, _ = decide(good, {}, 88000, 88000, e28c, "risk_on", {"dd_reset_flat_days": 0}, "2026-07-11")
+    assert o28c == [] and e28c["equity_peak"] == 100000
+    e28d = new_engine_state()
+    e28d.update(equity_peak=100000, flat_since="garbage")
+    o28d, e28d, _ = decide(good, {}, 88000, 88000, e28d, "risk_on", None, "2026-07-11")
+    assert o28d == [] and e28d["flat_since"] == "2026-07-11"
+    # 零股殘量不算持倉（否則永遠不空手）
+    e28e = new_engine_state()
+    e28e.update(equity_peak=100000, flat_since="2026-06-01")
+    _, e28e, _ = decide(good, {"FRAC": mk_pos(0.4, 100, 99)}, 88000, 88000, e28e, "risk_on", None, "2026-07-11")
+    assert e28e["equity_peak"] == 88000
+    st28 = engine_status_text({**new_engine_state(), "last_exposure": {"code": "dd", "dd": 0.12, "max_dd": 0.1,
+                                                                       "flat_days": 3, "reset_days": 10}}, T)
+    assert "回撤鎖" in st28 and "3/10" in st28, st28
+    st28z = engine_status_text({**new_engine_state(), "last_exposure": {"code": "dd", "dd": 0.12, "max_dd": 0.1,
+                                                                        "flat_days": None, "reset_days": 0}}, T,
+                                {"dd_reset_flat_days": 0})
+    assert "不自動重置" in st28z and "_" not in st28z, st28z           # Telegram legacy Markdown：不得有底線
+    # 回撤未達門檻（大盤偏空停新倉而空手）→ 不重置高點（否則 10% 保護失效，對抗驗證 Med）
+    e28f = new_engine_state()
+    e28f.update(equity_peak=100000, flat_since="2026-06-01")
+    _, e28f, n28f = decide(good, {}, 94000, 94000, e28f, "risk_off", None, "2026-07-11")
+    assert e28f["equity_peak"] == 100000 and not any("回撤鎖重置" in n for n in n28f), (e28f, n28f)
+    # /protections 用目前設定：/set 後門檻/天數即時反映；快照後經過的天數計入
+    st28c = engine_status_text({**new_engine_state(), "flat_since": "2026-07-15",
+                                "last_exposure": {"date": "2026-07-17", "code": "dd", "dd": 0.12, "max_dd": 0.1,
+                                                  "flat_days": 2, "reset_days": 10}}, T, {"dd_reset_flat_days": 7})
+    assert "5/7" in st28c and "快照" in st28c, st28c
+    st28d = engine_status_text({**new_engine_state(), "last_exposure": {"code": "dd", "dd": 0.12, "max_dd": 0.1,
+                                                                        "flat_days": 3, "reset_days": 10}}, T, {"max_dd_halt": 0.15})
+    assert "回撤鎖" not in st28d and "≥ 15%" in st28d, st28d
+    st28e = engine_status_text({**new_engine_state(), "last_exposure": {"code": "regime", "dd": 0.12, "max_dd": 0.15,
+                                                                        "flat_days": 3, "reset_days": 20}}, T)   # 未傳 cfg → 用快照
+    assert "回撤鎖" not in st28e and "≥ 15%" in st28e, st28e
+    assert e28["equity_hwm"] >= 88000                                    # 永不重置的顯示用高水位
+    print("✅ 28 回撤鎖：鎖住才重置、空手 10 天重置高點、有持倉不重置、N=0 舊行為、/protections 依現行設定（#71）")
+
+    # 29) #73 停損倍數納入部位：stop 1.5 → 股數 ×1/1.5，打到停損虧損仍 = risk_pct
+    r29 = [{"ticker": "SZ", "score": 0.8, "price": 100.0, "risk_per_share": 10.0}]
+    o29a, _, _ = decide([dict(r29[0])], {}, 100000, 100000, None, "risk_on", {}, T)
+    o29b, _, _ = decide([dict(r29[0])], {}, 100000, 100000, None, "risk_on", {"stop_mult": 1.5}, T)
+    o29c, _, _ = decide([dict(r29[0])], {}, 100000, 100000, None, "risk_on", {"stop_mult": 0}, T)   # 夾 0.25 → 400 股 > 15% 上限 150
+    assert o29a[0]["qty"] == 100 and o29b[0]["qty"] == 66 and o29c[0]["qty"] == 150, (o29a, o29b, o29c)
+    assert abs(o29b[0]["qty"] * 1.5 * 10 - 1000) < 15                 # 虧損 ≈ 1% × 100k
+    print("✅ 29 停損倍數納入部位計算（風險固定，#73）")
 
     print("\n─ engine_status_text ─")
     eng = mk_eng("AAPL", 100, 3)
