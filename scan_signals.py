@@ -20,7 +20,7 @@ Telegram 指令（傳給 Bot）：
   /top [N]                – 顯示今日漲跌幅前 N 名
   /rank                   – 綜合評分排名（趨勢/MACD/RSI/布林/動量 合成 -1~+1）
   /calibrate              – 用歷史回測勝率校準各訊號權重（自我優化迴圈）
-  /protections            – 查看防護機制（訊號冷卻 / 大盤風險濾網）狀態
+  /protections            – 查看防護機制（訊號冷卻 / 大盤風險濾網 / 引擎保險絲與回撤鎖）狀態
   /risk [帳戶 風險%]       – 設定/查看部位風險（訊號附建議部位股數）
   /fundamentals TICKER    – 查公司基本面摘要（健康評分/ROE/估值，快取一天）（別名 /f）
   /options TICKER         – 選擇權情緒：Put/Call 比、隱含波動偏斜、情緒分數（別名 /opt）
@@ -144,6 +144,9 @@ DEFAULT_THRESHOLDS = {
 # /set 數值夾制（審查團 F6：/set 曾可設 risk_pct=50 → 5000% 風險，繞過所有下游夾制）
 SET_CLAMPS = {
     "risk_pct":            (0.0005, 0.05),
+    "eng_stop_mult":       (0.25, 5.0),     # 與 trade_engine.decide 夾制一致（/set 回覆＝引擎實際用值）
+    "eng_dd_reset_flat_days": (0, 365),     # 回撤鎖空手重置天數（#71）；0 = 不重置
+    "eng_max_dd_halt":     (0.02, 0.5),     # 回撤鎖門檻（輸入 10 會等於永不觸發——必須是比例）
     "account_size":        (100.0, 1e9),
     "at_max_position_pct": (0.01, 0.50),
     "at_max_positions":    (1.0, 50.0),
@@ -318,6 +321,8 @@ def load_state() -> dict:
             except (TypeError, ValueError):
                 state["last_update_id"] = _salvage_last_update_id(raw)
             th = state["thresholds"]
+            if "risk_pct" in th:                      # 舊版 /risk 把「1%」存成 1.0（#74）→ 載入即正規化，
+                th["risk_pct"] = _risk_pct_of(th)     # 所有讀取端（含 indicators 部位提示）一致
             for k, v in DEFAULT_THRESHOLDS.items():
                 th.setdefault(k, v)
             return state
@@ -450,7 +455,7 @@ def _cmd_help() -> str:
         "`/mute 4` — 靜音 4 小時\n"
         "`/unmute` — 立即解除靜音\n\n"
         "🛡 *防護機制*\n"
-        "`/protections` — 查看冷卻/大盤濾網狀態\n"
+        "`/protections` — 查看冷卻/大盤濾網/引擎保險絲與回撤鎖狀態\n"
         "`/set cooldown_hours 4` — 訊號冷卻時數\n"
         "`/set cooldown_enabled off` — 關閉冷卻\n"
         "`/set regime_filter_enabled off` — 關閉大盤濾網\n\n"
@@ -1170,14 +1175,20 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
             if len(args) >= 2:
                 try:
                     th["account_size"] = float(args[0])
-                    th["risk_pct"] = float(args[1]) / 100 if float(args[1]) > 1 else float(args[1])
+                    _v = float(args[1])
+                    if not math.isfinite(_v):
+                        raise ValueError("nan/inf")         # NaN 穿透 min/max 夾制
+                    # 說明範例 `/risk 100000 1` = 1%：≥0.05 視為百分比、更小視為小數，再夾制（#74：舊版把 1 存成 100%）
+                    _v = _v / 100 if _v >= 0.05 else _v
+                    _lo, _hi = SET_CLAMPS["risk_pct"]
+                    th["risk_pct"] = min(max(_v, _lo), _hi)
                     changed = True
                 except ValueError:
                     pass
             reply = (
                 "💰 *部位風險設定*\n\n"
                 f"帳戶總值：${th.get('account_size', 100000):,.0f}\n"
-                f"單筆風險：{th.get('risk_pct', 0.01):.1%}\n"
+                f"單筆風險：{_risk_pct_of(th):.1%}\n"
                 f"ATR 停損倍數：{th.get('atr_mult', 1.5)}\n"
                 f"部位提示：{'✅ 開' if th.get('position_sizing_enabled', True) else '❌ 關'}\n\n"
                 "設定範例：`/risk 100000 1`（帳戶 $10萬、單筆風險 1%）\n"
@@ -1335,7 +1346,8 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
             try:
                 import trade_engine as te
                 reply += "\n\n" + te.engine_status_text(
-                    state.get("engine"), datetime.now(ET).strftime("%Y-%m-%d"))
+                    state.get("engine"), datetime.now(ET).strftime("%Y-%m-%d"),
+                    {k: th[f"eng_{k}"] for k in te.ENGINE_DEFAULTS if f"eng_{k}" in th})   # 回撤門檻等覆蓋（#71）
             except Exception:
                 pass
 
@@ -1395,7 +1407,7 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
         elif cmd in ("/today", "/plan"):
             th = state["thresholds"]
             acct = float(th.get("account_size", 100000))
-            rk = float(th.get("risk_pct", 0.01))
+            rk = _risk_pct_of(th)
             if args:
                 try:
                     acct = float(args[0].replace(",", ""))
@@ -1841,9 +1853,10 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                         # 長操作前先落盤 last_update_id（runner 超時被殺也不會毒訊息迴圈）
                         save_state(state)
                         import trade_engine as te
-                        cur = {k: th[f"eng_{k}"] for k in te.ENGINE_DEFAULTS if f"eng_{k}" in th}
-                        if "buy_threshold" not in cur and "at_buy_threshold" in th:
-                            cur["buy_threshold"] = th["at_buy_threshold"]
+                        # 基準 = 正式引擎實際設定：at_*／risk_pct 為底、eng_* 覆蓋（與 run_autotrade 同序，#72）
+                        cur = _engine_base_config(th)
+                        cur.update({k: th[f"eng_{k}"] for k in te.ENGINE_DEFAULTS if f"eng_{k}" in th})
+                        cur["regime_filter"] = bool(th.get("regime_filter_enabled", True))   # 正式關大盤濾網時重放同步
                         # 事件靜默窗與正式引擎同步（重放/最佳化都在同樣的靜默規則下評估）
                         cur["event_blackout"] = bool(th.get("event_blackout_enabled", True))
                         cur["event_blackout_days"] = int(th.get("event_blackout_days", 1))
@@ -1863,7 +1876,7 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                                        "exit_threshold": th.get("at_exit_threshold", -0.2),
                                        "max_positions": int(th.get("at_max_positions", 10)),
                                        "max_position_pct": th.get("at_max_position_pct", 0.15),
-                                       "risk_pct": th.get("risk_pct", 0.01)}
+                                       "risk_pct": _risk_pct_of(th)}
                             opt = eb.run_optimize(syms, period, baseline=cur,
                                                   thresholds=th, calibration=calib, grid=grid, val_hist=vh,
                                                   legacy_cfg=_lg_cfg)
@@ -3462,6 +3475,33 @@ def _alpaca_keys() -> tuple[str, str]:
     return os.environ.get("ALPACA_KEY_ID", ""), os.environ.get("ALPACA_SECRET_KEY", "")
 
 
+def _risk_pct_of(th: dict) -> float:
+    """單筆風險比例（小數）。舊版 `/risk 100000 1` 把「1%」存成 1.0（#74）；`/set risk_pct` 有夾制、
+    不會存出 > 0.05 的值，故存量落在 (0.05, 1] 只可能是百分比誤存 → ÷100；最後夾回 SET_CLAMPS。"""
+    try:
+        v = float(th.get("risk_pct", 0.01))
+    except (TypeError, ValueError):
+        v = 0.01
+    if v != v:                                        # NaN
+        v = 0.01
+    if 0.05 < v <= 1.0:
+        v /= 100.0
+    lo, hi = SET_CLAMPS["risk_pct"]
+    return min(max(v, lo), hi)
+
+
+def _engine_base_config(th: dict) -> dict:
+    """正式自動交易的基礎設定（at_* / risk_pct）。run_autotrade 與 /engtest 重放基準共用——
+    兩邊各寫一份會漂移，「基準（現行）」就不是現行（#72）。eng_* 覆蓋由呼叫端疊上。"""
+    return {
+        "buy_threshold":    th.get("at_buy_threshold", 0.5),
+        "exit_threshold":   th.get("at_exit_threshold", -0.2),
+        "max_positions":    int(th.get("at_max_positions", 10)),
+        "max_position_pct": th.get("at_max_position_pct", 0.15),
+        "risk_pct":         _risk_pct_of(th),
+    }
+
+
 def run_autotrade(state: dict, results: list[dict]) -> str | None:
     """
     依掃描評分自動下模擬單（僅在 autotrade 開啟 + 有 key + 市場開盤時）。
@@ -3543,13 +3583,7 @@ def run_autotrade(state: dict, results: list[dict]) -> str | None:
     _in_real = {s_["ticker"] for s_ in scored}
     pool_only_scored = [_to_scored(r) for r in pool_rows if r["ticker"] not in _in_real]   # 旗標關時只給平行帳
 
-    config = {
-        "buy_threshold":    th.get("at_buy_threshold", 0.5),
-        "exit_threshold":   th.get("at_exit_threshold", -0.2),
-        "max_positions":    int(th.get("at_max_positions", 10)),
-        "max_position_pct": th.get("at_max_position_pct", 0.15),
-        "risk_pct":         th.get("risk_pct", 0.01),
-    }
+    config = _engine_base_config(th)
 
     # Shadow 對照：舊決策邏輯以虛擬帳本平行記帳（吃疊加前的原始評分、不下單）
     # ——量化引擎重製的增量價值；/shadow 查看
@@ -3798,7 +3832,7 @@ def run_autotrade(state: dict, results: list[dict]) -> str | None:
             "error": None if ok else msg,
         })
     for n in notes:
-        if n.startswith(("⏸", "🚨", "⏳", "🟡")) or "曝險狀態" in n:   # ⏳ 追高等回檔／🟡 中性縮量：只含代碼與 ATR 數字
+        if n.startswith(("⏸", "🚨", "⏳", "🟡", "🔓")) or "曝險狀態" in n:   # ⏳ 追高等回檔／🟡 中性縮量／🔓 回撤鎖重置（只含比例）
             lines.append(f"_{n}_")
     if mirror_lines:
         lines.append("")
