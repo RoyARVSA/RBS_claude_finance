@@ -339,6 +339,9 @@ def _weekly_trend_series(close: pd.Series) -> pd.Series:
         E26 = a26 * px[i] + (1 - a26) * e26v[ci - 1]
         m_i = E12 - E26
         S_i = a9 * m_i + (1 - a9) * sigv[ci - 1]
+        if abs(px[i] - ma10) <= 1e-9 * abs(px[i]) or abs(m_i - S_i) <= 1e-12 * max(abs(px[i]), 1.0):
+            out[i] = _weekly_trend(close.iloc[:i + 1])          # 浮點近平手（停牌/平價）：改用原始定義逐位一致
+            continue
         out[i] = (1 if px[i] > ma10 else -1) + (1 if (m_i - S_i) > 0 else -1)
     return pd.Series(out, index=close.index, dtype=int)
 

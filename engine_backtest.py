@@ -19,7 +19,9 @@ engine_backtest.py – trade_engine 整台引擎的歷史重放 + 參數學習�
   4. 三段 walk-forward：50% 訓練（排序）/ 25% 驗證（挑選）/ 25% holdout
      （只看一次做最終把關）——與 plan_backtest.optimize 同一套防污染設計
   5. DSR（falsifier.deflated_sharpe）：扣掉「試了 N 組才挑到一個好看的」
-     幸運上限；未達 0.95 一律標示
+     幸運上限；未達 0.95 一律標示。PBO（falsifier.pbo_cscv，CSCV）：挑選流程本身
+     有沒有資訊，≥ 50% 取消推薦
+  6. /engtest pit：當時 S&P 500 成分隨機抽樣多組（無事後選股偏誤）；/engtest try：單組試算不寫入
 
 誠實邊界：成交=次日開盤價無滑價；regime 用 SPY vs MA50 近似（歷史氣象台
 五因子不可得）；Alpha 疊加層（內部人/選擇權/財報 veto）歷史不可重建、不含；
@@ -77,6 +79,12 @@ PARAM_LABELS = {          # 顯示用（Telegram Markdown 不能有底線）
     "entry_max_ext_atr": "追高上限ATR", "pyramid_max_ext_atr": "加碼延伸上限", "pyramid_r": "加碼R",
     "pyramid_min_score": "加碼最低分", "neutral_risk_mult": "中性風險倍數", "event_blackout": "事件靜默",
     "trail_activate_r": "追蹤啟動R", "trail_tighten_r": "收緊門檻R", "legacy": "舊邏輯",
+    # /engtest try 可指定任何引擎鍵 → 全部給中文標籤（避免底線進 Telegram Markdown）
+    "max_position_pct": "單檔上限", "pyramid_max_adds": "加碼次數上限", "pyramid_frac": "加碼比例",
+    "entry_max_ret5d": "急拉門檻5日", "neutral_pyramid": "中性可加碼", "pyramid_headroom": "加碼空間倍數",
+    "dead_money_ret": "死錢報酬門檻", "stoploss_guard_n": "保險絲次數", "stoploss_guard_days": "保險絲窗口天",
+    "account_cooldown_days": "全帳戶冷卻天", "symbol_cooldown_days": "個股冷卻天", "max_dd_halt": "回撤鎖門檻",
+    "dd_reset_flat_days": "空手重置天數", "regime_filter": "大盤濾網",
 }
 
 
@@ -104,6 +112,7 @@ def fetch_history(tickers: list[str], period: str = "2y") -> dict[str, pd.DataFr
             else:
                 df = raw[["Open", "High", "Low", "Close", "Volume"]].copy()
             df = df.dropna(subset=["Close"])
+            df = df[df["Close"] > 0]                   # 壞報價（0/負）：快慢兩條評分路徑處理不同、ret_5d 會無窮大
             if len(df) >= 120:
                 df.index = pd.to_datetime(df.index).tz_localize(None).normalize()
                 out[s] = df
@@ -123,51 +132,96 @@ def regime_series(spy_close: pd.Series) -> pd.Series:
     return reg
 
 
+def _row(sc, c_i, open_i, atr, ma20, r5_raw, n_bars, atr_mult) -> dict:
+    """單日一檔的重放輸入列（快慢兩條路徑共用，保證欄位與捨入一致）。"""
+    ext = round((c_i - ma20) / atr, 2) if (n_bars >= 20 and ma20 is not None and atr > 0) else None
+    r5 = round(float(r5_raw), 4) if (n_bars >= 6 and r5_raw is not None) else None
+    return {"score": float(sc), "close": c_i, "open": open_i,
+            "rps": (atr * atr_mult) if atr > 0 else None,
+            "ext_atr": ext, "ret_5d": r5}         # ret_5d：追高濾網第二條件，缺它濾網會比正式嚴（#72）
+
+
+def _sym_rows_slow(df: pd.DataFrame, start: int, atr_mult: float, mtf: bool, edge_w) -> list[tuple[str, dict]]:
+    """逐日切片版（原始定義；自測拿來對照向量化版逐位相等，也是收盤含 NaN 時的退路）。"""
+    import indicators as ind
+    close, high, low, vol = df["Close"], df.get("High"), df.get("Low"), df.get("Volume")
+    out = []
+    for i in range(start, len(df)):
+        c = close.iloc[:i + 1]
+        h = high.iloc[:i + 1] if high is not None else None
+        lo = low.iloc[:i + 1] if low is not None else None
+        v = vol.iloc[:i + 1] if vol is not None else None
+        try:
+            sc = float(ind._composite_score(c, h, lo, v, edge_weights=edge_w, mtf=mtf)["score"])
+        except Exception:
+            continue
+        atr = ind._atr_value(c, h, lo)
+        try:
+            ma20 = float(c.rolling(20).mean().iloc[-1]) if len(c) >= 20 else None
+        except Exception:
+            ma20 = None
+        r5 = float(c.iloc[-1] / c.iloc[-6] - 1) if len(c) >= 6 else None
+        c_i = float(c.iloc[-1])
+        out.append((str(df.index[i].date()),
+                    _row(sc, c_i, float(df["Open"].iloc[i]) if "Open" in df else c_i, atr, ma20, r5, len(c), atr_mult)))
+    return out
+
+
+def _sym_rows_fast(df: pd.DataFrame, start: int, atr_mult: float, mtf: bool, edge_w) -> list[tuple[str, dict]]:
+    """向量化版：indicators.composite_series + 滾動 ATR/MA20/5 日報酬一次算完（~100×）。
+    rolling/ewm 在全序列第 i 位與切片 [:i+1] 末位的運算序列相同 → 結果逐位相等（自測驗證）。
+    收盤含 NaN 時 composite_series 語意不同 → 退回逐日版。"""
+    import indicators as ind
+    close, high, low, vol = df["Close"], df.get("High"), df.get("Low"), df.get("Volume")
+    if close.isna().any():
+        return _sym_rows_slow(df, start, atr_mult, mtf, edge_w)
+    sc_s = ind.composite_series(close, high, low, vol, edge_weights=edge_w, mtf=mtf)
+    hh, ll = (high, low) if (high is not None and low is not None) else (close, close)   # 同 _atr_value
+    tr = pd.concat([hh - ll, (hh - close.shift()).abs(), (ll - close.shift()).abs()], axis=1).max(axis=1)
+    atr_s = tr.rolling(14).mean()
+    ma20_s = close.rolling(20).mean()
+    r5_s = close / close.shift(5) - 1
+    opens = df["Open"] if "Open" in df else close
+    out = []
+    for i in range(start, len(df)):
+        sc = sc_s.iloc[i]
+        if sc is None or not math.isfinite(float(sc)):
+            continue
+        a = atr_s.iloc[i]
+        atr = float(a) if not pd.isna(a) else 0.0
+        m = ma20_s.iloc[i]
+        r5 = r5_s.iloc[i]
+        c_i = float(close.iloc[i])
+        out.append((str(df.index[i].date()),
+                    _row(sc, c_i, float(opens.iloc[i]), atr, None if pd.isna(m) else float(m),
+                         None if pd.isna(r5) else float(r5), i + 1, atr_mult)))
+    return out
+
+
 def precompute(data: dict[str, pd.DataFrame], days: int = 252,
-               thresholds: dict | None = None, calibration: dict | None = None) -> dict:
+               thresholds: dict | None = None, calibration: dict | None = None,
+               fast: bool = True) -> dict:
     """
     逐檔逐日算評分（**只用該日以前含當日的 K 棒**）與每股風險（ATR×atr_mult）。
-    回 {"dates": [...], "by_date": {date: {sym: {score, close, open, rps}}},
-        "regime": {date: str|None}, "spy": Series, "n_syms": int}
+    fast=True 走向量化（與逐日切片逐位相等）；回
+    {"dates": [...], "by_date": {date: {sym: {score, close, open, rps, ext_atr, ret_5d}}},
+     "regime": {date: str|None}, "spy": Series, "n_syms": int}
     """
-    import indicators as ind
     th = thresholds or {}
     atr_mult = float(th.get("atr_mult", 1.5))
     mtf = bool(th.get("mtf_enabled", True))
     by_date: dict[str, dict] = {}
     spy = data.get("SPY")
+    rows_fn = _sym_rows_fast if fast else _sym_rows_slow
+    # 重放起點錨定 SPY 的倒數第 days 根（共同日曆）：若各檔用自己的 K 棒數倒推，歷史中斷的股票
+    # （下市/改名，PIT 抽樣常見）會把整段重放起點拉早好幾個月（對抗驗證 Med）
+    anchor = spy.index[max(0, len(spy) - int(days))] if spy is not None and len(spy) else None
+    last_date: dict[str, str] = {}
     for sym, df in data.items():
-        n = len(df)
-        start = max(60, n - int(days))
-        close, high, low = df["Close"], df.get("High"), df.get("Low")
-        vol = df.get("Volume")
-        edge_w = (calibration or {}).get(sym)
-        for i in range(start, n):
-            c = close.iloc[:i + 1]
-            h = high.iloc[:i + 1] if high is not None else None
-            lo = low.iloc[:i + 1] if low is not None else None
-            v = vol.iloc[:i + 1] if vol is not None else None
-            try:
-                sc = float(ind._composite_score(c, h, lo, v, edge_weights=edge_w, mtf=mtf)["score"])
-            except Exception:
-                continue
-            atr = ind._atr_value(c, h, lo)
-            d = str(df.index[i].date())
-            try:                                      # 延伸度＝(收盤−MA20)/ATR（與正式 scan 的 ext_atr 同義、同捨入）
-                ma20 = float(c.rolling(20).mean().iloc[-1]) if len(c) >= 20 else None
-                ext = round((float(c.iloc[-1]) - ma20) / atr, 2) if (ma20 is not None and atr > 0) else None
-            except Exception:
-                ext = None
-            try:                                      # 近 5 日報酬（indicators._extension 同定義）——追高濾網第二條件；
-                r5 = round(float(c.iloc[-1] / c.iloc[-6] - 1), 4) if len(c) >= 6 else None   # 缺它濾網會比正式嚴（#72）
-            except Exception:
-                r5 = None
-            by_date.setdefault(d, {})[sym] = {
-                "score": sc, "close": float(c.iloc[-1]),
-                "open": float(df["Open"].iloc[i]) if "Open" in df else float(c.iloc[-1]),
-                "rps": (atr * atr_mult) if atr > 0 else None,
-                "ext_atr": ext, "ret_5d": r5,
-            }
+        start = max(60, int(df.index.searchsorted(anchor)) if anchor is not None else len(df) - int(days))
+        for d, row in rows_fn(df, start, atr_mult, mtf, (calibration or {}).get(sym)):
+            by_date.setdefault(d, {})[sym] = row
+            last_date[sym] = d
     dates = sorted(by_date)
     reg: dict[str, str | None] = {}
     if spy is not None and len(spy) >= 50:
@@ -180,7 +234,7 @@ def precompute(data: dict[str, pd.DataFrame], days: int = 252,
                 reg[d] = None
     return {"dates": dates, "by_date": by_date, "regime": reg,
             "spy": (spy["Close"] if spy is not None else None),
-            "n_syms": len([s for s in data if s != "SPY"])}
+            "n_syms": len([s for s in data if s != "SPY"]), "last_date": last_date}
 
 
 # ── 2. 重放 ───────────────────────────────────────────────────────────────
@@ -301,11 +355,24 @@ def replay(pre: dict, params: dict | None = None, dates: list[str] | None = None
     eq_curve: list[tuple[str, float]] = []
     expo: list[float] = []
     lock_days = {"dd": 0, "regime": 0, "halt": 0}
+    last_date = pre.get("last_date") or {}
+    all_dates = pre["dates"]
+    pos_of = {d_: i for i, d_ in enumerate(all_dates)}
     for d in dates:
         day = pre["by_date"].get(d) or {}
         if pending:
             journal.extend(_fill(book, pending, day, d, lots, trades))
             pending = []
+        # 資料已中斷超過 5 個交易日（下市/併購/改名）的持倉 → 以最後收盤價結清（含成本），釋出名額與現金；
+        # 只缺最新一兩根（資料源偶發）不算，避免誤賣
+        i_d = pos_of.get(d, 0)
+        for s_ in list(book["positions"]):
+            ld = last_date.get(s_)
+            if ld and i_d >= 5 and ld < all_dates[i_d - 5] and book["last_px"].get(s_):
+                q_ = float(book["positions"][s_]["qty"])
+                journal.extend(_fill(book, [{"symbol": s_, "side": "sell", "qty": q_, "mechanism": "data_end",
+                                             "reason": f"資料於 {ld} 中斷 → 以最後收盤結清"}],
+                                     {s_: {"open": book["last_px"][s_]}}, d, lots, trades))
         closes = {s: v["close"] for s, v in day.items() if v.get("close")}
         for s in list(book["positions"]):
             if s in closes:
@@ -320,6 +387,13 @@ def replay(pre: dict, params: dict | None = None, dates: list[str] | None = None
             vc = val_ctx_from_hist(val_hist, d, closes)      # PIT：只用列日期 ≤ d 的估值
             for sc_ in scored:
                 sc_.update(vc.get(sc_["ticker"], {}))
+        pit = pre.get("pit")
+        if pit:                                             # 成分遮罩（/engtest pit）：離開指數（或尚未加入）的日子不開新倉
+            for sc_ in scored:
+                ps = pit.get(sc_["ticker"])
+                if ps is not None and not _is_member(ps, d):
+                    sc_["no_entry"] = True
+                    sc_["pit_out"] = True
         if cfg.get("event_blackout", True) and _blackout_day(d, cfg):
             for sc_ in scored:                              # 與正式 run_autotrade 同語意：FOMC 會期不開新倉/不加碼
                 sc_["no_entry"] = True
@@ -334,6 +408,9 @@ def replay(pre: dict, params: dict | None = None, dates: list[str] | None = None
                 # 正式 Shadow 在事件靜默之前呼叫 → 不受靜默影響，這裡同樣移除 no_entry；參數用 legacy_cfg（at_* 鍵）
                 import alpaca_trader as at
                 lg_rows = [{k: v for k, v in r.items() if k != "no_entry"} for r in scored]
+                for r in lg_rows:                           # 成分遮罩對舊邏輯同樣有效（只擋進場；decide_orders 認 no_entry）
+                    if r.get("pit_out"):
+                        r["no_entry"] = True
                 lg_cfg = dict(cfg.get("legacy_cfg") or cfg)
                 orders = [dict(o, mechanism=o.get("mechanism") or ("legacy_exit" if o["side"] == "sell" else "legacy_entry"))
                           for o in at.decide_orders(lg_rows, pos_view, equity, book["cash"], lg_cfg)]
@@ -469,7 +546,8 @@ def optimize(pre: dict, grid: dict | None = None, baseline: dict | None = None,
     且 val 報酬>0 且 Sharpe>0）= best → holdout **只看一次**把關：best 與 baseline
     皆 n≥HOLDOUT_MIN_TRADES 時須勝 +HOLDOUT_MARGIN，否則 best holdout 須為正。
     DSR：best 的 holdout 日 Sharpe 對「N 組嘗試」的幸運上限（未達 0.95 標示）。
-    回 {"results","baseline","best","recommend","split","dsr","n_trials"}。
+    PBO（falsifier.pbo_cscv）：可選組合在訓練＋驗證段連續重放的日報酬做 CSCV；≥ 50% 取消推薦（pbo_blocked）。
+    回 {"results","baseline","best","recommend","split","dsr","pbo","pbo_blocked"?,"n_trials","bench","legacy"}。
     """
     grid = grid or GRID
     keys = list(grid)
@@ -487,11 +565,17 @@ def optimize(pre: dict, grid: dict | None = None, baseline: dict | None = None,
     fixed = {k: v for k, v in (baseline or {}).items() if k not in keys}
     out["fixed"] = fixed
 
-    def _run(prm):
+    tv_dates = sp["train"] + sp["val"]
+
+    def _run(prm, with_tv=True):
         segs = {seg: replay(pre, {**fixed, **prm}, sp[seg], val_hist=val_hist) for seg in ("train", "val", "holdout")}
-        return {"params": prm,
-                **{seg: segs[seg]["metrics"] for seg in segs},
-                "_holdout_eq": segs["holdout"]["equity"]}
+        r_ = {"params": prm,
+              **{seg: segs[seg]["metrics"] for seg in segs},
+              "_holdout_eq": segs["holdout"]["equity"]}
+        if with_tv:                                   # PBO 用：訓練＋驗證段連續重放的日報酬（holdout 不碰）
+            eq_tv = replay(pre, {**fixed, **prm}, tv_dates, val_hist=val_hist)["equity"]
+            r_["_tv_ret"] = eq_tv.pct_change().dropna()
+        return r_
 
     combos = [dict(zip(keys, c)) for c in product(*(grid[k] for k in keys))]
     if base_prm not in combos:
@@ -509,7 +593,7 @@ def optimize(pre: dict, grid: dict | None = None, baseline: dict | None = None,
         _ew, _n, _N = ew_return(pre, sp[seg], detail=True)
         out["bench"][seg] = {"spy": bench_return(pre, sp[seg]), "ew": _ew, "ew_n": _n, "ew_N": _N}
     try:                                              # 舊邏輯基準（不參與挑選、不計入嘗試數；#56）
-        out["legacy"] = _run({"legacy": True, **({"legacy_cfg": dict(legacy_cfg)} if legacy_cfg else {})})
+        out["legacy"] = _run({"legacy": True, **({"legacy_cfg": dict(legacy_cfg)} if legacy_cfg else {})}, with_tv=False)
         out["legacy"].pop("_holdout_eq", None)
     except Exception as e:
         out["legacy"] = None
@@ -531,6 +615,18 @@ def optimize(pre: dict, grid: dict | None = None, baseline: dict | None = None,
                 ok = bh["total_ret"] > 0
             if ok:
                 out["recommend"] = best
+    # PBO（CSCV）：挑選流程本身有沒有資訊——沒有 best 也算；≥ 50% 時取消推薦（排名不比亂猜好）
+    try:
+        import falsifier as fz
+        # 只放挑選流程「選得到」的組（訓練段筆數達標）；完全相同的序列（參數沒作用）只留一份
+        elig = [r for r in results if r["train"]["n_trades"] >= MIN_TRADES]
+        mat = pd.concat([r["_tv_ret"].rename(i) for i, r in enumerate(elig)], axis=1).dropna() if elig else pd.DataFrame()
+        M = np.unique(mat.values, axis=1) if mat.shape[1] else mat.values
+        out["pbo"] = fz.pbo_cscv(M) if M.ndim == 2 and M.shape[1] >= 2 else \
+            {"pbo": None, "note": f"可區分的候選組合不足（{M.shape[1] if M.ndim == 2 else 0} 組）"}
+    except Exception as e:
+        out["pbo"] = {"pbo": None, "note": f"PBO 不可用（{type(e).__name__}）"}
+    _apply_pbo_gate(out)
     if best:
         try:
             import falsifier as fz
@@ -544,6 +640,16 @@ def optimize(pre: dict, grid: dict | None = None, baseline: dict | None = None,
             out["dsr"] = {"dsr": None, "sr_star": None, "note": f"DSR 不可用（{e}）"[:60]}
     for r in results:
         r.pop("_holdout_eq", None)
+        r.pop("_tv_ret", None)
+    return out
+
+
+def _apply_pbo_gate(out: dict) -> dict:
+    """PBO ≥ 50%（網格排名不比亂猜好）→ 取消推薦、標 pbo_blocked。就地修改並回傳。"""
+    v = (out.get("pbo") or {}).get("pbo")
+    if out.get("recommend") and v is not None and v >= 0.5:
+        out["recommend"] = None
+        out["pbo_blocked"] = True
     return out
 
 
@@ -701,7 +807,18 @@ def opt_text(opt: dict, top_n: int = 5) -> str:
                      "腦中試過的不算在內 → 恆偏樂觀）")
     elif d.get("note"):
         lines.append(f"DSR：{d['note']}")
-    if opt["recommend"]:
+    pb = opt.get("pbo") or {}
+    if pb.get("pbo") is not None:
+        v = pb["pbo"]
+        _vd = ("排名不比亂猜好——任何推薦都別套用" if v >= 0.5 else
+               "排名有部分持續性" if v >= 0.2 else "排名在樣本外大致維持")
+        lines.append(f"PBO {v:.0%}（過擬合機率：{pb['n_splits']} 次切分中，訓練＋驗證段樣本內最佳組在另一半"
+                     f"排到中位數以下的比例；{_vd}）")
+    elif pb.get("note"):
+        lines.append(f"PBO：{pb['note']}")
+    if opt.get("pbo_blocked"):
+        lines.append("\n➖ holdout 雖過關，但 PBO ≥ 50%（排名沒有資訊）→ 取消推薦、維持現行")
+    elif opt["recommend"]:
         lines.append(f"\n✅ 推薦：{_params_text(opt['recommend']['params'])}"
                      "（holdout 段明確勝過現行——把關與挑選分離）")
     elif opt["best"]:
@@ -711,6 +828,341 @@ def opt_text(opt: dict, top_n: int = 5) -> str:
     lines.append("\n⚠️ 歷史尋優極易過擬合；可信的是 holdout 欄與 DSR。"
                  "成交=次日開盤含成本、不含 Alpha 疊加；regime 用 SPY/MA50 三態近似（無氣象台廣度否決）。非投資建議")
     return "\n".join(lines)
+
+
+# ── 4b. 無事後偏誤股票池（/engtest pit）＋ 單組參數試算（/engtest try）─────────
+
+PIT_K_RANGE = (5, 40)          # 每組抽樣檔數
+PIT_SEEDS_MAX = 5              # 最多幾組隨機種子（每組一次完整重放 ×3 策略）
+TRY_EXTRA_KEYS = ("regime_filter",)     # 非 ENGINE_DEFAULTS 但重放認得的鍵
+# 成分歷史裡的「改名」（同一家公司換代碼，fja05680 記成舊代碼結束＋新代碼開始）：yfinance 的歷史掛在新代碼下，
+# 用舊代碼抓不到 → 被誤算成下市。抓價改用新代碼、成分期間合併新舊兩段（2026-10 實查 sp500_ticker_start_end.csv）
+PIT_RENAMES = {"FI": "FISV", "BK": "BNY", "FB": "META"}
+
+
+def _is_member(periods_of: list, d: str) -> bool:
+    d = str(d)[:10]
+    return any(a <= d <= b for a, b in periods_of)
+
+
+def pit_sample(periods: dict, as_of: str, k: int, seed: int) -> list[str]:
+    """as_of 當天的 S&P 500 成分中，以 seed 決定性抽 k 檔（成分排序後抽 → 同輸入同結果）。
+    只用「當時」成分 → 沒有「今天回頭挑贏家」的事後偏誤；之後下市/改名的抓不到價（殘留存活偏誤，呼叫端揭露）。"""
+    import random
+    pool = sorted(t for t, ps in periods.items() if t != "SPY" and _is_member(ps, as_of))
+    if not pool:
+        return []
+    return sorted(random.Random(int(seed)).sample(pool, min(int(k), len(pool))))
+
+
+def parse_try_params(tokens: list[str]) -> tuple[dict, list[str]]:
+    """`/engtest try` 的 k=v 參數 → (候選參數, 錯誤訊息)。鍵須在 ENGINE_DEFAULTS（可加 eng_ 前綴）或
+    TRY_EXTRA_KEYS；布林鍵吃 on/off；OFF_VALUE_KEYS 吃 off（=99，與網格同語意）；非有限數一律拒絕。"""
+    import trade_engine as te
+    out: dict = {}
+    errs: list[str] = []
+    for tok in tokens:
+        if "=" not in tok:
+            continue
+        k, v = tok.split("=", 1)
+        k, v = k.strip().lower(), v.strip().lower()
+        if not k or not v:
+            errs.append(f"`{tok}` 格式不對（參數=值 中間不要空格）")
+            continue
+        if k.startswith("eng_"):
+            k = k[4:]
+        if k == "seed":
+            continue
+        if k not in te.ENGINE_DEFAULTS and k not in TRY_EXTRA_KEYS:
+            errs.append(f"未知參數 `{k}`")
+            continue
+        dv = te.ENGINE_DEFAULTS.get(k, True)
+        if isinstance(dv, bool):
+            if v in ("on", "true", "1", "yes", "開"):
+                out[k] = True
+            elif v in ("off", "false", "0", "no", "關"):
+                out[k] = False
+            else:
+                errs.append(f"`{k}` 只接受 on/off")
+            continue
+        if v in ("off", "關") and k in OFF_VALUE_KEYS:
+            out[k] = 99.0
+            continue
+        try:
+            f = float(v)
+        except ValueError:
+            errs.append(f"`{k}` 的值 `{v}` 不是數字")
+            continue
+        if not math.isfinite(f):
+            errs.append(f"`{k}` 的值必須是有限數")
+            continue
+        out[k] = int(round(f)) if isinstance(dv, int) else f
+    return out, errs
+
+
+def _seg_metrics(pre: dict, prm: dict, sp: dict, val_hist: dict | None = None, err: list | None = None) -> dict:
+    """三段各自獨立重放的 metrics；err 給 list 時累加各段 journal 的錯誤日數。"""
+    out = {}
+    for seg in ("train", "val", "holdout"):
+        rp = replay(pre, prm, sp[seg], val_hist=val_hist)
+        out[seg] = rp["metrics"]
+        if err is not None:
+            err.append(sum(1 for j in rp["journal"] if j.get("error")))
+    return out
+
+
+def try_compare(pre: dict, baseline: dict, candidate: dict, legacy_cfg: dict | None = None,
+                val_hist: dict | None = None) -> dict:
+    """現行 vs 候選（現行 + 覆蓋）vs 舊邏輯，三段各自獨立重放。只比較、不挑選、不寫入。"""
+    sp = split_dates(pre["dates"])
+    out = {"split": sp, "candidate": dict(candidate), "n_syms": pre.get("n_syms", 0)}
+    if not sp:
+        return out
+    base = dict(baseline or {})
+    out["base"] = _seg_metrics(pre, base, sp, val_hist)
+    _err: list = []
+    out["cand"] = _seg_metrics(pre, {**base, **candidate}, sp, val_hist, _err)
+    out["errors"] = sum(_err)
+    out["legacy"] = _seg_metrics(pre, {"legacy": True, "legacy_cfg": dict(legacy_cfg or {})}, sp)
+    out["bench"] = {seg: {"spy": bench_return(pre, sp[seg]), "ew": ew_return(pre, sp[seg])}
+                    for seg in ("train", "val", "holdout")}
+    return out
+
+
+def try_text(res: dict) -> str:
+    sp = res.get("split")
+    lines = [f"🧪 *單組參數試算*（{res.get('n_syms', 0)} 檔，三段各自獨立重放；不寫入設定）",
+             f"候選：{_params_text(res.get('candidate') or {})}"]
+    if not sp:
+        lines.append("資料不足（三段切分需 ≥80 個交易日）。")
+        return "\n".join(lines)
+    lines.append(f"訓練 {sp['train'][0]}→{sp['train'][-1]}｜驗證 →{sp['val'][-1]}｜holdout →{sp['holdout'][-1]}")
+
+    def _m(m):
+        return f"{_pct(m['total_ret'])}（回撤 {m['max_dd']:.0%}、曝險 {m['exposure']:.0%}、{m['n_trades']}筆）"
+
+    for seg, lab in (("train", "訓練"), ("val", "驗證"), ("holdout", "holdout")):
+        b_ = (res.get("bench") or {}).get(seg) or {}
+        lines.append(f"・{lab}：現行 {_m(res['base'][seg])}｜候選 {_m(res['cand'][seg])}｜"
+                     f"舊邏輯 {_pct(res['legacy'][seg]['total_ret'])}｜等權持有 {_pct(b_.get('ew'))}｜SPY {_pct(b_.get('spy'))}")
+    if res.get("errors"):
+        lines.append(f"⚠️ 候選設定重放時有 {res['errors']} 日出錯（參數值可能超出合理範圍）——結果不可信")
+    lines.append("（引擎會把超出安全範圍的值夾回，例如單筆風險 0.05%–5%、追蹤 0.5%–50%、停損倍數 0.25–5）")
+    lines.append("⚠️ 這是 1 組額外嘗試、沒有經過挑選保護（腦中試過的組數不會被扣掉）——holdout 好看也不能直接套用；"
+                 "觀察清單是事後挑的，請再用 `/engtest try … pit` 在隨機股票池驗一次。非投資建議")
+    return "\n".join(lines)
+
+
+_TCRIT = {1: 12.71, 2: 4.30, 3: 3.18, 4: 2.78, 5: 2.57}   # 雙尾 5% t 臨界值（自由度 → 值）；組數少時 |t|≥2 誤報率 12–30%
+
+
+def _stats(xs: list[float]) -> tuple[float | None, float | None, float | None, int]:
+    """平均、標準差、t 值、樣本數（n<2 或零離散時標準差/t 為 None）。"""
+    xs = [x for x in xs if x is not None and math.isfinite(x)]
+    if not xs:
+        return None, None, None, 0
+    m = float(np.mean(xs))
+    if len(xs) < 2:
+        return m, None, None, len(xs)
+    sd = float(np.std(xs, ddof=1))
+    if sd < 1e-12:
+        return m, None, None, len(xs)
+    return m, sd, m / (sd / math.sqrt(len(xs))), len(xs)
+
+
+def _sig(xs: list[float]) -> tuple[str, float | None]:
+    """跨組差異的顯著性判讀：('pos'|'neg'|'noise'|'few', 平均)。自由度校正的 5% 臨界值，n<3 不判讀。"""
+    m, _, t, n = _stats(xs)
+    if m is None or n < 3 or t is None:
+        return "few", m
+    crit = _TCRIT.get(n - 1, 2.0)
+    return ("pos" if t >= crit else "neg" if t <= -crit else "noise"), m
+
+
+def _same_sign(xs: list[float]) -> bool:
+    xs = [x for x in xs if x is not None and math.isfinite(x)]
+    return bool(xs) and (all(x > 0 for x in xs) or all(x < 0 for x in xs))
+
+
+def pit_compare(data: dict, periods: dict, samples: list[list[str]], seeds: list[int], days: int,
+                baseline: dict, legacy_cfg: dict | None = None, candidate: dict | None = None,
+                thresholds: dict | None = None) -> list[dict]:
+    """每組抽樣各自 precompute + 重放（現行／舊邏輯／候選），附等權持有與 SPY。純邏輯（data 由呼叫端給）。"""
+    rows = []
+    for seed, smp in zip(seeds, samples):
+        sub = {s_: data[s_] for s_ in smp if s_ in data}
+        r = {"seed": seed, "k": len(smp), "n": len(sub), "miss": len(smp) - len(sub)}
+        if len(sub) < max(3, len(smp) // 2) or "SPY" not in data:
+            r["skip"] = "可用檔數不足" if "SPY" in data else "SPY 抓不到"
+            rows.append(r)
+            continue
+        sub["SPY"] = data["SPY"]
+        pre = precompute(sub, days, thresholds, None)
+        pre["pit"] = {s_: periods.get(s_, []) for s_ in sub if s_ != "SPY"}
+        if len(pre["dates"]) < 40:
+            r["skip"] = "可重放交易日不足"
+            rows.append(r)
+            continue
+        base = dict(baseline or {})
+        r["dates"] = (pre["dates"][0], pre["dates"][-1])
+        reps = {"base": replay(pre, base),
+                "legacy": replay(pre, {"legacy": True, "legacy_cfg": dict(legacy_cfg or {})})}
+        if candidate:
+            reps["cand"] = replay(pre, {**base, **candidate})
+        for k_, rp in reps.items():
+            r[k_] = rp["metrics"]
+        r["errors"] = sum(1 for rp in reps.values() for j in rp["journal"] if j.get("error"))
+        r["ew"] = ew_return(pre, pre["dates"])
+        r["spy"] = bench_return(pre, pre["dates"])
+        rows.append(r)
+    return rows
+
+
+def pit_text(rows: list[dict], meta: dict) -> str:
+    cand = meta.get("candidate") or {}
+    lines = [f"🎲 *無事後偏誤回測*（{meta['as_of']} 當時的 S&P 500 成分 {meta['n_members']} 檔中"
+             f"隨機抽 {meta['k']} 檔 × {len(rows)} 組，{meta['period']}）"]
+    if cand:
+        lines.append(f"候選：{_params_text(cand)}")
+    tot = sum(r["k"] for r in rows)
+    miss = sum(r["miss"] for r in rows)
+    spy_bad = any(r.get("skip") == "SPY 抓不到" for r in rows)
+    if spy_bad:
+        lines.append(f"⚠️ 基準 SPY 抓不到價（個股缺 {miss}/{tot} 檔）——行情抓取可能失敗，稍後再試")
+    elif tot and miss > tot / 2:
+        lines.append(f"⚠️ 抓不到價 {miss}/{tot} 檔——行情抓取可能失敗，結果不可靠，稍後再試")
+    else:
+        lines.append(f"成交＝次日開盤含成本；離開指數後不開新倉；資料中斷的持倉以最後收盤結清。抓不到價 {miss}/{tot} 檔"
+                     "（多為之後下市/併購/改名——殘留存活偏誤，方向不確定：併購多溢價、破產為負）")
+    eo = meta.get("eng_opt") or {}
+    if eo:
+        if str(eo.get("as_of", "")) >= str(meta["as_of"]):
+            lines.append(f"⚠️ 現行含 /engtest opt 於 {eo.get('as_of', '?')} 以 {eo.get('period', '?')} 視窗套用的參數——"
+                         "調參視窗與本回測期間重疊（時間上屬樣本內，現行 vs 舊邏輯偏向現行）")
+        else:
+            lines.append(f"ℹ️ 現行含 /engtest opt 於 {eo.get('as_of', '?')} 套用的參數（調參在本回測起點之前）")
+
+    def _m(m):
+        return f"{_pct(m['total_ret'])}（S{m['sharpe']:.1f}、曝險 {m['exposure']:.0%}、回撤 {m['max_dd']:.0%}）"
+
+    ok = [r for r in rows if "base" in r]
+    for r in rows:
+        if "skip" in r:
+            lines.append(f"・種子 {r['seed']}：略過（{r['skip']}）")
+            continue
+        parts = [f"現行 {_m(r['base'])}", f"舊邏輯 {_m(r['legacy'])}"]
+        if "cand" in r:
+            parts.append(f"候選 {_m(r['cand'])}")
+        parts += [f"等權持有 {_pct(r['ew'])}", f"SPY {_pct(r['spy'])}"]
+        err = f"｜⚠️ 重放錯誤 {r['errors']} 日" if r.get("errors") else ""
+        lines.append(f"・種子 {r['seed']}（{r['n']} 檔，{r['dates'][0]}→{r['dates'][1]}）：" + "｜".join(parts) + err)
+    if not ok:
+        lines.append("\n❌ 沒有可用的組（行情抓取失敗？），稍後再試")
+        return "\n".join(lines)
+    lines.append("（S＝年化 Sharpe；曝險＝平均持股占淨值比例）")
+
+    ew_ok = [r for r in ok if r["ew"] is not None]
+    # 曝險調整後擇時值：報酬 − 平均曝險 × 等權持有（現金報酬 0 的近似）——只比原始報酬時，
+    # 七成持股的策略在上漲段「必然」輸滿倉的等權持有，那不是擇時好壞（對抗驗證 Med）
+    adj_b = [r["base"]["total_ret"] - r["base"]["exposure"] * r["ew"] for r in ew_ok]
+    adj_l = [r["legacy"]["total_ret"] - r["legacy"]["exposure"] * r["ew"] for r in ew_ok]
+    series = [("現行 − 等權持有", [r["base"]["total_ret"] - r["ew"] for r in ew_ok]),
+              ("現行擇時值（曝險調整）", adj_b),
+              ("舊邏輯擇時值（曝險調整）", adj_l),
+              ("舊邏輯 − 現行", [r["legacy"]["total_ret"] - r["base"]["total_ret"] for r in ok])]
+    if cand:
+        series.append(("候選 − 現行", [r["cand"]["total_ret"] - r["base"]["total_ret"] for r in ok if "cand" in r]))
+    lines.append(f"\n*跨組平均*（± 標準差，{len(ok)} 組）")
+    for lab, xs in series:
+        m, sd, t, _n = _stats(xs)
+        if m is None:
+            continue
+        lines.append(f"{lab} {m:+.1%}" + (f" ± {sd:.1%}" if sd is not None else "") + (f"（t {t:+.1f}）" if t is not None else ""))
+    m, sd, t, _n = _stats([r["legacy"]["sharpe"] - r["base"]["sharpe"] for r in ok])
+    if m is not None:
+        lines.append(f"Sharpe 差（舊邏輯 − 現行）{m:+.2f}" + (f" ± {sd:.2f}" if sd is not None else "")
+                     + (f"（t {t:+.1f}）" if t is not None else ""))
+    ex_b = float(np.mean([r["base"]["exposure"] for r in ok]))
+    ex_l = float(np.mean([r["legacy"]["exposure"] for r in ok]))
+    lines.append(f"平均曝險：現行 {ex_b:.0%}／舊邏輯 {ex_l:.0%}")
+
+    # 判讀（規則式、保守）：自由度校正的 5% 臨界值；少於 3 組不判讀
+    if len(ok) < 3:
+        lines.append(f"判讀：只有 {len(ok)} 組，無法判讀（至少 3 組，建議 `/engtest pit 20 5`）")
+    else:
+        verdict = []
+        def _vd(xs, pos, neg, noise, few):
+            sg_, _mm = _sig(xs)
+            tail = "（各組同向）" if sg_ in ("pos", "neg") and _same_sign(xs) else \
+                   "（但有組別方向相反）" if sg_ in ("pos", "neg") else ""
+            return {"pos": pos + tail, "neg": neg + tail, "noise": noise, "few": few}[sg_]
+
+        verdict.append(_vd(adj_b, "現行擇時（曝險調整後）跨組平均顯著為正——有加值的跡象",
+                           "現行擇時（曝險調整後）跨組平均顯著為負——擇時還沒證明有加值",
+                           "現行擇時（曝險調整後）在雜訊範圍內", "現行擇時：無法判讀"))
+        ex_note = (f"；曝險差 {ex_l - ex_b:+.0%}，曝險調整後 舊邏輯 − 現行 "
+                   f"{(_stats([a - b for a, b in zip(adj_l, adj_b)])[0] or 0):+.1%}" if abs(ex_l - ex_b) >= 0.05 else "")
+        verdict.append(_vd(series[3][1], "舊邏輯跨組平均顯著領先現行", "舊邏輯跨組平均顯著落後現行",
+                           "舊邏輯 vs 現行在雜訊範圍內", "舊邏輯 vs 現行：無法判讀") + ex_note)
+        if cand:
+            verdict.append(_vd(series[4][1], "候選跨組平均顯著優於現行", "候選跨組平均顯著劣於現行",
+                               "候選 vs 現行在雜訊範圍內", "候選：無法判讀"))
+        lines.append("判讀：" + "；".join(verdict))
+    lines.append("⚠️ t 值只反映「抽到哪些股票」的差異，不含「哪段行情」——各組共用同一段市場路徑，加組數也補不了；"
+                 "看方向、不看精確數字。非投資建議")
+    return "\n".join(lines)
+
+
+def run_pit(period: str = "2y", k: int = 20, n_seeds: int = 3, seed0: int = 1,
+            baseline: dict | None = None, legacy_cfg: dict | None = None, candidate: dict | None = None,
+            thresholds: dict | None = None, periods: dict | None = None, fetch_fn=None,
+            today: str | None = None, eng_opt: dict | None = None) -> dict:
+    """/engtest pit 進入點：抓成分歷史 → 各組抽樣 → 一次批次抓價 → pit_compare → 文字。"""
+    from datetime import date, timedelta
+    period = period if period in PERIOD_DAYS else "2y"
+    k = int(min(max(int(k), PIT_K_RANGE[0]), PIT_K_RANGE[1]))
+    n_seeds = int(min(max(int(n_seeds), 1), PIT_SEEDS_MAX))
+    if periods is None:
+        import universe as un
+        periods = un.fetch_sp500_periods()
+    if not periods:
+        return {"rows": [], "text": "❌ S&P 500 成分歷史抓取失敗（GitHub raw），稍後再試"}
+    t0 = date.fromisoformat(str(today)[:10]) if today else date.today()
+    as_of = (t0 - timedelta(days=int(PERIOD_DAYS[period] * 365 / 252) + 3)).isoformat()   # ≈ 重放首日
+    seeds = [int(seed0) + i for i in range(n_seeds)]
+    samples = [pit_sample(periods, as_of, k, sd) for sd in seeds]
+    allsyms = sorted(set().union(*samples)) if samples else []
+    if not allsyms:
+        return {"rows": [], "text": f"❌ {as_of} 查無 S&P 500 成分（期間表異常）"}
+    fetch_syms = sorted({PIT_RENAMES.get(s_, s_) for s_ in allsyms})
+    raw = (fetch_fn or fetch_history)(fetch_syms, FETCH_PERIOD[period])
+    data = {s_: raw[PIT_RENAMES.get(s_, s_)] for s_ in allsyms if PIT_RENAMES.get(s_, s_) in raw}
+    if "SPY" in raw:
+        data["SPY"] = raw["SPY"]
+    per_eff = dict(periods)
+    for old_t, new_t in PIT_RENAMES.items():
+        if old_t in per_eff and new_t in periods:
+            per_eff[old_t] = sorted(set(periods[old_t]) | set(periods[new_t]))
+    rows = pit_compare(data, per_eff, samples, seeds, PERIOD_DAYS[period], baseline or {},
+                       legacy_cfg, candidate, thresholds)
+    meta = {"as_of": as_of, "n_members": sum(1 for ps in periods.values() if _is_member(ps, as_of)),
+            "k": k, "period": period, "candidate": candidate,
+            "eng_opt": eng_opt if isinstance(eng_opt, dict) else None}
+    return {"rows": rows, "meta": meta, "samples": samples, "text": pit_text(rows, meta)}
+
+
+def run_try(tickers: list[str], period: str = "2y", baseline: dict | None = None, candidate: dict | None = None,
+            thresholds: dict | None = None, calibration: dict | None = None, val_hist: dict | None = None,
+            legacy_cfg: dict | None = None) -> dict:
+    """/engtest try（觀察清單）進入點。"""
+    period = period if period in PERIOD_DAYS else "2y"
+    data = fetch_history(tickers, FETCH_PERIOD[period])
+    if len([s_ for s_ in data if s_ != "SPY"]) == 0:
+        return {"text": "❌ 行情抓取失敗或資料不足，稍後再試"}
+    pre = precompute(data, PERIOD_DAYS[period], thresholds, calibration)
+    res = try_compare(pre, baseline or {}, candidate or {}, legacy_cfg, val_hist)
+    res["text"] = try_text(res)
+    return res
 
 
 # ── 5. 網路進入點（Bot / 網頁共用）──────────────────────────────────────────
@@ -992,4 +1444,98 @@ if __name__ == "__main__":
     _rf_off = replay(pre_c, {**_pc, "dd_reset_flat_days": 0, "regime_filter": False})["metrics"]["lock_days"]["regime"]
     assert _rf_off == 0 and _rf_on >= _rf_off, (_rf_on, _rf_off)          # 大盤濾網關閉 → 不因偏空停新倉
     print("✅ 14 分段對照（SPY／等權持有 各檔自取首末日／曝險／beta／持有天數按部位／鎖定交易日）")
+    # 15) 向量化 precompute 與逐日切片版逐位相等（含 NaN 成交量、mtf）
+    d15 = {"P": _synthetic(seed=21, n=330), "Q": _synthetic(seed=22, n=330, drift=-0.0005), "SPY": _synthetic(seed=99, n=330)}
+    d15["P"].iloc[100:104, 4] = float("nan")
+    for _mtf in (True, False):
+        _a = precompute(d15, 200, {"mtf_enabled": _mtf}, fast=False)
+        _b = precompute(d15, 200, {"mtf_enabled": _mtf}, fast=True)
+        assert _a["dates"] == _b["dates"] and _a["by_date"] == _b["by_date"]
+    print("✅ 15 向量化 precompute 與逐日版逐位相等")
+
+    # 16) PIT 抽樣（決定性、只抽當時成分）、成分遮罩（離開指數後不開新倉，舊邏輯同樣受限）、/engtest pit 文字
+    per16 = {"AAA": [("2020-01-01", "9999-12-31")], "BBB": [("2020-01-01", "2024-12-31")],
+             "CCC": [("2025-06-01", "9999-12-31")], "DDD": [("2019-01-01", "9999-12-31")]}
+    assert pit_sample(per16, "2025-01-15", 2, 7) == pit_sample(per16, "2025-01-15", 2, 7)
+    assert set(pit_sample(per16, "2025-01-15", 9, 1)) == {"AAA", "DDD"}             # BBB 已離開、CCC 尚未加入
+    pre16 = precompute({k_: data[k_] for k_ in ("AAA", "BBB", "SPY")}, days=200, thresholds={"mtf_enabled": True})
+    cut16 = pre16["dates"][len(pre16["dates"]) // 2]
+    pre16["pit"] = {"AAA": [("2000-01-01", "9999-12-31")], "BBB": [("2000-01-01", cut16)]}
+    pre16n = {k_: v for k_, v in pre16.items() if k_ != "pit"}
+    for prm16 in ({"buy_threshold": 0.2, "entry_max_ext_atr": 0}, {"legacy": True, "legacy_cfg": {"buy_threshold": 0.2}}):
+        _late = lambda pp: [j for j in replay(pp, prm16)["journal"]
+                            if j.get("side") == "buy" and j.get("symbol") == "BBB" and j.get("date") > cut16]
+        assert _late(pre16n) and not _late(pre16), prm16              # 無遮罩時確實會買 → 遮罩真的擋下
+    rows16 = pit_compare({k_: data[k_] for k_ in ("AAA", "BBB", "CCC", "SPY")}, per16, [["AAA", "BBB", "CCC"], ["AAA", "ZZZ"]],
+                         [1, 2], 200, {"buy_threshold": 0.3}, {"buy_threshold": 0.3}, {"stop_mult": 1.5})
+    assert rows16[0]["n"] == 3 and "cand" in rows16[0] and rows16[1].get("skip"), rows16
+    t16 = pit_text(rows16, {"as_of": "2024-06-01", "n_members": 3, "k": 3, "period": "1y", "candidate": {"stop_mult": 1.5}})
+    assert "無事後偏誤回測" in t16 and "跨組平均" in t16 and "略過" in t16
+    assert t16.count("*") % 2 == 0 and "_" not in t16 and "**" not in t16, t16
+    fake_fetch = lambda syms, period: {k_: data[k_] for k_ in list(syms) + ["SPY"] if k_ in data}
+    r16 = run_pit("1y", 5, 2, 1, {"buy_threshold": 0.3}, {"buy_threshold": 0.3},
+                  periods={k_: [("2000-01-01", "9999-12-31")] for k_ in ("AAA", "BBB", "CCC", "DDD")},
+                  fetch_fn=fake_fetch, today="2026-01-10")
+    assert len(r16["rows"]) == 2 and all(r.get("n", 0) >= 3 for r in r16["rows"]), r16["rows"]
+    assert run_pit("1y", 5, 1, periods={})["text"].startswith("❌")
+    print("✅ 16 PIT 抽樣（決定性／當時成分）、成分遮罩（引擎與舊邏輯皆不在離開後進場）、pit 文字")
+
+    # 17) /engtest try：參數解析（eng_ 前綴、off、布林、未知鍵、非有限數）＋三段並排、不寫入
+    p17, e17 = parse_try_params(["trail_tighten_r=off", "eng_stop_mult=1.5", "neutral_pyramid=on",
+                                 "max_positions=8", "regime_filter=off", "bogus=1", "risk_pct=nan", "seed=3", "2y"])
+    assert p17 == {"trail_tighten_r": 99.0, "stop_mult": 1.5, "neutral_pyramid": True, "max_positions": 8,
+                   "regime_filter": False}, p17
+    assert len(e17) == 2 and all("`" in e for e in e17), e17
+    res17 = try_compare(pre, {"buy_threshold": 0.3}, {"buy_threshold": 0.3, "scale_out_r": 99.0}, {"buy_threshold": 0.3})
+    assert set(res17["base"]) == {"train", "val", "holdout"} and res17["cand"] != res17["base"]
+    t17 = try_text(res17)
+    assert "單組參數試算" in t17 and "不能直接套用" in t17 and t17.count("*") % 2 == 0
+    assert "_" not in t17.replace("`/engtest try … pit`", ""), t17
+    print("✅ 17 /engtest try 參數解析與三段並排（不寫入）")
+    # 18) PBO 接進 optimize：無 best 也有 PBO、≥50% 取消推薦、文字含 PBO 行、暫存序列不外洩
+    o18 = optimize(pre, {"trail_pct": (0.08, 0.2), "scale_out_r": (1.5, 99.0), "buy_threshold": (0.3, 0.5)})
+    assert o18["pbo"].get("pbo") is not None and 2 <= o18["pbo"]["n_strats"] <= o18["n_trials"], o18["pbo"]   # 只含可選、去重後的組
+    assert all("_tv_ret" not in r for r in o18["results"]) and "_tv_ret" not in (o18.get("legacy") or {})
+    assert "PBO" in opt_text(o18) and "_" not in opt_text(o18)
+    if o18.get("pbo_blocked"):
+        assert o18["recommend"] is None
+    assert _apply_pbo_gate({"recommend": {"x": 1}, "pbo": {"pbo": 0.6}}) == {"recommend": None, "pbo": {"pbo": 0.6}, "pbo_blocked": True}
+    assert _apply_pbo_gate({"recommend": {"x": 1}, "pbo": {"pbo": 0.3}})["recommend"] == {"x": 1}
+    assert _apply_pbo_gate({"recommend": {"x": 1}, "pbo": {"pbo": None}})["recommend"] == {"x": 1}
+    _blk = opt_text({**o18, "recommend": None, "pbo_blocked": True})
+    assert "取消推薦" in _blk and "_" not in _blk
+    print(f"✅ 18 PBO 接進 optimize（{o18['pbo']['pbo']:.0%}，{o18['pbo']['n_splits']} 次切分；≥50% 取消推薦）")
+
+    # 19) 重放起點錨定 SPY（歷史中斷的股票不得把起點拉早）＋資料中斷 ≥5 日的持倉以最後收盤結清
+    d19 = {"LONG": _synthetic(seed=31, n=420, drift=0.002, vol=0.01), "SPY": _synthetic(seed=99, n=420)}
+    d19["SHORT"] = _synthetic(seed=32, n=420, drift=0.003, vol=0.01).iloc[:300]          # 第 300 根後無資料（下市）
+    p19 = precompute(d19, days=200, thresholds={"mtf_enabled": False})
+    assert p19["dates"][0] == str(d19["SPY"].index[-200].date()) and len(p19["dates"]) == 200, p19["dates"][:2]
+    assert p19["last_date"]["SHORT"] < p19["dates"][-1]
+    rep19 = replay(p19, {"buy_threshold": -1.0, "entry_max_ext_atr": 0, "stop_mult": 5.0, "trail_activate_r": 50.0,
+                         "scale_out_r": 99.0, "dead_money_days": 999, "exit_threshold": -9.0})
+    ends = [t for t in rep19["trades"] if t["mechanism"] == "data_end"]
+    if any(j.get("symbol") == "SHORT" and j.get("side") == "buy" for j in rep19["journal"]):
+        assert ends and ends[0]["symbol"] == "SHORT" and "SHORT" not in rep19["book"]["positions"], ends
+    print(f"✅ 19 重放起點錨定 SPY、資料中斷結清（{len(ends)} 筆）")
+
+    # 20) pit 判讀：<3 組不判讀；自由度校正（3 組 t≈3 屬雜訊）；曝險註記不留空括號
+    def _mk(br, lr, ew_, be=0.6, le=0.9):
+        return {"seed": 1, "k": 5, "n": 5, "miss": 0, "dates": ("2024-01-02", "2026-01-02"), "ew": ew_, "spy": 0.1,
+                "base": {"total_ret": br, "sharpe": 1.0, "exposure": be, "max_dd": 0.1},
+                "legacy": {"total_ret": lr, "sharpe": 1.2, "exposure": le, "max_dd": 0.1}}
+    m20 = {"as_of": "2024-01-01", "n_members": 500, "k": 5, "period": "2y"}
+    t20a = pit_text([_mk(0.1, 0.2, 0.15), _mk(0.12, 0.25, 0.18)], m20)
+    assert "無法判讀" in t20a and "一致" not in t20a.split("判讀：")[1], t20a
+    t20b = pit_text([_mk(0.10, 0.20, 0.15), _mk(0.10, 0.23, 0.15), _mk(0.10, 0.24, 0.15)], m20)    # 舊−現 ≈ +12%、t≈7.6 → 顯著
+    assert "舊邏輯跨組平均顯著領先現行（各組同向）；曝險差" in t20b and "（）" not in t20b, t20b
+    t20e = pit_text([_mk(0.1, 0.2, 0.15)] * 4 + [_mk(0.1, 0.099, 0.15)], m20)      # 5 組中 1 組反向、t 仍 ≥2.78
+    assert "方向相反" in t20e and "各組同向" not in t20e, t20e
+    t20c = pit_text([_mk(0.10, 0.12, 0.15), _mk(0.10, 0.10, 0.15), _mk(0.10, 0.15, 0.15)], m20)    # t≈2.6 < 4.30 → 雜訊
+    assert "舊邏輯 vs 現行在雜訊範圍內" in t20c, t20c
+    for t_ in (t20a, t20b, t20c):
+        assert t_.count("*") % 2 == 0 and "_" not in t_.replace("`/engtest pit 20 5`", ""), t_
+    t20d = pit_text([dict(_mk(0.1, 0.2, 0.15), miss=4), {"seed": 2, "k": 5, "n": 0, "miss": 5, "skip": "SPY 抓不到"}], m20)
+    assert "行情抓取可能失敗" in t20d
+    print("✅ 20 pit 判讀（<3 組不判讀、自由度校正、曝險調整、抓取失敗警示）")
     print("\nengine_backtest selftest OK ✅")

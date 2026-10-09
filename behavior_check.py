@@ -21,7 +21,7 @@ from __future__ import annotations
 MECH_LABELS = {
     "stop_loss": "硬停損", "trailing_stop": "追蹤停損", "scale_out": "分批鎖利",
     "signal_exit": "訊號轉弱", "dead_money": "死錢釋放", "entry": "進場",
-    "pyramid": "加碼", None: "未標記", "": "未標記",
+    "pyramid": "加碼", "data_end": "資料中斷結清", None: "未標記", "": "未標記",
 }
 
 MIN_N = 5

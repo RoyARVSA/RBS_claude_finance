@@ -213,6 +213,14 @@ def parse_period_csv(text: str) -> dict[str, list[tuple[str, str]]]:
         t = (row.get(tk) or "").strip().upper().replace(".", "-")
         s = (row.get(st) or "").strip()[:10]
         e = (row.get(en) or "").strip()[:10] if en else ""
+        if e:
+            # fja05680 的 end_date＝第一個「不在成分內」的快照日（移除生效日）→ 轉成含頭含尾的最後在籍日，
+            # 與 members_on／parse_daily_list_csv 的閉區間一致（否則移除當天還會被當成分、可開新倉）
+            try:
+                from datetime import date as _date, timedelta as _td
+                e = (_date.fromisoformat(e) - _td(days=1)).isoformat()
+            except ValueError:
+                pass
         if t and s:
             out.setdefault(t, []).append((s, e or "9999-12-31"))
     return out
@@ -485,8 +493,10 @@ if __name__ == "__main__":
 
     # 4) 成分歷史：期間表 + 每日清單兩種格式；members_on 邊界
     per = parse_period_csv("ticker,start_date,end_date\nAAA,2000-01-01,2010-06-30\nAAA,2015-01-01,\nBBB,1996-01-02,\nBRK.B,2010-02-16,\n")
-    assert per["AAA"] == [("2000-01-01", "2010-06-30"), ("2015-01-01", "9999-12-31")]
-    assert members_on(per, "2012-01-01") == ["BBB", "BRK-B"] and "AAA" in members_on(per, "2010-06-30")
+    # end_date＝移除生效日（fja05680 實例：AIV 的 end 2020-12-21＝TSLA 的 start）→ 最後在籍日是前一天
+    assert per["AAA"] == [("2000-01-01", "2010-06-29"), ("2015-01-01", "9999-12-31")]
+    assert members_on(per, "2012-01-01") == ["BBB", "BRK-B"] and "AAA" in members_on(per, "2010-06-29")
+    assert "AAA" not in members_on(per, "2010-06-30")
     assert "AAA" in members_on(per, "2026-09-08") and members_on(per, "1990-01-01") == []
     daily = "date,tickers\n2020-01-02,\"AAA,BBB\"\n2020-01-03,\"AAA,BBB\"\n2020-01-06,\"AAA,CCC\"\n"
     per2 = parse_daily_list_csv(daily)
