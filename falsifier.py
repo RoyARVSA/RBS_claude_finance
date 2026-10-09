@@ -412,6 +412,52 @@ def deflated_sharpe(sr: float, T: int, n_trials: int,
             "note": None}
 
 
+def pbo_cscv(returns, n_blocks: int = 8) -> dict:
+    """
+    過擬合機率 PBO（Bailey, Borwein, López de Prado & Zhu 2014 的 CSCV；AI4Finance 2022 用於 DRL 交易）。
+    returns：T×N 日報酬矩陣（列＝日、欄＝參數組合，同一段日期）。把 T 切成 S 個連續區塊，
+    取 C(S, S/2) 種「一半當樣本內、一半當樣本外」：樣本內 Sharpe 最佳的那組，在樣本外排第幾？
+    PBO＝最佳組落在樣本外中位數（含）以下的比例。≈0.5 代表「網格排名不含資訊」，越低越可信。
+    與 DSR 互補：DSR 問「最佳組的 Sharpe 扣掉幸運上限還剩多少」，PBO 問「挑選流程本身有沒有用」，
+    沒有任何組合通過驗證時也算得出來。純 NumPy；回 {"pbo","n_splits","median_rank","n_strats","T"}。
+    """
+    from itertools import combinations
+    R = np.asarray(returns, dtype=float)
+    if R.ndim != 2:
+        return {"pbo": None, "note": "需要 T×N 矩陣"}
+    R = R[~np.isnan(R).any(axis=1)]
+    T, N = R.shape
+    S = int(n_blocks) - int(n_blocks) % 2
+    if N < 2 or S < 2 or T < S * 5:
+        return {"pbo": None, "note": f"樣本不足（T={T}、N={N}，需 N≥2 且每區塊 ≥5 日）", "n_strats": N, "T": T}
+    edges = np.linspace(0, T, S + 1).astype(int)
+    blocks = [np.arange(edges[i], edges[i + 1]) for i in range(S)]
+
+    def _sharpe(X):
+        sd = X.std(axis=0, ddof=1)
+        mu = X.mean(axis=0)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            sr = np.where(sd > 0, mu / sd, 0.0)
+        return sr
+
+    below, ranks = 0, []
+    splits = list(combinations(range(S), S // 2))
+    for c in splits:
+        is_idx = np.concatenate([blocks[i] for i in c])
+        oos_idx = np.concatenate([blocks[i] for i in range(S) if i not in c])
+        sr_is, sr_oos = _sharpe(R[is_idx]), _sharpe(R[oos_idx])
+        best = int(np.argmax(sr_is))
+        # 樣本外相對名次 ω∈(0,1)：嚴格較差者 + 一半平手者（同分組不吃虧也不佔便宜）
+        worse = float((sr_oos < sr_oos[best]).sum())
+        ties = float((sr_oos == sr_oos[best]).sum() - 1)
+        w = (worse + 0.5 * ties + 1.0) / (N + 1.0)
+        ranks.append(w)
+        if w <= 0.5:
+            below += 1
+    return {"pbo": below / len(splits), "n_splits": len(splits), "median_rank": float(np.median(ranks)),
+            "n_strats": int(N), "T": int(T), "note": None}
+
+
 def ledger_add(state: dict, spec: dict, out: dict,
                sr_t: tuple | None = None) -> dict:
     """把這次嘗試記進假設帳本（state['hypotheses']）。回本次紀錄。"""
@@ -875,6 +921,17 @@ if __name__ == "__main__":
     # （fetch_and_run 需網路，此處驗證 tks 過濾規則等價邏輯）
     _tks_clean = [t for t in dict.fromkeys(["MU", "SPY", "MU"]) if t != "SPY"]
     assert _tks_clean == ["MU"]
+
+    # PBO：純噪音網格 ≈ 0.5（排名無資訊）；一組有真實 edge → 接近 0；樣本不足回 None
+    rng_p = np.random.default_rng(5)
+    pbos = [pbo_cscv(rng_p.normal(0, 0.01, (480, 30)))["pbo"] for _ in range(6)]
+    assert 0.3 <= float(np.mean(pbos)) <= 0.7, pbos
+    Xe = rng_p.normal(0, 0.01, (480, 30))
+    Xe[:, 7] += 0.004
+    pe = pbo_cscv(Xe)
+    assert pe["pbo"] < 0.1 and pe["n_splits"] == 70, pe
+    assert pbo_cscv(rng_p.normal(0, 0.01, (20, 5)))["pbo"] is None and pbo_cscv(np.zeros((100, 1)))["pbo"] is None
+    print(f"✅ PBO（CSCV）：純噪音 {np.mean(pbos):.2f}、有 edge {pe['pbo']:.2f}")
 
     print(f"✅ falsifier 離線自我測試通過（T1 優勢 p={t1['p_value']}、"
           f"噪音 p={t1b['p_value']}、DSR N=1:{d1['dsr']:.2f}→N=20:{d20['dsr']:.2f}）")

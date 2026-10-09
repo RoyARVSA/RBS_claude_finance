@@ -62,7 +62,9 @@ Telegram 指令（傳給 Bot）：
   /universe [rebuild]     – 選股池快照（寬宇宙→品質/流動性/動能篩→候選前 N；月頻自動重建）
   /est [TICKER]           – 分析師預估快照（共識/修正動能/目標價/評等/SUE 歷史）；無參數看排行
   /engtest [期間]          – 整台引擎歷史重放（現行參數；次日開盤成交、含成本、對照 SPY）
-  /engtest opt [期間] [entry|loose] [apply] – 引擎參數學習：出場 108／進場品質 32／放寬出場 36 組 × 三段 walk-forward + DSR，附舊邏輯基準；clear 還原
+  /engtest opt [期間] [entry|loose] [apply] – 引擎參數學習：出場 108／進場品質 32／放寬出場 36 組 × 三段 walk-forward + DSR + PBO，附舊邏輯基準；clear 還原
+  /engtest pit [檔數] [組數] [期間] – 無事後偏誤回測：當時 S&P 500 成分隨機抽樣 × 多組，現行 vs 舊邏輯 vs 等權持有
+  /engtest try k=v … [期間] [pit …] – 單組參數試算（不寫入）：觀察清單三段並排，或加 pit 在隨機股票池驗
   /weekly                 – 立即生成每週深度週報（每週日 ET 18:00 後自動推送）
   /committee TICKER       – 機構決策會議：分析師×4→對辯→交易員→風控→PM（別名 /cmt）
   /set mtf_enabled on/off – 週線同向確認（日線分數與週線同向加強、背離減弱）
@@ -490,9 +492,10 @@ def _cmd_help() -> str:
         "`/universe [rebuild]` — 選股池快照：yf.screen 寬宇宙（市值≥20 億、均量≥100 萬）→ 品質/流動性/12-1 動能篩 → 候選前 N；每月自動重建、快照落 data/universe/（P0 只顯示不接引擎）\n"
         "`/est [TICKER]` — 分析師預估快照：共識/修正動能/目標價/評等/財報驚奇史（每輪自動輪替刷新；無參數看 watchlist 上修下修排行）\n"
         "`/engtest [3m|6m|1y|2y]` — 整台引擎歷史重放：現行參數過去 N 個月會賺多少（次日開盤成交、含成本、對照 SPY）\n"
-        "`/engtest opt [1y] [apply]` — 引擎參數學習：進場門檻×停損×追蹤×分批×死錢 108 組（估值歷史夠長時再 ×2 做估值層開/關 A/B），三段 walk-forward + DSR，holdout 通過才推薦；apply 套用、`/engtest clear` 還原\n"
+        "`/engtest opt [1y] [apply]` — 引擎參數學習：進場門檻×停損×追蹤×分批×死錢 108 組（估值歷史夠長時再 ×2 做估值層開/關 A/B），三段 walk-forward + DSR + PBO 過擬合機率，holdout 通過且 PBO < 50% 才推薦；apply 套用、`/engtest clear` 還原\n"
         "`/engtest opt entry [1y] [apply]` — 進場品質網格 32 組：門檻×追高上限(ATR)×加碼R×中性風險倍數——驗證 2026-09 診斷出的追高/加碼在頂問題\n"
-        "`/engtest opt loose [1y] [apply]` — 放寬出場網格 36 組：追蹤回落×收緊門檻（含不收緊）×分批R（含關閉）×停損倍數，並附舊邏輯（Shadow 同款）基準——驗證「動能行情中太早鎖利/停損」是否在樣本外成立（#56）\n"
+        "`/engtest opt loose [1y] [apply]` — 放寬出場網格 36 組：追蹤回落×收緊門檻（含不收緊）×分批R（含關閉）×停損倍數，並附舊邏輯（Shadow 同款）基準——驗證「動能行情中太早鎖利/停損」是否在樣本外成立（#56）\n"        "`/engtest pit [20] [3] [2y]` — 無事後偏誤回測：從當時 S&P 500 成分隨機抽 20 檔 × 3 組，比現行／舊邏輯／等權持有（觀察清單是事後挑的，這個才答得了「擇時有沒有加值」）\n"
+        "`/engtest try 參數=值 … [pit]` — 單組參數試算、不寫入（例 `/engtest try trail_tighten_r=off scale_out_r=off pit`）\n"
         "`/weekly` — 立即生成每週深度週報（指數/強弱/計分板/RRG/下週行事曆）\n"
         "`/committee NVDA`（或 `/cmt`）— 開一場機構決策會議（需 LLM key，約 1-3 分）\n\n"
         "🤖 *模擬交易（Alpaca paper・分層引擎）*\n"
@@ -1822,6 +1825,12 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                 reply = f"❌ engine_backtest 模組載入失敗：{e}"
             if eb is None:
                 pass
+            elif sub in ("pit", "try") or (sub not in ("opt", "clear") and any("=" in a for a in args)):
+                try:
+                    _a = args if sub in ("pit", "try") else ["try"] + list(args)   # 參數=值 放錯位置也當 try
+                    reply = _engtest_pit_try(state, _a, token, src_chat or chat_id)
+                except Exception as e:
+                    reply = f"❌ /engtest {sub} 失敗：{type(e).__name__} {str(e)[:80]}"
             elif sub == "clear":
                 done = eb.clear_params(state)
                 changed = bool(done)
@@ -1852,17 +1861,9 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                     try:
                         # 長操作前先落盤 last_update_id（runner 超時被殺也不會毒訊息迴圈）
                         save_state(state)
-                        import trade_engine as te
-                        # 基準 = 正式引擎實際設定：at_*／risk_pct 為底、eng_* 覆蓋（與 run_autotrade 同序，#72）
-                        cur = _engine_base_config(th)
-                        cur.update({k: th[f"eng_{k}"] for k in te.ENGINE_DEFAULTS if f"eng_{k}" in th})
-                        cur["regime_filter"] = bool(th.get("regime_filter_enabled", True))   # 正式關大盤濾網時重放同步
-                        # 事件靜默窗與正式引擎同步（重放/最佳化都在同樣的靜默規則下評估）
-                        cur["event_blackout"] = bool(th.get("event_blackout_enabled", True))
-                        cur["event_blackout_days"] = int(th.get("event_blackout_days", 1))
+                        cur = _engtest_baseline(th)
                         calib = state.get("calibration") if isinstance(state.get("calibration"), dict) else None
                         vh = state.get("val_hist") or {}
-                        cur["val_enabled"] = bool(th.get("val_enabled", False))       # 基準反映現行開關（B-1）
                         if is_opt:
                             grid = dict(eb.GRIDS[grid_name])
                             cov = eb.val_hist_coverage(vh)
@@ -1872,11 +1873,7 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                                 ab_note = f"\n估值層 A/B 已納入（估值歷史自 {cov}、{len(vh)} 檔；PIT 由列日期保證）"
                             elif cov:
                                 ab_note = f"\n估值層 A/B 略過：估值歷史自 {cov} 太短，覆蓋不到訓練段"
-                            _lg_cfg = {"buy_threshold": th.get("at_buy_threshold", 0.5),       # 與正式 Shadow 同參數（M2）
-                                       "exit_threshold": th.get("at_exit_threshold", -0.2),
-                                       "max_positions": int(th.get("at_max_positions", 10)),
-                                       "max_position_pct": th.get("at_max_position_pct", 0.15),
-                                       "risk_pct": _risk_pct_of(th)}
+                            _lg_cfg = _engine_base_config(th)          # 與正式 Shadow 同參數（M2）
                             opt = eb.run_optimize(syms, period, baseline=cur,
                                                   thresholds=th, calibration=calib, grid=grid, val_hist=vh,
                                                   legacy_cfg=_lg_cfg)
@@ -1891,6 +1888,8 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                                     changed = True
                                     reply += ("\n\n✅ 已套用推薦參數到引擎（下一輪生效；"
                                               "`/engtest clear` 還原、`/protections` 查看）")
+                                elif opt.get("pbo_blocked"):
+                                    reply += "\n\n（PBO ≥ 50% 取消推薦，未套用任何變更）"
                                 else:
                                     reply += "\n\n（無組合通過 holdout 把關，未套用任何變更）"
                         else:
@@ -3500,6 +3499,62 @@ def _engine_base_config(th: dict) -> dict:
         "max_position_pct": th.get("at_max_position_pct", 0.15),
         "risk_pct":         _risk_pct_of(th),
     }
+
+
+def _engtest_baseline(th: dict) -> dict:
+    """/engtest 的「現行」＝正式引擎實際設定：at_*／risk_pct 為底、eng_* 覆蓋（與 run_autotrade 同序，#72），
+    加上大盤濾網／事件靜默／估值層開關——opt、pit、try 共用，三條路徑的基準才一致。"""
+    import trade_engine as te
+    cur = _engine_base_config(th)
+    cur.update({k: th[f"eng_{k}"] for k in te.ENGINE_DEFAULTS if f"eng_{k}" in th})
+    cur["regime_filter"] = bool(th.get("regime_filter_enabled", True))       # 正式關大盤濾網時重放同步
+    cur["event_blackout"] = bool(th.get("event_blackout_enabled", True))     # 事件靜默窗與正式同步
+    cur["event_blackout_days"] = int(th.get("event_blackout_days", 1))
+    cur["val_enabled"] = bool(th.get("val_enabled", False))                  # 基準反映現行開關（B-1）
+    return cur
+
+
+ENGTEST_TRY_USAGE = ("用法：`/engtest try trail_tighten_r=off scale_out_r=off [2y]`（觀察清單三段並排）"
+                     "或加 `pit [檔數] [組數]` 改在隨機股票池驗；`/engtest pit [20] [3] [2y]` 只比現行與舊邏輯")
+
+
+def _engtest_pit_try(state: dict, args: list, token: str, chat: str) -> str:
+    """/engtest pit｜try：無事後偏誤股票池回測／單組參數試算。只讀 state、不寫入任何參數。"""
+    import engine_backtest as eb
+    th = state.get("thresholds") or {}
+    sub = args[0].lower()
+    rest = list(args[1:])
+    low = [a.lower() for a in rest]
+    cand, errs = eb.parse_try_params(rest)
+    if errs:
+        return "⚠️ " + "；".join(errs) + "\n" + ENGTEST_TRY_USAGE
+    if sub == "try" and not cand:
+        return "⚠️ 沒有指定要試的參數\n" + ENGTEST_TRY_USAGE
+    use_pit = sub == "pit" or "pit" in low
+    period = next((a for a in low if a in eb.PERIOD_DAYS), "2y")
+    if eb.PERIOD_DAYS[period] < 80:
+        period = "6m"                                   # 三段切分／有意義的跨組比較需 ≥80 交易日
+    nums = [int(a) for a in low if a.isdecimal()]               # 全形數字也收；上標等非十進位拒收
+    seed0 = next((int(a.split("=", 1)[1]) for a in low
+                  if a.startswith("seed=") and a.split("=", 1)[1].isdecimal()), 1)
+    cur = _engtest_baseline(th)
+    lg = _engine_base_config(th)
+    if use_pit:
+        k = min(max(nums[0] if nums else 20, eb.PIT_K_RANGE[0]), eb.PIT_K_RANGE[1])     # 先夾再回覆（確認訊息＝實際跑的量）
+        n_seeds = min(max(nums[1] if len(nums) > 1 else 3, 1), eb.PIT_SEEDS_MAX)
+        _tg_send(token, chat, f"🎲 隨機股票池回測（當時 S&P 500 成分抽 {k} 檔 × {n_seeds} 組 × {period}"
+                              f"{'、含候選參數' if cand else ''}，約 1-3 分鐘）…")
+        save_state(state)                               # 長操作前先落盤 last_update_id
+        return eb.run_pit(period, k, n_seeds, seed0, baseline=cur, legacy_cfg=lg,
+                          candidate=cand or None, thresholds=th, eng_opt=state.get("eng_opt"))["text"]
+    eng_pos = sorted(((state.get("engine") or {}).get("pos") or {}).keys())
+    syms = list(dict.fromkeys(list(state["watchlist"][:12]) + eng_pos))
+    if not syms:
+        return "觀察清單是空的——先 `/add AAPL NVDA`"
+    _tg_send(token, chat, f"🧪 單組參數試算（{len(syms)} 檔 × {period}，現行／候選／舊邏輯三段並排，約 1 分鐘）…")
+    save_state(state)
+    calib = state.get("calibration") if isinstance(state.get("calibration"), dict) else None
+    return eb.run_try(syms, period, cur, cand, th, calib, state.get("val_hist") or {}, lg)["text"]
 
 
 def run_autotrade(state: dict, results: list[dict]) -> str | None:

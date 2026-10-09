@@ -85,7 +85,7 @@ Streamlit 網頁應用 + 獨立的訊號掃描 Bot（GitHub Actions 排程版 / 
 - **GICS 產業輪動 + 分類神經網路**（網頁「🔄 GICS 輪動」、`/gics`；移植自使用者 gics_nn 專案）：S&P 500 成分股依 GICS 四層分類（163 個 Sub-Industry，代碼前綴式）自建市值加權群組指數，網頁嵌入原 Dashboard 模板（RRG、RS vs SPX、Strongest/Weakest、RS Ranking，L1–L4 切換），資料在 Streamlit 端從 Wikipedia 成分表、State Street SPY 官方持股權重與 Yahoo 收盤建置（快取 1 小時、不入庫）；新增「只用完整週」開關（RRG 最後一點不再週間跳動）與當時成分遮罩（降低存活者偏差）。每週六工作流 `gics_weekly.yml`：S&P 1500 對照表、公司資料快取、階層式神經網路（純 NumPy，四個 softmax 頭、只在 163 條合法路徑中解碼）5 折交叉驗證過門檻才替選股池／觀察清單中不在 S&P 1500 的代碼補分類（模型權重不入庫）、與 State Street／S&P 官方產業指數對帳；`/gics TICKER|verify|exposure`。GICS 為 MSCI 與 S&P 的商標，本對照表為工作用、非官方資料
 - **多線平行帳**（`/lanes`）：旗標還關著也能看「開了會怎樣」——每輪用同一台引擎、同一輪訊號跑三本 10 萬起始的虛擬帳（現行 watchlist／＋候選池／＋候選池＋meta 部位），並排報酬／回撤／成交，附 SPY 與真帳同期；閘門沒過的車道會標註等同上一條。meta 模型升級為「邏輯迴歸 vs LightGBM 同一套 purged walk-forward 擇優」，GBM 線上以純 Python 樹遍歷推論（不加依賴）
 - **進場品質層（2026-09）**：反思帳本診斷出「強訊號進場後 5 日平均為負、硬停損多在 1–2 天內被打到、加碼在頂」——問題是時點不是方向。修法：追高濾網（價格高於 MA20 >2 ATR 且 5 日急拉 >6% 不開新倉、加碼 >1.5 ATR 不加；平穩趨勢不擋）、中性 regime 新倉風險減半不加碼（氣象台廣度 <40 把「偏多」否決成中性）、反思節流（近 30 次看多命中 <40% → 風險再減半、停加碼）、FOMC 會期兩天事件靜默；`/autotrade` 看狀態、`/engtest opt entry` 樣本外驗證這組參數
-- **引擎歷史重放與參數學習**：`/engtest [3m|6m|1y|2y]` 把**整台波段引擎**（進場門檻、停損/追蹤/分批/死錢、保險絲、regime 三態）逐日重放過去 N 個月——每日評分只用當日以前 K 棒、t 日決策 t+1 開盤成交、單邊 0.05% 成本、對照 SPY 買進持有，回答「如果用現行參數過去會賺多少」；`/engtest opt [apply]` 掃 進場門檻×停損倍數×追蹤回落×分批R×死錢天數 108 組，三段 walk-forward（訓練排序/驗證挑選/holdout 只看一次把關）+ DSR 扣多重測試幸運上限——這是「從歷史學規則」的誠實版（參數搜索，非深度 RL：日 K 樣本太少會學到雜訊）；`/engtest opt entry` 換成進場品質網格 32 組（門檻×追高上限×加碼R×中性風險倍數）；`/engtest opt loose` 換成放寬出場網格 36 組（追蹤回落×收緊門檻 含不收緊×分批R 含關閉×停損倍數），且每次 opt 都附舊邏輯（Shadow 同款）基準與分段對照（SPY／清單等權持有／曝險／beta／持有天數／回撤鎖天數——分辨「贏在擇時」還是「贏在曝險或事後選股」）；`clear` 還原
+- **引擎歷史重放與參數學習**：`/engtest [3m|6m|1y|2y]` 把**整台波段引擎**（進場門檻、停損/追蹤/分批/死錢、保險絲、regime 三態）逐日重放過去 N 個月——每日評分只用當日以前 K 棒、t 日決策 t+1 開盤成交、單邊 0.05% 成本、對照 SPY 買進持有，回答「如果用現行參數過去會賺多少」；`/engtest opt [apply]` 掃 進場門檻×停損倍數×追蹤回落×分批R×死錢天數 108 組，三段 walk-forward（訓練排序/驗證挑選/holdout 只看一次把關）+ DSR 扣多重測試幸運上限——這是「從歷史學規則」的誠實版（參數搜索，非深度 RL：日 K 樣本太少會學到雜訊）；`/engtest opt entry` 換成進場品質網格 32 組（門檻×追高上限×加碼R×中性風險倍數）；`/engtest opt loose` 換成放寬出場網格 36 組（追蹤回落×收緊門檻 含不收緊×分批R 含關閉×停損倍數），且每次 opt 都附舊邏輯（Shadow 同款）基準與分段對照（SPY／清單等權持有／曝險／beta／持有天數／回撤鎖天數——分辨「贏在擇時」還是「贏在曝險或事後選股」），並算 PBO 過擬合機率（≥50% 自動取消推薦）；`/engtest pit [檔數] [組數]` 從**當時**的 S&P 500 成分隨機抽樣多組重放（離開指數後不開新倉、揭露抓不到價的檔數），回答「觀察清單是事後挑的、擇時到底有沒有加值」；`/engtest try 參數=值 [pit]` 試算單組參數、不寫入；`clear` 還原
 - **假設反駁器**：`/falsify` 對投資故事跑 8 類反駁測試——block bootstrap 漂移顯著性（誠實處理重疊視窗）、日期穩健性、晚進場、成本存活、事件日 CAR、regime/利率週期切分、動能混淆兩因子回歸、跨市場泛化——外加 **DSR 多重假設帳本**（試了幾個才挑到這個→折減）。**只能證偽、不能證實**，報告頁首永遠印這句話
 - **投資論點追蹤**：`/thesis` 記錄每檔的論點/支柱/風險/催化劑與**失效價**，掃描自動監測失效與達標即推播；逾 90 天未複查晨報提醒（「不可否證的不是論點」）
 - **財報前瞻/覆盤**：`/preview TICKER` 財報前 3 週出前瞻（共識、beat 率、選擇權隱含波動、三情境框架），公布後 2 週出覆盤（beat/miss、隔日反應、評等動向），模式自動判定
@@ -192,7 +192,7 @@ market_weather.py       市場氣象台：廣度/信用/VIX期限/曲線/銅金�
 behavior_check.py       交易行為體檢：追高/頻率/出場品質/持有期
 shadow_book.py          Shadow 對照帳本：舊決策邏輯平行記帳 vs 新引擎
 mirror_book.py          鏡像帳：引擎接管使用者實倉起點的虛擬帳戶(模式 A)
-engine_backtest.py      引擎歷史重放 + 參數學習（walk-forward 三段 + DSR，/engtest）
+engine_backtest.py      引擎歷史重放 + 參數學習（walk-forward 三段 + DSR + PBO）、隨機股票池回測（pit）、單組試算（try），/engtest
 fin_data.py             point-in-time 三表取數（yfinance 主、Finnhub as-reported 備援、first-seen 合併、data/fin/）
 quality.py              品質/會計風險：Piotroski、Altman、Beneish、Sloan、ROIC 價差、旗標與否決
 screener.py             候選篩選：選股池 ∪ 主題 − watchlist，Stage 3 限額，綜合分（/screen）
