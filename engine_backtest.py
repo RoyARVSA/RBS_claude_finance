@@ -355,6 +355,9 @@ def replay(pre: dict, params: dict | None = None, dates: list[str] | None = None
     eq_curve: list[tuple[str, float]] = []
     expo: list[float] = []
     lock_days = {"dd": 0, "regime": 0, "halt": 0}
+    # 沒進場的原因（診斷低曝險）：無達標訊號的日數、追高濾網擋下次數、中性 regime 縮量日數
+    blocks = {"no_signal": 0, "ext": 0, "neutral": 0, "blackout": 0}
+    _bt = float(cfg.get("buy_threshold", te.ENGINE_DEFAULTS["buy_threshold"]))
     last_date = pre.get("last_date") or {}
     all_dates = pre["dates"]
     pos_of = {d_: i for i, d_ in enumerate(all_dates)}
@@ -394,7 +397,11 @@ def replay(pre: dict, params: dict | None = None, dates: list[str] | None = None
                 if ps is not None and not _is_member(ps, d):
                     sc_["no_entry"] = True
                     sc_["pit_out"] = True
+        # 有無達標訊號要在事件靜默標 no_entry 之前判斷（只排除成分遮罩）——否則靜默日被誤算成「沒訊號」
+        has_sig = any(float(r.get("score") or 0) >= _bt and not r.get("pit_out") for r in scored)
         if cfg.get("event_blackout", True) and _blackout_day(d, cfg):
+            if not cfg.get("legacy"):
+                blocks["blackout"] += 1
             for sc_ in scored:                              # 與正式 run_autotrade 同語意：FOMC 會期不開新倉/不加碼
                 sc_["no_entry"] = True
         pos_view = {}
@@ -422,6 +429,10 @@ def replay(pre: dict, params: dict | None = None, dates: list[str] | None = None
                 _code = ((engine or {}).get("last_exposure") or {}).get("code")
                 if _code in lock_days:                        # 曝險鎖定天數（#71 可見性）
                     lock_days[_code] += 1
+                if not has_sig:
+                    blocks["no_signal"] += 1
+                blocks["ext"] += sum(1 for n_ in _notes if n_.startswith("⏳") and "等回檔再進" in n_)
+                blocks["neutral"] += 1 if any(n_.startswith("🟡") for n_ in _notes) else 0
         except Exception as e:                        # 單日炸掉不毀整段（記錄即可）
             orders = []
             journal.append({"date": d, "error": str(e)[:80]})
@@ -431,6 +442,7 @@ def replay(pre: dict, params: dict | None = None, dates: list[str] | None = None
     m["exposure"] = float(np.mean(expo)) if expo else 0.0
     m["open_positions"] = len(book["positions"])
     m["lock_days"] = lock_days
+    m["blocks"] = blocks
     # 持有天數按部位（symbol, 開倉日）計：分批出場的半倉與餘倉算同一筆、取最後出場日；
     # 期末未平倉以段末為設限值納入（抱最久的贏家常在這裡，排除會低估持有期——審查 Low）
     by_lot: dict[tuple, int] = {}
@@ -743,6 +755,11 @@ def run_text(rep: dict, params: dict | None, dates: list[str], bench: float | No
         lines.append(f"清單等權買進持有 {_pct(ew)}（觀察清單是事後挑的——贏不過它代表擇時沒有加值）")
     lines.append(f"beta {_num(m.get('beta'))}｜持有天數中位 {_num(m.get('hold_med'), '{:.0f}')} 日曆日"
                  + (f"｜鎖定：{_lock_text(m)}" if _lock_text(m) else ""))
+    bk = m.get("blocks") or {}
+    if bk and not (params or {}).get("legacy"):
+        lines.append(f"沒進場的原因：無達標訊號 {bk.get('no_signal', 0)}/{m['n_days']} 交易日｜"
+                     f"追高濾網擋下 {bk.get('ext', 0)} 次｜中性縮量 {bk.get('neutral', 0)} 交易日｜"
+                     f"事件靜默 {bk.get('blackout', 0)} 交易日")
     if m["by_mech"]:
         from behavior_check import MECH_LABELS
         lines.append("*出場機制*：")
@@ -898,6 +915,35 @@ def parse_try_params(tokens: list[str]) -> tuple[dict, list[str]]:
             continue
         out[k] = int(round(f)) if isinstance(dv, int) else f
     return out, errs
+
+
+def parse_engtest_args(args: list[str]) -> dict:
+    """/engtest 子指令解析（Bot 與 engine_research 共用，避免兩份規則漂移）。
+    回 {"kind": run|opt|pit|try|clear, "period", "grid", "apply", "k", "n_seeds", "seed0", "cand", "errs", "use_pit"}。
+    參數=值 放錯位置（非 opt/clear）也當 try；數字只收十進位（全形可、上標拒）。"""
+    args = [str(a) for a in (args or [])]
+    sub = args[0].lower() if args else ""
+    if sub not in ("opt", "clear", "pit", "try") and any("=" in a for a in args):
+        args, sub = ["try"] + args, "try"
+    kind = sub if sub in ("opt", "clear", "pit", "try") else "run"
+    rest = args[1:] if kind != "run" else args
+    low = [a.lower() for a in rest]
+    default_p = "2y" if kind in ("pit", "try") else "1y"
+    period = next((a for a in low if a in PERIOD_DAYS), default_p)
+    if kind in ("opt", "pit", "try") and PERIOD_DAYS.get(period, 0) < 80:
+        period = "6m"                                   # 三段切分／有意義的跨組比較需 ≥80 交易日
+    cand, errs = parse_try_params(rest) if kind in ("pit", "try") else ({}, [])
+    if kind == "try" and not cand and not errs:
+        errs = ["沒有指定要試的參數"]
+    nums = [int(a) for a in low if a.isdecimal()]
+    seed0 = next((int(a.split("=", 1)[1]) for a in low
+                  if a.startswith("seed=") and a.split("=", 1)[1].isdecimal()), 1)
+    return {"kind": kind, "period": period,
+            "grid": ("loose" if "loose" in low else "entry" if "entry" in low else "exit"),
+            "apply": kind == "opt" and "apply" in low,
+            "k": min(max(nums[0] if nums else 20, PIT_K_RANGE[0]), PIT_K_RANGE[1]),
+            "n_seeds": min(max(nums[1] if len(nums) > 1 else 3, 1), PIT_SEEDS_MAX),
+            "seed0": seed0, "cand": cand, "errs": errs, "use_pit": kind == "pit" or "pit" in low}
 
 
 def _seg_metrics(pre: dict, prm: dict, sp: dict, val_hist: dict | None = None, err: list | None = None) -> dict:
@@ -1153,10 +1199,10 @@ def run_pit(period: str = "2y", k: int = 20, n_seeds: int = 3, seed0: int = 1,
 
 def run_try(tickers: list[str], period: str = "2y", baseline: dict | None = None, candidate: dict | None = None,
             thresholds: dict | None = None, calibration: dict | None = None, val_hist: dict | None = None,
-            legacy_cfg: dict | None = None) -> dict:
+            legacy_cfg: dict | None = None, fetch_fn=None) -> dict:
     """/engtest try（觀察清單）進入點。"""
     period = period if period in PERIOD_DAYS else "2y"
-    data = fetch_history(tickers, FETCH_PERIOD[period])
+    data = (fetch_fn or fetch_history)(tickers, FETCH_PERIOD[period])
     if len([s_ for s_ in data if s_ != "SPY"]) == 0:
         return {"text": "❌ 行情抓取失敗或資料不足，稍後再試"}
     pre = precompute(data, PERIOD_DAYS[period], thresholds, calibration)
@@ -1168,10 +1214,11 @@ def run_try(tickers: list[str], period: str = "2y", baseline: dict | None = None
 # ── 5. 網路進入點（Bot / 網頁共用）──────────────────────────────────────────
 
 def run(tickers: list[str], period: str = "1y", params: dict | None = None,
-        thresholds: dict | None = None, calibration: dict | None = None, val_hist: dict | None = None) -> dict:
+        thresholds: dict | None = None, calibration: dict | None = None, val_hist: dict | None = None,
+        fetch_fn=None) -> dict:
     """單組參數重放。回 {"rep","pre","dates","bench","text"}；資料不足 rep=None。"""
     period = period if period in PERIOD_DAYS else "1y"
-    data = fetch_history(tickers, FETCH_PERIOD[period])
+    data = (fetch_fn or fetch_history)(tickers, FETCH_PERIOD[period])
     if len([s for s in data if s != "SPY"]) == 0:
         return {"rep": None, "text": "❌ 行情抓取失敗或資料不足，稍後再試"}
     pre = precompute(data, PERIOD_DAYS[period], thresholds, calibration)
@@ -1186,10 +1233,11 @@ def run(tickers: list[str], period: str = "1y", params: dict | None = None,
 
 def run_optimize(tickers: list[str], period: str = "1y", baseline: dict | None = None,
                  thresholds: dict | None = None, calibration: dict | None = None,
-                 grid: dict | None = None, val_hist: dict | None = None, legacy_cfg: dict | None = None) -> dict:
+                 grid: dict | None = None, val_hist: dict | None = None, legacy_cfg: dict | None = None,
+                 fetch_fn=None) -> dict:
     """參數學習進入點。回 optimize() 結果 + "text"。"""
     period = period if period in PERIOD_DAYS else "1y"
-    data = fetch_history(tickers, FETCH_PERIOD[period])
+    data = (fetch_fn or fetch_history)(tickers, FETCH_PERIOD[period])
     if len([s for s in data if s != "SPY"]) == 0:
         return {"results": [], "recommend": None, "text": "❌ 行情抓取失敗或資料不足，稍後再試"}
     pre = precompute(data, PERIOD_DAYS[period], thresholds, calibration)
@@ -1538,4 +1586,20 @@ if __name__ == "__main__":
     t20d = pit_text([dict(_mk(0.1, 0.2, 0.15), miss=4), {"seed": 2, "k": 5, "n": 0, "miss": 5, "skip": "SPY 抓不到"}], m20)
     assert "行情抓取可能失敗" in t20d
     print("✅ 20 pit 判讀（<3 組不判讀、自由度校正、曝險調整、抓取失敗警示）")
+
+    # 21) 沒進場原因統計＋共用參數解析（Bot 與 engine_research 同一套規則）
+    bk21 = replay(pre, {"buy_threshold": 0.95})["metrics"]["blocks"]
+    assert bk21["no_signal"] > 0 and set(bk21) == {"no_signal", "ext", "neutral", "blackout"}, bk21
+    _on = replay(pre, {"buy_threshold": 0.2, "event_blackout": True})["metrics"]["blocks"]
+    _off = replay(pre, {"buy_threshold": 0.2, "event_blackout": False})["metrics"]["blocks"]
+    assert _on["no_signal"] == _off["no_signal"] and _on["blackout"] > 0 == _off["blackout"], (_on, _off)   # 靜默不污染無訊號
+    bk21b = replay(pre, {"buy_threshold": 0.2, "entry_max_ext_atr": 0.3, "entry_max_ret5d": 0})["metrics"]["blocks"]
+    assert bk21b["ext"] > 0, bk21b
+    assert "沒進場的原因" in run_text(rep, {"buy_threshold": 0.3}, pre["dates"], None, "1y")
+    a21 = parse_engtest_args(["1y", "stop_mult=1.5"])
+    assert a21["kind"] == "try" and a21["cand"] == {"stop_mult": 1.5} and a21["period"] == "1y"
+    assert parse_engtest_args(["pit", "999", "99", "seed=7"])[ "k"] == PIT_K_RANGE[1]
+    assert parse_engtest_args(["pit", "８", "2"])["k"] == PIT_K_RANGE[0] + 3 and parse_engtest_args(["try"])["errs"]
+    assert parse_engtest_args(["opt", "loose", "apply"])["grid"] == "loose" and parse_engtest_args([])["kind"] == "run"
+    print(f"✅ 21 沒進場原因統計（無訊號 {bk21['no_signal']} 日、追高擋 {bk21b['ext']} 次）＋共用參數解析")
     print("\nengine_backtest selftest OK ✅")

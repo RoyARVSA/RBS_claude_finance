@@ -1,0 +1,75 @@
+name: RBS Engine Research
+
+# 按需執行的引擎回測研究（/engtest 同一套 engine_backtest）：開發環境連不到行情，
+# 由開發端用 workflow_dispatch 觸發、從 research-results 分支讀回結果，不必請使用者在 Telegram 轉傳。
+# 只用公開資料與程式預設參數（不需任何 Secret、不讀加密的個人設定）→ 結果可安全進公開日誌。
+# 只在手動觸發時執行；不排程、不自我接力。
+on:
+  workflow_dispatch:
+    inputs:
+      cmd:
+        description: '/engtest 子指令，多個用 ; 分隔（例：pit 20 5 2y; try scale_out_r=off pit 20 5）'
+        required: true
+        default: 'pit 20 5 2y'
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+permissions:
+  contents: write   # 只推 research-results 分支（結果檔），不碰 main
+
+concurrency:
+  group: engine-research
+  cancel-in-progress: false
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        # 與 signal_scan 同釘版（scipy：DSR/PBO 外的統計工具與 /rebalance 共用）
+        run: pip install yfinance==1.5.2 pandas==3.0.5 numpy==2.4.6 requests==2.34.2 scipy==1.17.1
+
+      - name: Run research
+        timeout-minutes: 50                 # 留時間給下面 always() 的發佈步驟（逐段寫檔 → 部分結果也會發佈）
+        env:
+          RESEARCH_CMD: ${{ inputs.cmd }}   # 經環境變數傳入（不直接展開進 shell，防注入）
+          PYTHONUNBUFFERED: '1'
+        run: python engine_research.py --cmd "$RESEARCH_CMD" --out /tmp/research.md
+
+      - name: Job summary
+        if: always()
+        run: '[ -f /tmp/research.md ] && cat /tmp/research.md >> "$GITHUB_STEP_SUMMARY" || true'
+
+      - name: Publish to research-results branch
+        if: always()
+        run: |
+          [ -f /tmp/research.md ] || { echo "沒有報告可發佈"; exit 0; }
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name  "github-actions[bot]"
+          if git fetch -q --depth 1 origin research-results; then
+            git checkout -q -f -B research-results FETCH_HEAD
+          else
+            git checkout -q --orphan research-results
+            git rm -rq --cached . > /dev/null
+          fi
+          ts=$(date -u +%Y%m%dT%H%M%SZ)
+          mkdir -p results
+          cp /tmp/research.md "results/${ts}_${GITHUB_RUN_ID}.md"
+          cp /tmp/research.md results/latest.md
+          git add results
+          git commit -q -m "research: run ${GITHUB_RUN_ID}"
+          git push -q origin research-results
+          echo "已發佈 results/${ts}_${GITHUB_RUN_ID}.md"

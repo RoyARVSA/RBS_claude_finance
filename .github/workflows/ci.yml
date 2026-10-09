@@ -50,6 +50,7 @@ jobs:
           python3 actions_loop.py --selftest
           python3 gics_weekly.py --offline
           python3 scripts/check_dispatch.py
+          python3 engine_research.py --selftest
           bash -n scripts/persist_state.sh
           for m in quant_tools rbs_lib fundamentals macro finnhub_data sector_scan \
                    assistant assistant_tools options_sentiment sec_insider perf_report \

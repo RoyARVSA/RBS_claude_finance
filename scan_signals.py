@@ -1827,8 +1827,7 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                 pass
             elif sub in ("pit", "try") or (sub not in ("opt", "clear") and any("=" in a for a in args)):
                 try:
-                    _a = args if sub in ("pit", "try") else ["try"] + list(args)   # 參數=值 放錯位置也當 try
-                    reply = _engtest_pit_try(state, _a, token, src_chat or chat_id)
+                    reply = _engtest_pit_try(state, list(args), token, src_chat or chat_id)   # 參數=值 放錯位置由解析器轉 try
                 except Exception as e:
                     reply = f"❌ /engtest {sub} 失敗：{type(e).__name__} {str(e)[:80]}"
             elif sub == "clear":
@@ -3519,33 +3518,21 @@ ENGTEST_TRY_USAGE = ("用法：`/engtest try trail_tighten_r=off scale_out_r=off
 
 
 def _engtest_pit_try(state: dict, args: list, token: str, chat: str) -> str:
-    """/engtest pit｜try：無事後偏誤股票池回測／單組參數試算。只讀 state、不寫入任何參數。"""
+    """/engtest pit｜try：無事後偏誤股票池回測／單組參數試算。只讀 state、不寫入任何參數。
+    參數解析走 engine_backtest.parse_engtest_args（與 engine_research 共用）。"""
     import engine_backtest as eb
     th = state.get("thresholds") or {}
-    sub = args[0].lower()
-    rest = list(args[1:])
-    low = [a.lower() for a in rest]
-    cand, errs = eb.parse_try_params(rest)
-    if errs:
-        return "⚠️ " + "；".join(errs) + "\n" + ENGTEST_TRY_USAGE
-    if sub == "try" and not cand:
-        return "⚠️ 沒有指定要試的參數\n" + ENGTEST_TRY_USAGE
-    use_pit = sub == "pit" or "pit" in low
-    period = next((a for a in low if a in eb.PERIOD_DAYS), "2y")
-    if eb.PERIOD_DAYS[period] < 80:
-        period = "6m"                                   # 三段切分／有意義的跨組比較需 ≥80 交易日
-    nums = [int(a) for a in low if a.isdecimal()]               # 全形數字也收；上標等非十進位拒收
-    seed0 = next((int(a.split("=", 1)[1]) for a in low
-                  if a.startswith("seed=") and a.split("=", 1)[1].isdecimal()), 1)
+    a = eb.parse_engtest_args(args)
+    if a["errs"]:
+        return "⚠️ " + "；".join(a["errs"]) + "\n" + ENGTEST_TRY_USAGE
+    cand, period = a["cand"], a["period"]
     cur = _engtest_baseline(th)
     lg = _engine_base_config(th)
-    if use_pit:
-        k = min(max(nums[0] if nums else 20, eb.PIT_K_RANGE[0]), eb.PIT_K_RANGE[1])     # 先夾再回覆（確認訊息＝實際跑的量）
-        n_seeds = min(max(nums[1] if len(nums) > 1 else 3, 1), eb.PIT_SEEDS_MAX)
-        _tg_send(token, chat, f"🎲 隨機股票池回測（當時 S&P 500 成分抽 {k} 檔 × {n_seeds} 組 × {period}"
+    if a["use_pit"]:
+        _tg_send(token, chat, f"🎲 隨機股票池回測（當時 S&P 500 成分抽 {a['k']} 檔 × {a['n_seeds']} 組 × {period}"
                               f"{'、含候選參數' if cand else ''}，約 1-3 分鐘）…")
         save_state(state)                               # 長操作前先落盤 last_update_id
-        return eb.run_pit(period, k, n_seeds, seed0, baseline=cur, legacy_cfg=lg,
+        return eb.run_pit(period, a["k"], a["n_seeds"], a["seed0"], baseline=cur, legacy_cfg=lg,
                           candidate=cand or None, thresholds=th, eng_opt=state.get("eng_opt"))["text"]
     eng_pos = sorted(((state.get("engine") or {}).get("pos") or {}).keys())
     syms = list(dict.fromkeys(list(state["watchlist"][:12]) + eng_pos))

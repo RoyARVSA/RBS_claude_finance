@@ -8,7 +8,7 @@
 ## 專案一句話
 
 Streamlit 金融儀表板（`app.py`，17 頁）+ Telegram 訊號 Bot（`scan_signals.py` 排程版 /
-`bot_daemon.py` 常駐版），部署於 Streamlit Cloud + GitHub Actions（`signal_scan.yml` 每小時觸發、`actions_loop.py` 長駐約 5.5 小時：每 15 分鐘一輪、每分鐘回指令；`alpha_nightly.yml` 每交易日收盤後一次；`gics_weekly.yml` 每週六一次）。
+`bot_daemon.py` 常駐版），部署於 Streamlit Cloud + GitHub Actions（`signal_scan.yml` 每小時觸發、`actions_loop.py` 長駐約 5.5 小時：每 15 分鐘一輪、每分鐘回指令；`alpha_nightly.yml` 每交易日收盤後一次；`gics_weekly.yml` 每週六一次；`engine_research.yml` 按需手動觸發——開發端用 `gh api` dispatch 回測實驗、從 `research-results` 分支讀回，不必請使用者轉傳；指令見 AGENT_PLAYBOOK T6）。
 使用者以繁體中文溝通；本專案為分析教育用途，所有輸出標「非投資建議」。
 
 ## 鐵律（違反 = 真實出過事故的等級）
@@ -38,7 +38,7 @@ Streamlit 金融儀表板（`app.py`，17 頁）+ Telegram 訊號 Bot（`scan_si
 | 網頁頁面/UI | `app.py`（~4300 行、會持續漂移，以 `wc -l` 為準；**不要整檔讀**。導航：Grep `def page_` 找頁面、`PAGES = {` 看路由、`def _cached_` 找快取層、`def _run_.*_tool` 找 AI 助理工具執行器）|
 | Bot 訊號/指令/晨報 | `scan_signals.py`（單輪進入點 `main()`；指令 dispatch 搜 `elif cmd ==`）；`actions_loop.py`（Actions 長駐迴圈，呼叫 `main()` 與 `process_commands`，每輪 `scripts/persist_state.sh`；PITFALLS D18）；`bot_daemon.py`（VPS 常駐版）重用其全部邏輯 |
 | 技術指標 / 綜合評分 | `indicators.py`（RSI/MACD/布林/ATR/評分 `composite_score`/部位提示/回測校準/掃描 `scan`——外部一律走公開名，scan_signals 內的底線名是 re-export 向後相容）|
-| 回測引擎 | `backtest.py`（triple-barrier / walk-forward / 參數最佳化）+ `engine_backtest.py`（/engtest：整台 trade_engine 逐日重放、次日開盤成交含成本、出場 108／進場品質 32（entry）／放寬出場 36（loose）組三段 walk-forward + DSR + PBO（`falsifier.pbo_cscv`，≥50% 取消推薦）、附舊邏輯 decide_orders 基準與分段對照、apply 寫 thresholds eng_*；`pit`＝當時 S&P 500 成分隨機抽樣多組（成分遮罩、殘留存活偏誤揭露）、`try k=v`＝單組試算不寫入；precompute 走 `indicators.composite_series` 向量化，自測與逐日版逐位相等）|
+| 回測引擎 | `backtest.py`（triple-barrier / walk-forward / 參數最佳化）+ `engine_backtest.py`（/engtest：整台 trade_engine 逐日重放、次日開盤成交含成本、出場 108／進場品質 32（entry）／放寬出場 36（loose）組三段 walk-forward + DSR + PBO（`falsifier.pbo_cscv`，≥50% 取消推薦）、附舊邏輯 decide_orders 基準與分段對照、apply 寫 thresholds eng_*；`pit`＝當時 S&P 500 成分隨機抽樣多組（成分遮罩、殘留存活偏誤揭露）、`try k=v`＝單組試算不寫入；precompute 走 `indicators.composite_series` 向量化，自測與逐日版逐位相等；子指令解析 `parse_engtest_args` 與 Bot 共用）+ `engine_research.py`（`engine_research.yml` 執行器：只用公開資料與程式預設參數跑 run/opt/pit/try，結果寫 job summary + `research-results` 分支 `results/latest.md`）|
 | 部位與風險數學 | `quant_tools.py`（ATR/Kelly/風險平價）、`rbs_lib.py`（VaR/CVaR）|
 | 公司基本面 | `fundamentals.py`（主）+ `finnhub_data.py`（限流備援）|
 | 總經 / 產業掃描 / 選股庫 | `macro.py`（FRED + `event_blackout` FOMC 事件靜默窗，日期表 2024–2027）/ `sector_scan.py` / `stock_db.py`（含 AI 供應鏈瓶頸主題）|

@@ -102,7 +102,7 @@
 
 1. 前往 repo → **Actions** 頁籤
 2. 若出現「Workflows aren't being run」警告，點 **I understand my workflows, go ahead and enable them**
-3. 在左欄找到 **RBS Signal Scanner** → 點 **Run workflow** 手動測試一次；另一條 **RBS Alpha Nightly**（`alpha_nightly.yml`，每交易日收盤後一次）首次也手動 Run 一次，之後 `/alpha factors` 才有資料；**RBS GICS Weekly**（`gics_weekly.yml`，每週六一次）首次也手動 Run 一次，之後 `/gics` 與網頁 GICS 輪動的神經網路補分類、對帳報告才有資料
+3. 在左欄找到 **RBS Signal Scanner** → 點 **Run workflow** 手動測試一次；另一條 **RBS Alpha Nightly**（`alpha_nightly.yml`，每交易日收盤後一次）首次也手動 Run 一次，之後 `/alpha factors` 才有資料；**RBS GICS Weekly**（`gics_weekly.yml`，每週六一次）首次也手動 Run 一次，之後 `/gics` 與網頁 GICS 輪動的神經網路補分類、對帳報告才有資料；**RBS Engine Research**（`engine_research.yml`）只在手動觸發時跑，輸入 `/engtest` 子指令（如 `pit 20 5 2y; try scale_out_r=off pit 20 5`），只用公開資料與程式預設參數（不需 Secret、不讀加密設定），結果寫在該次 run 的 Summary 與 `research-results` 分支的 `results/`（每段完成即寫檔，報告頭標 Run id）——workflow 檔合併進 main 後，開發端可用 API 自行觸發與讀回（指令見 `AGENT_PLAYBOOK.md` T6），不必在 Telegram 轉傳
 
 ---
 
