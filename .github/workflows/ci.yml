@@ -63,7 +63,7 @@ jobs:
                    fin_data quality company_model factor_eval playbook guidance \
                    screener val_report alpha_spine meta_label factor_lab lanes \
                    gics_taxonomy gics_data gics_model gics_dashboard gics_verify \
-                   earnings_review factor_research; do
+                   earnings_review factor_research edgar_pit; do
             echo "── $m ──"
             python3 "$m.py"
           done
