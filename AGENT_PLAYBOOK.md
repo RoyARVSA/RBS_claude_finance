@@ -124,6 +124,20 @@ PY
 # 留言：POST .../issues/N/comments {"body": ...}；關閉：PATCH .../issues/N {"state":"closed","state_reason":"completed"}
 ```
 
+### T6 回測要真實行情？自己在 Actions 跑（不必請使用者轉傳 Telegram）
+開發環境連不到 Yahoo，但 `engine_research.yml` 在 Actions 上跑同一套 `/engtest`（只用公開資料＋程式預設參數）。
+前提：workflow 檔已在 main（新加或改了 workflow 要等使用者合併一次）；之後 `ref` 可指向開發分支，跑尚未合併的引擎程式。
+```bash
+gh api -X POST repos/RoyARVSA/RBS_claude_finance/actions/workflows/engine_research.yml/dispatches \
+  -f ref=<分支> -f 'inputs[cmd]=pit 20 5 2y; try scale_out_r=off pit 20 5'
+gh api "repos/RoyARVSA/RBS_claude_finance/actions/workflows/engine_research.yml/runs?per_page=3" \
+  --jq '.workflow_runs[]|[.id,.status,.conclusion,.created_at]|@tsv'          # 等 completed
+gh api 'repos/RoyARVSA/RBS_claude_finance/contents/results/latest.md?ref=research-results' \
+  -H 'Accept: application/vnd.github.raw'                                      # 核對報告頭的 Run id
+```
+同一組實驗用「;」併在一次 dispatch（最多 6 個）——同組 concurrency 只保留一個排隊，連發會把前一個排隊的取消。
+「現行」＝程式預設，不含使用者 `/set`／`apply` 的個人設定（加密、不能進公開日誌）；需要個人設定的驗證仍請使用者用 Bot。
+
 ### T3 廣域搜尋/理解
 ```
 In /home/user/RBS_claude_finance, find <目標>。

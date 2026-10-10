@@ -210,6 +210,7 @@ gics_dashboard.py       GICS 輪動 Dashboard 資料組裝 + 模板嵌入、產�
 gics_template.html      GICS 輪動 Dashboard 畫面（使用者原模板 + 完整週/PIT）
 gics_verify.py          GICS 數字對帳（vs State Street SPY 與 S&P 官方產業指數）
 gics_weekly.py          GICS 每週工作流：成分對照、公司資料、神經網路分類、對帳（gics_weekly.yml）
+engine_research.py      引擎回測研究執行器（engine_research.yml 手動觸發；公開資料＋預設參數，結果推 research-results 分支）
 scripts/check_dispatch.py CI：Bot 指令分派不得有重複的無條件分支
 lanes.py                多線平行帳：現行／＋候選池／＋候選池＋meta 三條虛擬帳同輪記帳（/lanes）
 guidance.py             指引/KPI 萃取：LLM 定位轉錄 + 程式驗證（原文/數字回對、修訂、對帳；/guidance）
