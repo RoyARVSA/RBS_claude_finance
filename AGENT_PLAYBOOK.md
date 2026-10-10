@@ -135,6 +135,7 @@ gh api "repos/RoyARVSA/RBS_claude_finance/actions/workflows/engine_research.yml/
 gh api 'repos/RoyARVSA/RBS_claude_finance/contents/results/latest.md?ref=research-results' \
   -H 'Accept: application/vnd.github.raw'                                      # 核對報告頭的 Run id
 ```
+長歷史選股研究：`factors start=2004 [end=… q=0.2 composite=off sample=N]`、`sectors start=1999`（`factor_research.py`）。
 同一組實驗用「;」併在一次 dispatch（最多 6 個）——同組 concurrency 只保留一個排隊，連發會把前一個排隊的取消。
 「現行」＝程式預設，不含使用者 `/set`／`apply` 的個人設定（加密、不能進公開日誌）；需要個人設定的驗證仍請使用者用 Bot。
 

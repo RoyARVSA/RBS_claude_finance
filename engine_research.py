@@ -63,9 +63,11 @@ def run_one(cmd: str, watchlist: list[str], fetch_fn=None, periods: dict | None 
     toks = cmd.split()
     if toks and toks[0].lower() in ("/engtest", "engtest"):
         toks = toks[1:]                                  # 容忍貼上時帶了指令前綴
+    if toks and toks[0].lower() in ("factors", "sectors"):
+        return run_factor_research(toks, fetch_fn=fetch_fn, periods=periods)
     if toks and toks[0].lower() not in ("run", "opt", "pit", "try", "clear") \
             and toks[0].lower() not in eb.PERIOD_DAYS and "=" not in toks[0]:
-        return f"⚠️ 未知子指令 `{toks[0]}`（可用：run／opt／pit／try）"
+        return f"⚠️ 未知子指令 `{toks[0]}`（可用：run／opt／pit／try／factors／sectors）"
     if toks and toks[0].lower() == "run":
         toks = toks[1:]
     a = eb.parse_engtest_args(toks)
@@ -88,6 +90,65 @@ def run_one(cmd: str, watchlist: list[str], fetch_fn=None, periods: dict | None 
                               grid=dict(eb.GRIDS[a["grid"]]), legacy_cfg=lg, fetch_fn=fetch_fn)
         return opt["text"] + ("\n（研究執行器不 apply；要套用請在 Bot 跑 `/engtest opt … apply`）" if a["apply"] else "")
     return eb.run(syms, period, params=base, thresholds={}, fetch_fn=fetch_fn)["text"]
+
+
+def parse_kv(toks: list[str]) -> tuple[dict, list[str]]:
+    """factors／sectors 的 k=v 參數（start/end 日期、sample/seed 整數、q 比例、composite on/off）。"""
+    kv, errs = {}, []
+    for t in toks:
+        if "=" not in t:
+            errs.append(f"看不懂 `{t}`（用 k=v，例 start=2004）")
+            continue
+        k, v = (x.strip().lower() for x in t.split("=", 1))
+        try:
+            if k in ("start", "end"):
+                import re as _re
+                import pandas as _pd
+                if not _re.fullmatch(r"\d{4}(-\d{1,2}(-\d{1,2})?)?", v):
+                    raise ValueError
+                if len(v) == 4:
+                    v = f"{v}-01-01" if k == "start" else f"{v}-12-31"   # end=2020 ＝ 2020 年底
+                ts = _pd.Timestamp(v)
+                if not (_pd.Timestamp("1990-01-01") <= ts <= _pd.Timestamp.today() + _pd.Timedelta(days=366)):
+                    raise ValueError
+                kv[k] = ts.strftime("%Y-%m-%d")
+            elif k in ("sample", "seed"):
+                kv[k] = int(v)
+                if k == "sample" and kv[k] < 30:
+                    raise ValueError
+            elif k == "q":
+                q = float(v.rstrip("%")) / (100 if v.endswith("%") else 1)
+                if not 0.05 <= q <= 0.5:
+                    raise ValueError
+                kv[k] = q
+            elif k == "composite":
+                if v not in ("on", "off", "true", "false", "1", "0", "yes", "no"):
+                    raise ValueError
+                kv[k] = v in ("on", "true", "1", "yes")
+            else:
+                errs.append(f"未知參數 `{k}`")
+        except (ValueError, TypeError):
+            errs.append(f"`{k}` 的值 `{v}` 不合法")
+    return kv, errs
+
+
+def run_factor_research(toks: list[str], fetch_fn=None, periods: dict | None = None) -> str:
+    """factors [start=2004] [end=…] [q=0.2] [composite=on|off] [sample=N seed=1]／sectors [start=1999]。"""
+    import factor_research as fr
+    kind = toks[0].lower()
+    kv, errs = parse_kv(toks[1:])
+    if errs:
+        return "⚠️ " + "；".join(errs)
+    if kind == "sectors":
+        if set(kv) - {"start"}:
+            return "⚠️ sectors 只吃 start=（例 sectors start=1999）"
+        f2 = (lambda syms, start: fetch_fn(syms, "")) if fetch_fn else None
+        return fr.run_sectors(kv.get("start", "1999-01-01"), fetch_fn=f2)["text"]
+    if kv.get("start") and kv.get("end") and kv["start"] >= kv["end"]:
+        return "⚠️ start 必須早於 end"
+    f2 = (lambda syms, start: fetch_fn(syms, "")) if fetch_fn else None
+    return fr.run_factors(kv.get("start", "2004-01-01"), kv.get("end"), kv.get("q", 0.2), kv.get("composite", True),
+                          kv.get("sample"), kv.get("seed", 1), periods=periods, fetch_fn=f2)["text"]
 
 
 def report(cmd: str, watchlist: list[str], fetch_fn=None, periods: dict | None = None,
@@ -146,6 +207,18 @@ def _selftest() -> int:
                  "不 apply", "clear 只對", "程式預設參數", "abc1234", "沒進場的原因"):
         assert frag in md, frag
     assert md.count("```text") == 6
+    # 6) 長歷史因子研究／產業輪動子指令（合成資料）
+    import factor_research as fr
+    fdat, fper = fr._synthetic_panel(n_stocks=50, n_days=1500, edge=0.0008)
+    ffetch = lambda syms, period: {k: fdat[k] for k in syms if k in fdat}   # noqa: E731
+    ft = run_one("factors start=2013 end=2017-12-31 composite=off", wl, fetch_fn=ffetch, periods=fper)
+    assert "選股因子研究" in ft and "12-1 動能" in ft, ft[:300]
+    assert "未知參數" in run_one("factors bogus=1", wl) and "不合法" in run_one("factors q=0.9", wl)
+    assert "只吃 start" in run_one("sectors q=0.2", wl)
+    assert parse_kv(["end=2020"])[0] == {"end": "2020-12-31"} and parse_kv(["start=20x4"])[1] and parse_kv(["sample=5"])[1]
+    assert parse_kv(["composite=maybe"])[1] and "早於" in run_one("factors start=2020 end=2010", wl)
+    assert parse_kv(["start=2004", "end=2020-06-30", "q=20%", "sample=300", "composite=off"])[0] == \
+        {"start": "2004-01-01", "end": "2020-06-30", "q": 0.2, "sample": 300, "composite": False}
     assert "核心衛星" in run_one("pit 6 3 1y core=0.7", wl, fetch_fn=fetch, periods=per, today="2026-05-29")
     # 5) 前綴容忍、未知子指令報錯（不默默改跑別的）、逐段寫檔
     assert "未知子指令" in run_one("bogus 1y", wl, fetch_fn=fetch)

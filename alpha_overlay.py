@@ -189,7 +189,8 @@ def _default_fetchers(cfg: dict) -> dict:
 
 
 def refresh_cache(state: dict, symbols: list[str], now: str,
-                  config: dict | None = None, fetchers: dict | None = None) -> None:
+                  config: dict | None = None, fetchers: dict | None = None, prune: bool = True,
+                  keep: list[str] | None = None) -> None:
     """
     就地更新 state["alpha_cache"]：{sym: {"ts", "inputs": {...}}}。
     只挑「缺快取或過期」的標的，最舊優先，每輪最多 refresh_per_run 檔。
@@ -198,10 +199,12 @@ def refresh_cache(state: dict, symbols: list[str], now: str,
     cfg = _cfg(config)
     cache = state.setdefault("alpha_cache", {})
     symbols = list(dict.fromkeys(symbols))               # 去重（重複會浪費刷新名額）
-    if symbols:
+    if symbols and prune:
         # 移除已不在清單的標的（避免快取只增不減）；空清單不剪——
-        # 一輪抓價失敗不該把整個快取炸掉再花 3 輪重建
-        for k in [k for k in cache if k not in symbols]:
+        # 一輪抓價失敗不該把整個快取炸掉再花 3 輪重建。剪枝範圍＝本批 ∪ keep（同一輪其他批次的標的，
+        # 例如候選池列）；第二批呼叫用 prune=False 只補不剪——否則兩批互相把對方的快取刪光（#82）
+        alive = set(symbols) | set(keep or [])
+        for k in [k for k in cache if k not in alive]:
             del cache[k]
 
     stale = []
@@ -270,17 +273,20 @@ def _earnings_days_map(state: dict, today: str) -> dict:
 
 def enrich(state: dict, scored: list[dict], thresholds: dict | None = None,
            now: str | None = None, fetchers: dict | None = None,
-           fg_fetch=None) -> tuple[list[dict], list[str], float]:
+           fg_fetch=None, prune: bool = True, keep: list[str] | None = None) -> tuple[list[dict], list[str], float]:
     """
     回 (調整後 scored, notes, size_mult)。就地更新 state 的快取；
     呼叫端負責 save_state。now 不給則取當下 UTC（測試時注入固定值）。
+    keep：同一輪其他批次的標的（剪枝時保留）；prune=False：同一輪的第二批呼叫只補不剪（#82）。
+    注意：調整後的 score 是 decide 的唯一評分——進場門檻與排序之外，也用在「訊號轉弱且獲利 → 了結」、
+    死錢判斷與加碼閘（停損/追蹤/分批等價格出場不受影響）（#83）。
     """
     th = thresholds or {}
     cfg = _cfg({k: th[f"ao_{k}"] for k in OVERLAY_DEFAULTS if f"ao_{k}" in th})
     now = now or datetime.now(timezone.utc).isoformat()
 
     symbols = list(dict.fromkeys(s["ticker"] for s in scored if s.get("ticker")))
-    refresh_cache(state, symbols, now, cfg, fetchers)
+    refresh_cache(state, symbols, now, cfg, fetchers, prune=prune, keep=keep)
     edays = _earnings_days_map(state, now[:10])
 
     overlays = {}
@@ -307,7 +313,8 @@ def overlay_text(state: dict, today: str | None = None) -> str:
     cfg = _cfg({k: th[f"ao_{k}"] for k in OVERLAY_DEFAULTS if f"ao_{k}" in th})
     cache = state.get("alpha_cache") or {}
     edays = _earnings_days_map(state, today)
-    lines = ["🧠 *Alpha 資訊疊加層*（進場評分微調；出場不受影響）"]
+    lines = [f"🧠 *Alpha 資訊疊加層*（評分微調 ±{abs(float(cfg['max_abs_delta'])):.2f}：影響進場與排序，"
+             "也影響訊號轉弱出場／死錢／加碼閘；停損與追蹤等價格出場不受影響）"]
     if not cache and not edays:
         return lines[0] + "\n尚無快取——開 /autotrade on 後每輪自動布建（每輪最多 4 檔、12 小時更新）"
     for sym in sorted(set(cache) | set(edays)):
@@ -439,5 +446,29 @@ if __name__ == "__main__":
     txt = overlay_text(st, today="2026-07-20")
     assert "⛔" in txt and "LATE" in txt, txt
     print("✅ 8 overlay_text 吃 ao_ 覆蓋參數")
+
+    # 9) #82：同一輪第二批（候選池列）prune=False 只補不剪，watchlist 快取保留；預設 prune=True 照舊剪
+    st = {"alpha_cache": {"WL1": {"ts": NOW, "inputs": {"opt_score": 0.1}},
+                          "WL2": {"ts": NOW, "inputs": {"opt_score": 0.2}}}}
+    refresh_cache(st, ["POOL1"], NOW, None, fetchers={"f": lambda s: {"opt_score": 0.3}}, prune=False)
+    assert {"WL1", "WL2", "POOL1"} <= set(st["alpha_cache"]), st["alpha_cache"].keys()
+    _sc, _n, _m = enrich(st, [{"ticker": "POOL2", "score": 0.6, "price": 10.0}], {}, now=NOW,
+                         fetchers={"f": lambda s: {}}, fg_fetch=lambda: {}, prune=False)
+    assert {"WL1", "WL2", "POOL1", "POOL2"} <= set(st["alpha_cache"])
+    refresh_cache(st, ["WL1"], NOW, None, fetchers={"f": lambda s: {}})
+    assert set(st["alpha_cache"]) == {"WL1"}
+    assert "_" not in overlay_text({"alpha_cache": {}}).split("\n")[0]
+    # 多輪：第一批以 keep 保留候選池、第二批只補不剪 → 兩批快取都跨輪存活、尊重 TTL（不每輪重抓）
+    calls: list = []
+    fk = {"f": lambda s: calls.append(s) or {"opt_score": 0.1}}
+    st = {"alpha_cache": {}}
+    for rnd in range(4):
+        enrich(st, [{"ticker": "W1", "score": 0.6, "price": 10.0}], {"ao_refresh_per_run": 4.0}, now=NOW,
+               fetchers=fk, fg_fetch=lambda: {}, keep=["P1", "P2"])
+        enrich(st, [{"ticker": t, "score": 0.6, "price": 10.0} for t in ("P1", "P2")], {"ao_refresh_per_run": 4.0},
+               now=NOW, fetchers=fk, fg_fetch=lambda: {}, prune=False)
+    assert set(st["alpha_cache"]) == {"W1", "P1", "P2"} and sorted(calls) == ["P1", "P2", "W1"], calls   # 各只抓一次
+    assert "±0.10" in overlay_text({"thresholds": {"ao_max_abs_delta": 0.1}, "alpha_cache": {}})
+    print("✅ 9 候選池那一輪不剪 watchlist 快取、跨輪不重抓、/alpha 顯示實際上限（#82）")
 
     print("\nalpha_overlay selftest OK ✅")
