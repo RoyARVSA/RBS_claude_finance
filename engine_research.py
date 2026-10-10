@@ -77,7 +77,7 @@ def run_one(cmd: str, watchlist: list[str], fetch_fn=None, periods: dict | None 
     if a["kind"] in ("pit", "try") and a["use_pit"]:
         return eb.run_pit(period, a["k"], a["n_seeds"], a["seed0"], baseline=base, legacy_cfg=lg,
                           candidate=a["cand"] or None, thresholds={}, periods=periods,
-                          fetch_fn=fetch_fn, today=today)["text"]
+                          fetch_fn=fetch_fn, today=today, core=a.get("core"))["text"]
     syms = watchlist[:12]
     if not syms:
         return "❌ 觀察清單是空的（watchlist_state.json）"
@@ -146,6 +146,7 @@ def _selftest() -> int:
                  "不 apply", "clear 只對", "程式預設參數", "abc1234", "沒進場的原因"):
         assert frag in md, frag
     assert md.count("```text") == 6
+    assert "核心衛星" in run_one("pit 6 3 1y core=0.7", wl, fetch_fn=fetch, periods=per, today="2026-05-29")
     # 5) 前綴容忍、未知子指令報錯（不默默改跑別的）、逐段寫檔
     assert "未知子指令" in run_one("bogus 1y", wl, fetch_fn=fetch)
     assert "引擎歷史重放" in run_one("/engtest run 1y", wl, fetch_fn=fetch)

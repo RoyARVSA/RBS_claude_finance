@@ -160,7 +160,10 @@ regime 用 SPY/MA50 三態（線上讀 rank.json 的 `market`，1 日延遲，�
 ### 4.1 多線平行帳（`lanes.py`，`/lanes`；`lanes_enabled` 預設開）
 
 旗標關著的時候就能看「如果開了會怎樣」：每輪 cron 用同一台引擎、同一輪 scored/config/regime，各跑一本
-10 萬起始的虛擬帳——`base`（現行 watchlist）、`pool`（＋候選池）、`pool_meta`（＋候選池＋meta 部位）——
+10 萬起始的虛擬帳——`base`（現行 watchlist）、`pool`（＋候選池）、`pool_meta`（＋候選池＋meta 部位）、
+`risk2`（現行候選、單筆風險 ×2 乘在真帳 risk_pct 上〔恐貪／節流縮放保留〕、單檔上限 20%；2026-10 隨機股票池研究候選，
+`LANE_DEFS` 第三欄＝每條車道的引擎設定覆蓋，`lane_config` 組合；晚於整組起算才加入的車道記自己的起算日與 SPY 基準，
+`/lanes` 該列附自己的 SPY 同期與實際生效的風險／上限）——
 掃描價成交含 0.05% 成本、每日淨值一點、殭屍倉防護同鏡像帳；`/lanes` 並排列出報酬／回撤／持倉／成交，
 附 SPY 與真帳同期。閘門沒過時車道會標註「＝現行」「＝候選池」（此時該車道與上一條相同）。
 車道持倉即使跌出前 k 名也會補掃報價（quiet）；候選池列同樣走 alpha overlay 與 FOMC 靜默窗，旗標開關前後語意一致。
