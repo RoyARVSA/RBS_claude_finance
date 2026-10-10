@@ -539,6 +539,40 @@ def _beta(eq: pd.Series, spy: pd.Series | None) -> float | None:
         return None
 
 
+def core_satellite(eq: pd.Series, spy: pd.Series | None, w_core: float) -> dict | None:
+    """核心（SPY 買進持有）w_core ＋ 衛星（策略淨值）1−w_core，每月第一個交易日再平衡回目標權重（不計再平衡成本）。
+    近似關係：組合 − SPY ≈ (1−w_core) ×（衛星 − SPY）——衛星不贏大盤，組合大致也贏不了，核心只決定落後多少
+    （月再平衡下並非恆等：衛星持續落後時實際落後略多於公式，短期 V 形行情可能小幅加分）。
+    回 {"total_ret","max_dd","sharpe","spy_ret","spy_dd","excess"}；資料不足回 None。"""
+    if spy is None or eq is None or len(eq) < 21:
+        return None
+    w = min(max(float(w_core), 0.0), 1.0)
+    s_ = spy.reindex(eq.index).ffill()
+    if s_.isna().all():
+        return None
+    r_core = s_.pct_change().fillna(0.0).values
+    r_sat = eq.pct_change().fillna(0.0).values
+    core_v, sat_v, vals, prev_m = w, 1.0 - w, [], None
+    for d, rc, rs in zip(eq.index, r_core, r_sat):
+        if prev_m is not None and d.month != prev_m:
+            tot = core_v + sat_v
+            core_v, sat_v = tot * w, tot * (1.0 - w)
+        core_v *= 1.0 + rc
+        sat_v *= 1.0 + rs
+        vals.append(core_v + sat_v)
+        prev_m = d.month
+    v = pd.Series(vals, index=eq.index)
+    r = v.pct_change().dropna()
+    sd = float(r.std(ddof=1)) if len(r) > 2 else 0.0
+    spy_v = s_.dropna()
+    spy_ret = float(spy_v.iloc[-1] / spy_v.iloc[0] - 1) if len(spy_v) > 1 else None
+    tot_ret = float(v.iloc[-1] - 1.0)
+    return {"total_ret": tot_ret, "max_dd": abs(float((v / v.cummax() - 1).min())),
+            "sharpe": (float(r.mean()) / sd * math.sqrt(252)) if sd > 0 else 0.0,
+            "spy_ret": spy_ret, "spy_dd": abs(float((spy_v / spy_v.cummax() - 1).min())) if len(spy_v) else None,
+            "excess": (tot_ret - spy_ret) if spy_ret is not None else None}
+
+
 # ── 3. 參數學習（walk-forward + DSR）─────────────────────────────────────
 
 def split_dates(dates: list[str]) -> dict | None:
@@ -888,7 +922,7 @@ def parse_try_params(tokens: list[str]) -> tuple[dict, list[str]]:
             continue
         if k.startswith("eng_"):
             k = k[4:]
-        if k == "seed":
+        if k in ("seed", "core"):
             continue
         if k not in te.ENGINE_DEFAULTS and k not in TRY_EXTRA_KEYS:
             errs.append(f"未知參數 `{k}`")
@@ -938,7 +972,27 @@ def parse_engtest_args(args: list[str]) -> dict:
     nums = [int(a) for a in low if a.isdecimal()]
     seed0 = next((int(a.split("=", 1)[1]) for a in low
                   if a.startswith("seed=") and a.split("=", 1)[1].isdecimal()), 1)
-    return {"kind": kind, "period": period,
+    core = None
+    for a in low:
+        if a.startswith("core="):
+            raw = a.split("=", 1)[1]
+            try:
+                c_ = float(raw.rstrip("%"))
+                if raw.endswith("%"):
+                    c_ /= 100                           # 70% → 0.7、0.5% → 0.005（下面範圍檢查會擋）
+                elif 1 < c_ < 5:
+                    c_ = -1.0                           # 1.5 是 1.5% 還是寫錯？模糊 → 報錯
+                elif c_ >= 5:
+                    c_ /= 100                           # 70 → 0.7
+                if 0.05 <= c_ <= 0.95:
+                    core = c_
+                else:
+                    errs = errs + ["`core` 須介於 5% 與 95%（例 core=0.7 或 core=70%）"]
+            except ValueError:
+                errs = errs + ["`core` 的值不是數字"]
+    if core is not None and not (kind == "pit" or "pit" in low):
+        errs = errs + ["`core` 目前只支援 pit（例 /engtest pit 20 5 2y core=0.7）"]
+    return {"kind": kind, "period": period, "core": core,
             "grid": ("loose" if "loose" in low else "entry" if "entry" in low else "exit"),
             "apply": kind == "opt" and "apply" in low,
             "k": min(max(nums[0] if nums else 20, PIT_K_RANGE[0]), PIT_K_RANGE[1]),
@@ -1032,7 +1086,7 @@ def _same_sign(xs: list[float]) -> bool:
 
 def pit_compare(data: dict, periods: dict, samples: list[list[str]], seeds: list[int], days: int,
                 baseline: dict, legacy_cfg: dict | None = None, candidate: dict | None = None,
-                thresholds: dict | None = None) -> list[dict]:
+                thresholds: dict | None = None, core: float | None = None) -> list[dict]:
     """每組抽樣各自 precompute + 重放（現行／舊邏輯／候選），附等權持有與 SPY。純邏輯（data 由呼叫端給）。"""
     rows = []
     for seed, smp in zip(seeds, samples):
@@ -1057,6 +1111,8 @@ def pit_compare(data: dict, periods: dict, samples: list[list[str]], seeds: list
             reps["cand"] = replay(pre, {**base, **candidate})
         for k_, rp in reps.items():
             r[k_] = rp["metrics"]
+            if core:
+                r[f"cs_{k_}"] = core_satellite(rp["equity"], pre.get("spy"), core)
         r["errors"] = sum(1 for rp in reps.values() for j in rp["journal"] if j.get("error"))
         r["ew"] = ew_return(pre, pre["dates"])
         r["spy"] = bench_return(pre, pre["dates"])
@@ -1131,6 +1187,21 @@ def pit_text(rows: list[dict], meta: dict) -> str:
     ex_b = float(np.mean([r["base"]["exposure"] for r in ok]))
     ex_l = float(np.mean([r["legacy"]["exposure"] for r in ok]))
     lines.append(f"平均曝險：現行 {ex_b:.0%}／舊邏輯 {ex_l:.0%}")
+    core = meta.get("core")
+    if core:
+        lines.append(f"\n*核心衛星*（SPY {core:.0%} ＋ 策略 {1 - core:.0%}，每月再平衡；近似：組合 − SPY ≈ 衛星比例 ×（衛星 − SPY））")
+        spy_dd = [r["cs_base"]["spy_dd"] for r in ok if r.get("cs_base") and r["cs_base"].get("spy_dd") is not None]
+        for k_, lab in (("base", "現行"), ("legacy", "舊邏輯"), ("cand", "候選")):
+            cs = [r[f"cs_{k_}"] for r in ok if r.get(f"cs_{k_}") and r[f"cs_{k_}"].get("excess") is not None]
+            if not cs:
+                continue
+            m, sd, t, _n = _stats([c["excess"] for c in cs])
+            lines.append(f"{lab}：組合 {float(np.mean([c['total_ret'] for c in cs])):+.1%}｜超額 vs SPY {m:+.1%}"
+                         + (f" ± {sd:.1%}" if sd is not None else "")
+                         + f"｜回撤 {float(np.mean([c['max_dd'] for c in cs])):.0%}"
+                         + f"｜Sharpe {float(np.mean([c['sharpe'] for c in cs])):.2f}")
+        if spy_dd:
+            lines.append(f"（同期 SPY 最大回撤 {float(np.mean(spy_dd)):.0%}）")
 
     # 判讀（規則式、保守）：自由度校正的 5% 臨界值；少於 3 組不判讀
     if len(ok) < 3:
@@ -1162,7 +1233,7 @@ def pit_text(rows: list[dict], meta: dict) -> str:
 def run_pit(period: str = "2y", k: int = 20, n_seeds: int = 3, seed0: int = 1,
             baseline: dict | None = None, legacy_cfg: dict | None = None, candidate: dict | None = None,
             thresholds: dict | None = None, periods: dict | None = None, fetch_fn=None,
-            today: str | None = None, eng_opt: dict | None = None) -> dict:
+            today: str | None = None, eng_opt: dict | None = None, core: float | None = None) -> dict:
     """/engtest pit 進入點：抓成分歷史 → 各組抽樣 → 一次批次抓價 → pit_compare → 文字。"""
     from datetime import date, timedelta
     period = period if period in PERIOD_DAYS else "2y"
@@ -1190,10 +1261,10 @@ def run_pit(period: str = "2y", k: int = 20, n_seeds: int = 3, seed0: int = 1,
         if old_t in per_eff and new_t in periods:
             per_eff[old_t] = sorted(set(periods[old_t]) | set(periods[new_t]))
     rows = pit_compare(data, per_eff, samples, seeds, PERIOD_DAYS[period], baseline or {},
-                       legacy_cfg, candidate, thresholds)
+                       legacy_cfg, candidate, thresholds, core)
     meta = {"as_of": as_of, "n_members": sum(1 for ps in periods.values() if _is_member(ps, as_of)),
             "k": k, "period": period, "candidate": candidate,
-            "eng_opt": eng_opt if isinstance(eng_opt, dict) else None}
+            "eng_opt": eng_opt if isinstance(eng_opt, dict) else None, "core": core}
     return {"rows": rows, "meta": meta, "samples": samples, "text": pit_text(rows, meta)}
 
 
@@ -1602,4 +1673,39 @@ if __name__ == "__main__":
     assert parse_engtest_args(["pit", "８", "2"])["k"] == PIT_K_RANGE[0] + 3 and parse_engtest_args(["try"])["errs"]
     assert parse_engtest_args(["opt", "loose", "apply"])["grid"] == "loose" and parse_engtest_args([])["kind"] == "run"
     print(f"✅ 21 沒進場原因統計（無訊號 {bk21['no_signal']} 日、追高擋 {bk21b['ext']} 次）＋共用參數解析")
+
+    # 22) 核心衛星：衛星＝SPY → 超額 0；核心 100% → 等於 SPY；組合−SPY ≈ (1−w)×(衛星−SPY)；參數解析與文字
+    spy22 = pre["spy"].reindex(pd.to_datetime(pre["dates"]))
+    eq_same = spy22 / spy22.iloc[0] * 100_000
+    cs_same = core_satellite(eq_same, pre["spy"], 0.7)
+    assert abs(cs_same["excess"]) < 1e-9 and abs(cs_same["total_ret"] - cs_same["spy_ret"]) < 1e-9
+    rep22 = replay(pre, {"buy_threshold": 0.3})
+    cs1 = core_satellite(rep22["equity"], pre["spy"], 1.0)
+    assert abs(cs1["excess"]) < 1e-9
+    cs7 = core_satellite(rep22["equity"], pre["spy"], 0.7)
+    sat_ex = rep22["metrics"]["total_ret"] - cs7["spy_ret"]
+    assert abs(cs7["excess"] - 0.3 * sat_ex) < 0.03, (cs7["excess"], sat_ex)          # 月再平衡下近似成立
+    assert core_satellite(rep22["equity"].iloc[:10], pre["spy"], 0.7) is None
+    # 手算再平衡：1 月 SPY 翻倍、2 月再 +10%，衛星持平；2/1 再平衡回 50/50 → 與買進持有不同
+    ix = pd.bdate_range("2025-01-01", "2025-02-28")
+    jan = ix.month == 1
+    spy_h = pd.Series(np.where(jan, np.linspace(100, 200, jan.sum()).tolist() + [0] * (~jan).sum(), 0), index=ix)
+    spy_h[~jan] = np.linspace(200, 220, (~jan).sum() + 1)[1:]
+    cs_h = core_satellite(pd.Series(100_000.0, index=ix), spy_h, 0.5)
+    hand = 0.5 * (200 / 100) + 0.5                                       # 1 月底組合值（單位 1 起）
+    hand = hand * 0.5 * (220 / 200) + hand * 0.5                         # 2/1 再平衡 50/50 後 2 月
+    bh = 0.5 * (220 / 100) + 0.5
+    assert abs((1 + cs_h["total_ret"]) - hand) < 1e-9 and abs(hand - bh) > 1e-3, (cs_h, hand, bh)
+    assert parse_engtest_args(["pit", "core=70%"])["core"] == 0.7 and parse_engtest_args(["pit", "core=0.5"])["core"] == 0.5
+    assert parse_engtest_args(["pit", "core=1.5"])["errs"] and parse_engtest_args(["pit", "core=x"])["errs"]
+    assert parse_engtest_args(["try", "stop_mult=1.5", "core=0.7", "pit"])["cand"] == {"stop_mult": 1.5}
+    rows22 = pit_compare({k_: data[k_] for k_ in ("AAA", "BBB", "CCC", "DDD", "SPY")}, {**per16, "DDD": per16["AAA"]},
+                         [["AAA", "BBB", "CCC"], ["AAA", "DDD", "BBB"], ["BBB", "CCC", "DDD"]],
+                         [1, 2, 3], 200, {"buy_threshold": 0.3}, {"buy_threshold": 0.3}, None, None, 0.7)
+    t22 = pit_text(rows22, {"as_of": "2024-06-01", "n_members": 3, "k": 3, "period": "1y", "core": 0.7})
+    assert "核心衛星" in t22 and "超額 vs SPY" in t22 and "同期 SPY 最大回撤" in t22 and " ± " in t22.split("核心衛星")[1], t22
+    assert parse_engtest_args(["2y", "core=70%"])["errs"] and parse_engtest_args(["pit", "core=0.5%"])["errs"]
+    assert parse_engtest_args(["try", "stop_mult=1", "pit", "core=60"])["core"] == 0.6
+    assert t22.count("*") % 2 == 0 and "_" not in t22.replace("`/engtest pit 20 5`", ""), t22
+    print(f"✅ 22 核心衛星（SPY 70%：組合超額 {cs7['excess']:+.1%} ≈ 0.3 × 衛星超額 {sat_ex:+.1%}）")
     print("\nengine_backtest selftest OK ✅")

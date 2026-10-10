@@ -7,6 +7,8 @@ lanes.py – 多線平行帳（策略車道）：同一輪訊號下，讓「舊�
   base       watchlist 候選、等額部位（＝真帳現行跑法）
   pool       + Alpha 脊椎候選池（rank.json 前 k 名；閘門沒過時 = base）
   pool_meta  + meta-labeling 勝率倍數（模型沒過閘門時 = pool）
+  risk2      現行候選、單筆風險 ×2（預設 1%→2%，恐貪/節流縮放保留）、單檔上限 20%——
+             2026-10 研究候選（隨機 S&P 500 抽樣 15 組：報酬≈舊邏輯、回撤低得多），前瞻驗證中
 
 每輪 cron：decide → 以掃描價成交（單邊 0.05% 成本）→ 每日淨值一點；殭屍倉防護同鏡像帳。
 state["lanes"] 加密（虛擬持倉 ≈ 引擎當下會持有什麼，與真帳高度相關）。/lanes 看比較表；不推播每筆單。
@@ -18,18 +20,40 @@ from __future__ import annotations
 START_EQUITY = 100_000.0
 COST_SIDE = 0.0005
 HISTORY_CAP = 400
-LANE_DEFS = {                      # name → (用候選池, 用 meta 倍數)
-    "base": (False, False),
-    "pool": (True, False),
-    "pool_meta": (True, True),
+LANE_DEFS = {                      # name → (用候選池, 用 meta 倍數, 引擎設定覆蓋)
+    "base": (False, False, {}),
+    "pool": (True, False, {}),
+    "pool_meta": (True, True, {}),
+    # risk_mult：乘在真帳 config 的 risk_pct 上（保留恐貪縮倉／反思節流的相對縮放）；其餘鍵直接覆蓋
+    "risk2": (False, False, {"risk_mult": 2.0, "max_position_pct": 0.20}),
 }
-LANE_LABELS = {"base": "現行（watchlist）", "pool": "＋候選池", "pool_meta": "＋候選池＋meta 部位"}
+LANE_LABELS = {"base": "現行（watchlist）", "pool": "＋候選池", "pool_meta": "＋候選池＋meta 部位",
+               "risk2": "風險 ×2／單檔 20%（研究候選）"}
+
+
+def lane_config(config: dict, overrides: dict) -> dict:
+    """車道的引擎設定＝真帳 config 疊上覆蓋（純函數，不改原 config）。"""
+    out = dict(config or {})
+    for k, v in (overrides or {}).items():
+        if k == "risk_mult":
+            import trade_engine as te
+            out["risk_pct"] = float(out.get("risk_pct", te.ENGINE_DEFAULTS["risk_pct"])) * float(v)
+        else:
+            out[k] = v
+    return out
+
+
+def _new_book(today: str | None = None, spy: float | None = None) -> dict:
+    b = {"cash": START_EQUITY, "positions": {}, "last_px": {}, "engine": None,
+         "history": [], "n_trades": 0, "last": None}
+    if today:                                   # 晚於整組起始才加入的車道：自己的起算日與 SPY 基準
+        b["started"], b["spy_start"] = str(today)[:10], spy
+    return b
 
 
 def new_lanes(today: str) -> dict:
     return {"started": str(today)[:10], "start_equity": START_EQUITY, "spy_start": None,
-            "lanes": {name: {"cash": START_EQUITY, "positions": {}, "last_px": {}, "engine": None,
-                             "history": [], "n_trades": 0, "last": None} for name in LANE_DEFS}}
+            "lanes": {name: _new_book() for name in LANE_DEFS}}
 
 
 def lane_scored(scored: list[dict], use_pool: bool, use_meta: bool) -> list[dict]:
@@ -88,9 +112,12 @@ def run_lanes(state: dict, scored: list[dict], config: dict, regime: str | None,
         L["real_last_equity"] = float(real_equity)
     L["flags"] = {"pool_available": bool(pool_available), "meta_usable": bool(meta_usable)}
     filled: dict[str, int] = {}
-    for name, (use_pool, use_meta) in LANE_DEFS.items():
-        book = L["lanes"].setdefault(name, {"cash": START_EQUITY, "positions": {}, "last_px": {}, "engine": None,
-                                            "history": [], "n_trades": 0, "last": None})
+    for name, (use_pool, use_meta, overrides) in LANE_DEFS.items():
+        if name not in L["lanes"]:
+            L["lanes"][name] = _new_book(today, prices.get("SPY"))
+        book = L["lanes"][name]
+        if book.get("started") and book.get("spy_start") is None and prices.get("SPY"):
+            book["spy_start"] = prices["SPY"]           # 加入當輪 SPY 缺報價 → 之後補（同整組層級的做法）
         try:
             rows = lane_scored(scored, use_pool, use_meta)
             pos_book = book.setdefault("positions", {})
@@ -111,7 +138,11 @@ def run_lanes(state: dict, scored: list[dict], config: dict, regime: str | None,
                                  "unrealized_pl": p["qty"] * (px - p["entry"]),
                                  "unrealized_plpc": (px / p["entry"] - 1) if p["entry"] else 0}
             equity = sb.book_equity(book, prices)
-            orders, eng, _notes = te.decide(rows, pos_view, equity, book["cash"], book.get("engine"), regime, config, today)
+            cfg_l = lane_config(config, overrides)
+            if overrides:                               # 實際生效的覆蓋值（/lanes 顯示：例如恐貪縮倉時 ×2 後不是 2%）
+                book["cfg_eff"] = {"risk_pct": float(cfg_l.get("risk_pct", te.ENGINE_DEFAULTS["risk_pct"])),
+                                   "max_position_pct": float(cfg_l.get("max_position_pct", te.ENGINE_DEFAULTS["max_position_pct"]))}
+            orders, eng, _notes = te.decide(rows, pos_view, equity, book["cash"], book.get("engine"), regime, cfg_l, today)
             book["engine"] = eng
             n = _apply(book, [o for o in orders if prices.get(o["symbol"])], prices)
             book["n_trades"] = int(book.get("n_trades", 0)) + n
@@ -170,7 +201,15 @@ def lanes_text(state: dict, real_equity: float | None = None, real_start: float 
         if s["equity"] is None:
             lines.append(f"• {LANE_LABELS[name]}{tag}：尚無資料")
             continue
-        lines.append(f"• {LANE_LABELS[name]}{tag}：{s['ret']:+.2%}｜回撤 {s['max_dd']:.1%}｜"
+        own = ""
+        if b.get("started"):                    # 晚加入的車道：起算日不同，附自己的 SPY 同期才可比
+            spy0 = b.get("spy_start")
+            own = (f"（{b['started']} 起" + (f"，SPY 同期 {L['spy_last'] / spy0 - 1:+.2%}" if spy0 and L.get("spy_last")
+                                              else "，SPY 基準缺——勿與下方 SPY 同期直接比") + "）")
+        ce = b.get("cfg_eff")
+        if ce:
+            own += f"［實際單筆風險 {ce['risk_pct']:.1%}、單檔上限 {ce['max_position_pct']:.0%}］"
+        lines.append(f"• {LANE_LABELS[name]}{tag}{own}：{s['ret']:+.2%}｜回撤 {s['max_dd']:.1%}｜"
                      f"持倉 {s['n_pos']}｜成交 {s['n_trades']}｜{s['days']} 日" + (f"｜⚠️ 上輪錯誤 {s['error']}" if s.get("error") else ""))
     if L.get("spy_start") and L.get("spy_last"):
         lines.append(f"• SPY 同期：{L['spy_last'] / L['spy_start'] - 1:+.2%}")
@@ -211,7 +250,10 @@ if __name__ == "__main__":
     assert L["pool_meta"]["positions"]["AAA"]["qty"] == int(L["base"]["positions"]["AAA"]["qty"] * 0.5)
     assert L["base"]["cash"] < START_EQUITY and all(b["last"]["date"] == T for b in L.values())
     assert st["lanes"]["spy_start"] == 500.0
-    print("✅ 2 三車道各自記帳（base/pool/pool_meta 持倉不同、meta 半倉/跳過）")
+    assert L["base"]["positions"]["AAA"]["qty"] == 100 and L["risk2"]["positions"]["AAA"]["qty"] == 200   # 風險 ×2（未達 20% 上限）
+    assert set(L["risk2"]["positions"]) == {"AAA"} and "started" not in L["risk2"]                       # 同時起算 → 無自己的起算日
+    assert lane_config({"risk_pct": 0.005, "max_position_pct": 0.15}, LANE_DEFS["risk2"][2]) == {"risk_pct": 0.01, "max_position_pct": 0.20}
+    print("✅ 2 四車道各自記帳（base/pool/pool_meta 持倉不同、meta 半倉/跳過、risk2 部位 ×2）")
 
     # 3) 第二輪：價格上漲 → 淨值歷史新增一點；SPY 同期；殭屍倉（PPP 消失 5 天）強平
     up = [dict(s, price=s["price"] * 1.05) for s in scored if s["ticker"] != "PPP"]
@@ -233,5 +275,22 @@ if __name__ == "__main__":
     reset(st2, T); assert st2["lanes"]["lanes"]["base"]["positions"] == {}
     run_lanes(st2, [{"ticker": "BAD", "score": "x", "price": None}], {}, None, T)     # 壞列：decide 過濾或例外都不炸
     assert "lanes" in st2
-    print("✅ 3 淨值歷史／殭屍倉／文字／reset／壞列")
+    # 5) 舊 state 沒有 risk2 → 下一輪自動加入，記自己的起算日與 SPY 基準，文字附自己的 SPY 同期
+    st3: dict = {}
+    run_lanes(st3, scored, {"max_positions": 10}, "risk_on", T)
+    del st3["lanes"]["lanes"]["risk2"]
+    run_lanes(st3, up, {"max_positions": 10}, "risk_on", "2026-09-22")
+    r2 = st3["lanes"]["lanes"]["risk2"]
+    assert r2["started"] == "2026-09-22" and r2["spy_start"] == 525.0 and r2["positions"]
+    t3 = lanes_text(st3)
+    assert "（2026-09-22 起，SPY 同期 +0.00%）［實際單筆風險 2.0%、單檔上限 20%］" in t3 and "**" not in t3, t3
+    # 加入當輪 SPY 缺 → 之後補上基準
+    st4: dict = {}
+    run_lanes(st4, scored, {"max_positions": 10}, "risk_on", T)
+    del st4["lanes"]["lanes"]["risk2"]
+    run_lanes(st4, [s for s in up if s["ticker"] != "SPY"], {"max_positions": 10}, "risk_on", "2026-09-22")
+    assert st4["lanes"]["lanes"]["risk2"]["spy_start"] is None and "SPY 基準缺" in lanes_text(st4)
+    run_lanes(st4, up, {"max_positions": 10}, "risk_on", "2026-09-23")
+    assert st4["lanes"]["lanes"]["risk2"]["spy_start"] == 525.0
+    print("✅ 3 淨值歷史／殭屍倉／文字／reset／壞列／晚加入車道自帶起算基準")
     print("\nlanes selftest OK ✅")

@@ -53,7 +53,7 @@ Telegram 指令（傳給 Bot）：
   /alpha rank|factors|meta – Alpha 脊椎：橫斷面排名／因子 IC 閘門／meta-labeling OOS（夜間工作流產出；無子指令＝資訊疊加層）
   /gics TICKER|verify|exposure [L1-4] – GICS 四層分類查詢／每週數字對帳／持倉產業曝險（只顯示）
   /factor test|add|drop|list – 因子實驗室：DSL 公式 → IC/ICIR/NW t + DSR 帳本；核准者進夜間合成
-  /lanes [reset]          – 多線平行帳：現行／＋候選池／＋候選池＋meta 三條虛擬帳同輪比較（含 SPY、真帳同期）
+  /lanes [reset]          – 多線平行帳：現行／＋候選池／＋候選池＋meta／風險×2 四條虛擬帳同輪比較（含 SPY、真帳同期）
   /screen                 – 候選篩選（選股池 ∪ 主題 − watchlist；Stage 3 限額；只建議）
   /valreport              – 估值治理月報（覆蓋/事後命中/穩定度/因子 IC/指引覆蓋；每月自動）
   /guidance TICKER [季別] – 指引/KPI 萃取（AV 逐字稿 + LLM 定位轉錄 + 程式驗證）
@@ -480,7 +480,7 @@ def _cmd_help() -> str:
         "`/plantest opt [apply]` — 參數尋優：ORB×停損×R:R 掃 27 組，holdout 段把關通過才推薦\n"
         "`/alpha rank|factors|meta` — Alpha 脊椎（夜間工作流）：選股池 400 檔橫斷面排名（因子過 IC 閘門才配權）、因子 IC 表、meta-labeling 勝率模型 OOS 與閘門；`/set alpha_pool_enabled on` 讓前 N 名進候選池、`/set meta_enabled on` 讓部位吃勝率倍數（皆預設關）\n"
         "`/gics TICKER|verify|exposure [L1-4]` — GICS 四層分類（S&P 1500 對照表＋每週神經網路補分類）、每週數字對帳（vs State Street／S&P 官方指數）、持倉產業曝險（超過 40% 標示，只顯示不強制）\n"
-        "`/lanes [reset]` — 多線平行帳：現行 watchlist／＋候選池／＋候選池＋meta 部位三條虛擬帳（各 10 萬起）同一輪訊號並排記帳，含 SPY 與真帳同期；旗標關著也在跑，看完再決定開不開（`/set lanes_enabled off` 關）\n"
+        "`/lanes [reset]` — 多線平行帳：現行 watchlist／＋候選池／＋候選池＋meta 部位／風險×2 單檔 20%（研究候選）四條虛擬帳（各 10 萬起）同一輪訊號並排記帳，含 SPY 與真帳同期；旗標關著也在跑，看完再決定開不開（`/set lanes_enabled off` 關）\n"
         "`/factor test <公式>`｜`add <名稱> <公式>`｜`drop`｜`list` — 因子實驗室：DSL 公式（ret/mom/vol/ma_dist/ext/rsi/volratio/hi_dist/lo_dist）→ IC/ICIR/NW t + DSR 記帳；核准者夜間納入合成\n"
         "`/screen` — 候選篩選：選股池動能前 N ∪ AI 主題 − watchlist，逐批補品質/修正動能（≤8 檔/次、每週閉市輪自動刷新），綜合分排名；只建議、`/add` 後才進建模與佈局\n"
         "`/valreport` — 估值治理月報：覆蓋/過期/待審、各判定的事後命中率、公允價穩定度、MoS 因子 IC、指引覆蓋（每月自動推播；`/set valreport_enabled off` 關）\n"
@@ -494,7 +494,7 @@ def _cmd_help() -> str:
         "`/engtest [3m|6m|1y|2y]` — 整台引擎歷史重放：現行參數過去 N 個月會賺多少（次日開盤成交、含成本、對照 SPY）\n"
         "`/engtest opt [1y] [apply]` — 引擎參數學習：進場門檻×停損×追蹤×分批×死錢 108 組（估值歷史夠長時再 ×2 做估值層開/關 A/B），三段 walk-forward + DSR + PBO 過擬合機率，holdout 通過且 PBO < 50% 才推薦；apply 套用、`/engtest clear` 還原\n"
         "`/engtest opt entry [1y] [apply]` — 進場品質網格 32 組：門檻×追高上限(ATR)×加碼R×中性風險倍數——驗證 2026-09 診斷出的追高/加碼在頂問題\n"
-        "`/engtest opt loose [1y] [apply]` — 放寬出場網格 36 組：追蹤回落×收緊門檻（含不收緊）×分批R（含關閉）×停損倍數，並附舊邏輯（Shadow 同款）基準——驗證「動能行情中太早鎖利/停損」是否在樣本外成立（#56）\n"        "`/engtest pit [20] [3] [2y]` — 無事後偏誤回測：從當時 S&P 500 成分隨機抽 20 檔 × 3 組，比現行／舊邏輯／等權持有（觀察清單是事後挑的，這個才答得了「擇時有沒有加值」）\n"
+        "`/engtest opt loose [1y] [apply]` — 放寬出場網格 36 組：追蹤回落×收緊門檻（含不收緊）×分批R（含關閉）×停損倍數，並附舊邏輯（Shadow 同款）基準——驗證「動能行情中太早鎖利/停損」是否在樣本外成立（#56）\n"        "`/engtest pit [20] [3] [2y] [core=0.7]` — 無事後偏誤回測：從當時 S&P 500 成分隨機抽 20 檔 × 3 組，比現行／舊邏輯／等權持有（觀察清單是事後挑的，這個才答得了「擇時有沒有加值」）；加 core=0.7 另算「SPY 70% 核心＋策略 30% 衛星」組合 vs SPY\n"
         "`/engtest try 參數=值 … [pit]` — 單組參數試算、不寫入（例 `/engtest try trail_tighten_r=off scale_out_r=off pit`）\n"
         "`/weekly` — 立即生成每週深度週報（指數/強弱/計分板/RRG/下週行事曆）\n"
         "`/committee NVDA`（或 `/cmt`）— 開一場機構決策會議（需 LLM key，約 1-3 分）\n\n"
@@ -1632,7 +1632,7 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                 reply = f"❌ /gics 失敗：{type(e).__name__}"
 
         elif cmd == "/lanes":
-            # 多線平行帳：現行／＋候選池／＋候選池＋meta 三條虛擬帳同輪比較（reset 重新起算）
+            # 多線平行帳：現行／＋候選池／＋候選池＋meta／風險×2 四條虛擬帳同輪比較（reset 重新起算）
             try:
                 import lanes as _ln
                 if args and args[0].lower() == "reset":
@@ -3533,7 +3533,8 @@ def _engtest_pit_try(state: dict, args: list, token: str, chat: str) -> str:
                               f"{'、含候選參數' if cand else ''}，約 1-3 分鐘）…")
         save_state(state)                               # 長操作前先落盤 last_update_id
         return eb.run_pit(period, a["k"], a["n_seeds"], a["seed0"], baseline=cur, legacy_cfg=lg,
-                          candidate=cand or None, thresholds=th, eng_opt=state.get("eng_opt"))["text"]
+                          candidate=cand or None, thresholds=th, eng_opt=state.get("eng_opt"),
+                          core=a.get("core"))["text"]
     eng_pos = sorted(((state.get("engine") or {}).get("pos") or {}).keys())
     syms = list(dict.fromkeys(list(state["watchlist"][:12]) + eng_pos))
     if not syms:
@@ -3830,7 +3831,7 @@ def run_autotrade(state: dict, results: list[dict]) -> str | None:
         print(f"Mirror: 鏡像帳失敗，跳過 {e}")
         mirror_lines = []
 
-    # 多線平行帳（lanes.py）：現行／＋候選池／＋候選池＋meta 三條虛擬帳同輪記帳（不下單、不推播；/lanes 看）
+    # 多線平行帳（lanes.py）：現行／＋候選池／＋候選池＋meta／風險×2 四條虛擬帳同輪記帳（不下單、不推播；/lanes 看）
     if th.get("lanes_enabled", True):
         try:
             import lanes as _lanes
