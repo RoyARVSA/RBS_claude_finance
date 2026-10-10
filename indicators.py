@@ -589,8 +589,21 @@ def _position_hint(close, high, low, price: float, thresholds: dict) -> dict | N
     }
 
 
+def quiet_yf_download(*args, **kwargs):
+    """yf.download，但暫時把 yfinance 的 logger 調到 CRITICAL 以上：抓價失敗時 yfinance 會自己 logger.error
+    印出「Failed to get ticker 'XXX'」——公開 Actions 日誌不得出現清單外持倉代碼（PITFALLS D14、#83 驗證 Med）。"""
+    import logging
+    lg = logging.getLogger("yfinance")
+    old = lg.level
+    lg.setLevel(logging.CRITICAL + 1)
+    try:
+        return yf.download(*args, **kwargs)
+    finally:
+        lg.setLevel(old)
+
+
 def scan(tickers: list[str], thresholds: dict, calibration: dict | None = None, quiet: bool = False) -> list[dict]:
-    """quiet=True：不逐檔 print（候選池／持倉補掃用——公開 Actions 日誌不印持倉代碼，PITFALLS D14）。"""
+    """quiet=True：不逐檔 print、也壓掉 yfinance 自己的失敗日誌（候選池／持倉補掃用——公開 Actions 日誌不印持倉代碼，PITFALLS D14）。"""
     rsi_lo  = thresholds.get("rsi_oversold",    35)
     rsi_hi  = thresholds.get("rsi_overbought",  68)
     chg_th  = thresholds.get("price_change_pct", 3.0)
@@ -604,10 +617,10 @@ def scan(tickers: list[str], thresholds: dict, calibration: dict | None = None, 
     if not quiet:
         print(f"Batch-downloading {len(tickers)} tickers (15mo)…")
     try:
-        raw = yf.download(tickers, period="15mo", auto_adjust=True,
-                          progress=False, threads=True)
+        raw = (quiet_yf_download if quiet else yf.download)(tickers, period="15mo", auto_adjust=True,
+                                                            progress=False, threads=True)
     except Exception as e:
-        print(f"Batch download failed: {e}")
+        print(f"Batch download failed: {e if not quiet else type(e).__name__}")
         return []
 
     # Single-ticker download returns flat columns; wrap for uniform handling

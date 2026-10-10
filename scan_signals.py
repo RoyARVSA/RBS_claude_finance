@@ -3609,6 +3609,24 @@ def run_autotrade(state: dict, results: list[dict]) -> str | None:
     if _pool_on and pool_rows:
         results = list(results) + pool_rows
 
+    # 真帳持倉仍沒有評分列（不在 watchlist／鏡像持股／已併入的候選池）→ 補一份「只給真帳 decide」的列（#83）：
+    # 否則 decide 視其評分為 0，「訊號轉弱且獲利 → 了結」永遠不觸發、死錢判斷失真。補列後這些持倉的停損/追蹤
+    # 改用掃描價（與 watchlist 持倉一致；修正前用 Alpaca 市值價）。
+    # 刻意隔離：不進 scored（Shadow／鏡像／車道／Alpha 疊加／估值／meta 的輸入與修正前完全相同）、不進快取與日誌
+    # （公開 repo：避免洩漏清單外持倉）、no_entry（只供出場判斷，不加碼）。候選池已掃到的直接沿用、不重抓。
+    held_rows_raw: list[dict] = []
+    _have_now = {r["ticker"] for r in results}
+    _need = [x for x in positions if x not in _have_now]
+    if _need:
+        _from_pool = {r["ticker"]: r for r in pool_rows}
+        held_rows_raw = [dict(_from_pool[x]) for x in _need if x in _from_pool]
+        _scan_need = [x for x in _need if x not in _from_pool]
+        if _scan_need:
+            try:
+                held_rows_raw += scan(_scan_need, th, calibration=_calibration_weights(state), quiet=True)
+            except Exception as e:
+                print(f"Autotrade: 非清單持倉補掃失敗，略過 {type(e).__name__}")
+
     def _to_scored(r):
         pos = r.get("position") or {}
         price = r.get("price")
@@ -3625,6 +3643,7 @@ def run_autotrade(state: dict, results: list[dict]) -> str | None:
     scored = [_to_scored(r) for r in results]
     _in_real = {s_["ticker"] for s_ in scored}
     pool_only_scored = [_to_scored(r) for r in pool_rows if r["ticker"] not in _in_real]   # 旗標關時只給平行帳
+    held_scored = [dict(_to_scored(r), pool=False, held_extra=True, no_entry=True) for r in held_rows_raw]   # #83：只給真帳 decide
 
     config = _engine_base_config(th)
 
@@ -3644,12 +3663,13 @@ def run_autotrade(state: dict, results: list[dict]) -> str | None:
         import alpha_overlay as ao
         veto_days = int(th.get("ao_earnings_veto_days", 3))
         _upcoming_earnings(state, max_days=max(veto_days, 5), extra=pool_syms)   # 補新財報日快取（含候選池；每日快取，便宜）
-        scored, ao_notes, size_mult = ao.enrich(state, scored, th)
+        scored, ao_notes, size_mult = ao.enrich(state, scored, th,
+                                                keep=list(pool_syms) + [s_["ticker"] for s_ in pool_only_scored])   # 剪枝保留候選池：以「要求的清單」為準，掃描失敗也不縮（#82）
         for n in ao_notes:
             print(f"Alpha: {n}")
         if pool_only_scored:                                   # 平行帳用的候選池列也走同一疊加層（財報 veto 等；Med-2）
             try:
-                pool_only_scored, _, _ = ao.enrich(state, pool_only_scored, th)
+                pool_only_scored, _, _ = ao.enrich(state, pool_only_scored, th, prune=False)   # 不剪 watchlist 的快取（#82）
             except Exception:
                 pass
     except Exception as e:
@@ -3746,8 +3766,9 @@ def run_autotrade(state: dict, results: list[dict]) -> str | None:
                         and float(s.get("price") or 0) > 0})
         if cands and held_syms:
             import quant_tools as qt
-            raw = yf.download(sorted(set(cands) | set(held_syms)), period="3mo",
-                              auto_adjust=True, progress=False, group_by="column")
+            from indicators import quiet_yf_download               # 含持倉代碼 → 失敗時不讓 yfinance 印進公開日誌
+            raw = quiet_yf_download(sorted(set(cands) | set(held_syms)), period="3mo",
+                                    auto_adjust=True, progress=False, group_by="column")
             closes = raw["Close"] if (raw is not None and not raw.empty
                                       and "Close" in raw) else None
             if closes is not None:
@@ -3800,7 +3821,7 @@ def run_autotrade(state: dict, results: list[dict]) -> str | None:
             regime = rg.get("regime") if rg else None
         today = datetime.now(ET).strftime("%Y-%m-%d")
         orders, eng_state, notes = te.decide(
-            scored, positions, equity, bp,
+            scored + held_scored, positions, equity, bp,
             state.get("engine"), regime, config, today)
         state["engine"] = eng_state
         _log_lines("Engine", notes)
@@ -3854,7 +3875,7 @@ def run_autotrade(state: dict, results: list[dict]) -> str | None:
         print("Autotrade: 無符合下單條件")
         return None
 
-    score_by_sym = {s["ticker"]: s.get("score") for s in scored}
+    score_by_sym = {s["ticker"]: s.get("score") for s in scored + held_scored}
     now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     lines = ["🤖 *自動交易執行*（Alpaca 模擬・分層引擎）"]
     journal_entries = []
@@ -3868,7 +3889,7 @@ def run_autotrade(state: dict, results: list[dict]) -> str | None:
             "qty": int(o["qty"]), "score": score_by_sym.get(o["symbol"]),
             # price：/checkup 目前用收盤近似，記下實際掃描價供未來精確 PnL 歸因
             # （Vibe-Trading 式歸因瀑布需要它）
-            "price": next((s.get("price") for s in scored
+            "price": next((s.get("price") for s in scored + held_scored
                            if s["ticker"] == o["symbol"]), None),
             "reason": o["reason"], "mechanism": o.get("mechanism"),
             "submitted": ok,

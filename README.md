@@ -50,7 +50,7 @@ Streamlit 網頁應用 + 獨立的訊號掃描 Bot（GitHub Actions 排程版 / 
   訊號轉弱只在獲利時了結（虧損中續抱等待、不在低點殺出）；
   停損保險絲（7 天 3 次硬停損→全帳戶冷卻）、回撤 10% / 大盤 risk_off →停新倉（回撤鎖觸發後空手滿 10 天自動重置高點）、
   贏家每 +1R 加碼最多 2 次（預設關閉，`/autotrade on` 啟用）
-- **Alpha 資訊疊加層**（`/alpha`）：進場評分自動疊加 SEC 內部人（cluster buy 加分）、
+- **Alpha 資訊疊加層**（`/alpha`）：評分自動疊加（±0.15，影響進場與排序，也影響訊號轉弱出場／死錢／加碼閘；停損等價格出場不受影響）SEC 內部人（cluster buy 加分）、
   選擇權情緒（PCR/IV 偏斜）、空單占流通降評、財報前 3 天禁新倉、
   雙恐貪極度貪婪→新倉風險減半；12 小時快取＋每輪限額輪替抓取（不拖慢 cron）
 - **市場氣象台**（`/weather`）：大盤濾網 v2——市場廣度（11 類股 ETF vs MA50）、
@@ -210,6 +210,7 @@ gics_dashboard.py       GICS 輪動 Dashboard 資料組裝 + 模板嵌入、產�
 gics_template.html      GICS 輪動 Dashboard 畫面（使用者原模板 + 完整週/PIT）
 gics_verify.py          GICS 數字對帳（vs State Street SPY 與 S&P 官方產業指數）
 gics_weekly.py          GICS 每週工作流：成分對照、公司資料、神經網路分類、對帳（gics_weekly.yml）
+factor_research.py      長歷史選股因子研究（當時 S&P 500 成分、月頻 Rank IC、分時段、前 20% vs SPY）＋產業 ETF 輪動（walk-forward、PBO、DSR）
 engine_research.py      引擎回測研究執行器（engine_research.yml 手動觸發；公開資料＋預設參數，結果推 research-results 分支）
 scripts/check_dispatch.py CI：Bot 指令分派不得有重複的無條件分支
 lanes.py                多線平行帳：現行／＋候選池／＋候選池＋meta／風險×2 四條虛擬帳同輪記帳（/lanes）
