@@ -50,7 +50,10 @@ def hist_cap(ticker: str, watchlist) -> int:
 
 def prune_val_hist(vh: dict, watchlist, today: str) -> int:
     """觀察清單外的代碼：最多留 VAL_HIST_CAP_OTHER 列；最後一列超過 VAL_HIST_STALE_DAYS 天 → 刪；
-    空的／壞的（非 list）刪。日期解析不了的不刪（寧可多留）。回改動的代碼數。"""
+    空的／壞的（非 list）刪。日期解析不了的不刪（寧可多留）。回改動的代碼數。
+    還沒解密的密文塊（{"__enc__": …}）或非 dict → 一律不動（否則會把密文的欄位當代碼刪光）。"""
+    if not isinstance(vh, dict) or "__enc__" in vh:
+        return 0
     wl = set(watchlist or [])
     n = 0
     for t in list(vh):
@@ -283,5 +286,7 @@ if __name__ == "__main__":
     assert vh["UNI"] == uni_tail and n == 4                                    # 留最新的 60 列
     assert prune_val_hist(vh, ["WL"], "2026-09-09") == 0                       # 冪等
     assert hist_cap("WL", ["WL"]) == 80 and hist_cap("UNI", ["WL"]) == 60
+    blob = {"__enc__": "v1", "nonce": "x", "data": "y", "tag": "z", "z": 1}       # 未解密的密文塊：不得動
+    assert prune_val_hist(blob, [], "2026-09-09") == 0 and len(blob) == 5 and prune_val_hist(None, [], "2026-09-09") == 0
     print("✅ val_hist 儲存衛生：5 位有效數字、清單外 60 列／400 天、清單內不動、冪等")
     print("\nval_report selftest OK ✅")

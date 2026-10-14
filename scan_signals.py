@@ -304,8 +304,10 @@ def load_state() -> dict:
                             and TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
                         _tg_send(TELEGRAM_TOKEN, TELEGRAM_CHAT_ID,
                                  f"🚨 STATE_ENC_KEY 已設定但 {len(_enc_failed)} 個"
-                                 "加密區塊解不開（key 錯誤或已輪替？）\n"
-                                 "密文已保留未毀損；換 key 前必須先用舊 key 解密取回")
+                                 "加密區塊解不開（key 錯誤或已輪替？或某處跑的是舊版程式——"
+                                 "例如 Streamlit 沒 Reboot、VPS 沒更新）\n"
+                                 "密文已保留未毀損；*先確認各處程式版本一致，別急著換 key*；"
+                                 "換 key 前必須先用舊 key 解密取回")
                         _ENC_ALERT_SENT = True
             except ImportError:
                 pass
@@ -2500,12 +2502,19 @@ def refresh_models(state: dict, elapsed_s: float = 0.0, max_n: int = 2, max_age_
     （每檔約 20–40 秒網路）。閉市輪且 elapsed 小才跑；/playbook build 以 force_list 直接指定。
     擴大到選股池是為了讓 VRT 方法的 MoS 有足夠的橫斷面樣本做前瞻 IC（val_report）。預設不影響真帳；
     但若 val_enabled 與 alpha_pool_enabled 都開，選股池代碼的估值會進真帳候選池的部位乘數。
-    每輪順手修剪 val_hist（prune_val_hist：觀察清單外 ≤60 列、400 天沒更新刪除，#88）。
+    每輪先修剪 val_hist（prune_val_hist：觀察清單外 ≤60 列、400 天沒更新刪除，#88；auto_refresh 關也照修；
+    val_hist 解不開而鎖定時不修）。注意 /clear、/remove 後的下一輪，移出者會從 80 列剪到 60 列。
     """
     th = state.get("thresholds") or {}
+    today = datetime.now(ET).strftime("%Y-%m-%d")
+    if force_list is None and "val_hist" not in (state.get("__enc_locked__") or {}):
+        try:                                               # 修剪不受 model_auto_refresh 影響（便宜、冪等）
+            import val_report as _vr
+            _vr.prune_val_hist(state.setdefault("val_hist", {}), state.get("watchlist") or [], today)
+        except Exception as e:
+            print(f"Models: val_hist 修剪失敗 {type(e).__name__}")
     if not th.get("model_auto_refresh", True) and not force_list:
         return []
-    today = datetime.now(ET).strftime("%Y-%m-%d")
     if force_list is None:
         if elapsed_s > 60 or market_status().get("open"):
             return []
@@ -2518,11 +2527,6 @@ def refresh_models(state: dict, elapsed_s: float = 0.0, max_n: int = 2, max_age_
             _ntop = max(0, min(200, int(float(th.get("model_universe_top", 50)))))
         except Exception:                                   # inf → OverflowError 也要接住
             _ntop = 50
-        try:
-            import val_report as _vr
-            _vr.prune_val_hist(state.setdefault("val_hist", {}), wl, today)
-        except Exception as e:
-            print(f"Models: val_hist 修剪失敗 {type(e).__name__}")
         if _ntop > 0:
             try:
                 import universe as _un
@@ -2568,7 +2572,7 @@ def refresh_models(state: dict, elapsed_s: float = 0.0, max_n: int = 2, max_age_
 
 
 def maybe_refresh_screen(state: dict, elapsed_s: float = 0.0, force: bool = False) -> dict | None:
-    """候選篩選（screener）：閉市閒置輪每 7 天刷新一次（Stage 3 ≤ 8 檔/次）；/screen 可 force。"""
+    """候選篩選（screener）：每個閉市日一批（Stage 3 ≤ 8 檔/次、單檔 screen_ttl_days 天更新）；/screen 可 force。"""
     th = state.get("thresholds") or {}
     try:
         import screener as scn
