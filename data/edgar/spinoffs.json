@@ -1,5 +1,5 @@
 {
- "note": "S&P 500 母公司分拆除權日：網路研究 149 筆＋補漏 14 筆，逐筆對抗核對（2026-10）。used=true 者進 edgar_pit.SPINOFFS。非投資建議。",
+ "note": "S&P 500 母公司分拆除權日：網路研究 149 筆＋補漏 14 筆，逐筆對抗核對（2026-10；查核工具額度不足者另行重核）。used=true 者進 edgar_pit.SPINOFFS。非投資建議。",
  "events": [
   {
    "parent": "CVC",
@@ -74,7 +74,7 @@
    "value_pct": null,
    "verdict": "reject",
    "used": false,
-   "why_excluded": "reject",
+   "why_excluded": "unverified (tool limit)",
    "sources": [
     "https://www.sec.gov/Archives/edgar/data/804055/000080405510000079/ex99oct1pr.htm",
     "https://www.cahill.com/news/firm-news/100918",
@@ -114,22 +114,6 @@
    ]
   },
   {
-   "parent": "MRO",
-   "parent_now": "MRO",
-   "spun": "Marathon Petroleum Corp",
-   "ex_date": "2011-07-01",
-   "kind": "pro_rata_spin",
-   "value_pct": 40,
-   "verdict": "confirmed",
-   "used": true,
-   "why_excluded": null,
-   "sources": [
-    "https://sec.gov/Archives/edgar/data/101778/000119312511151791/dex991.htm",
-    "https://www.sec.gov/Archives/edgar/data/0001510295/000151029514000004/mpc-20131231x10k.htm",
-    "https://ir.marathonoil.com/2011-07-01-Marathon-Oil-Corporation-Becomes-Independent-Upstream-Company"
-   ]
-  },
-  {
    "parent": "CVC",
    "parent_now": "CVC",
    "spun": "AMC Networks Inc. (Rainbow Media)",
@@ -143,6 +127,22 @@
     "https://www.sec.gov/Archives/edgar/data/0001514991/000095012311060204/y91761exv99w1.htm",
     "https://www.cablefax.com/wp-content/uploads/2014/02/cfax060711.pdf",
     "https://nexttv.com/news/amc-networks-stock-born-327558"
+   ]
+  },
+  {
+   "parent": "MRO",
+   "parent_now": "MRO",
+   "spun": "Marathon Petroleum Corp",
+   "ex_date": "2011-07-01",
+   "kind": "pro_rata_spin",
+   "value_pct": 40,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://sec.gov/Archives/edgar/data/101778/000119312511151791/dex991.htm",
+    "https://www.sec.gov/Archives/edgar/data/0001510295/000151029514000004/mpc-20131231x10k.htm",
+    "https://ir.marathonoil.com/2011-07-01-Marathon-Oil-Corporation-Becomes-Independent-Upstream-Company"
    ]
   },
   {
@@ -362,7 +362,7 @@
    "value_pct": 7,
    "verdict": "reject",
    "used": false,
-   "why_excluded": "reject",
+   "why_excluded": "unverified (tool limit)",
    "sources": [
     "https://www.sec.gov/Archives/edgar/data/0000079879/000119312513025330/d473133dex991.htm",
     "https://www.sec.gov/Archives/edgar/data/79879/000119312513033170/d474216dex991.htm",
@@ -488,12 +488,13 @@
    "ex_date": "2013-12-02",
    "kind": "pro_rata_spin",
    "value_pct": 19,
-   "verdict": "reject",
-   "used": false,
-   "why_excluded": "reject",
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
    "sources": [
     "https://investors.tranetechnologies.com/news-and-events/news-releases/news-release-details/2013/Ingersoll-Rand-Announces-Record-and-Distribution-Dates-for-Spin-Off-of-Allegion/default.aspx",
-    "https://www.allegion.com/corp/en/news/year/2013/ingersoll-rand-completes-spinoff-of-allegion.html"
+    "https://www.allegion.com/corp/en/news/year/2013/record-distribution-dates-allegion.html",
+    "https://boxoptions.com/assets/BOXOnnMemo203219.pdf"
    ]
   },
   {
@@ -503,12 +504,13 @@
    "ex_date": "2014-02-03",
    "kind": "pro_rata_spin",
    "value_pct": 13,
-   "verdict": "reject",
-   "used": false,
-   "why_excluded": "reject",
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
    "sources": [
-    "https://www.sec.gov/Archives/edgar/data/0001587732/000119312514033274/d668917dex991.htm",
-    "https://press.spglobal.com/2014-01-27-ONE-Gas-Set-to-Join-the-S-P-MidCap-400"
+    "https://ir.oneok.com/news-and-events/press-releases/archive/01-08-2014",
+    "https://www.sec.gov/Archives/edgar/data/0001587732/000119312514018661/d660522dex991.htm",
+    "https://www.sec.gov/Archives/edgar/data/0001587732/000119312514033274/d668917dex991.htm"
    ]
   },
   {
@@ -520,7 +522,7 @@
    "value_pct": 16,
    "verdict": "reject",
    "used": false,
-   "why_excluded": "reject",
+   "why_excluded": "duplicate (same event confirmed in another entry)",
    "sources": [
     "https://dovercorporation.gcs-web.com/node/12661",
     "https://press.spglobal.com/2014-02-24-Knowles-Set-to-Join-the-S-P-MidCap-400-8x8-Universal-Insurance-to-Join-S-P-SmallCap-600"
@@ -551,7 +553,7 @@
    "value_pct": 11,
    "verdict": "reject",
    "used": false,
-   "why_excluded": "reject",
+   "why_excluded": "duplicate (same event confirmed in another entry)",
    "sources": [
     "https://www.sec.gov/Archives/edgar/data/0001411488/000119312514144911/d711870dex991.htm",
     "https://www.sec.gov/Archives/edgar/data/0000086144/000008614414000040/swy-9614x10q.htm"
@@ -582,7 +584,7 @@
    "value_pct": 65,
    "verdict": "reject",
    "used": false,
-   "why_excluded": "reject",
+   "why_excluded": "duplicate (same event confirmed in another entry)",
    "sources": [
     "https://press.spglobal.com/2014-04-24-Navient-Under-Armour-Set-to-Join-the-S-P-500-SLM-PolyOne-to-Join-S-P-MidCap-400-Aceto-to-Join-S-P-SmallCap-600"
    ]
@@ -610,12 +612,13 @@
    "ex_date": "2014-05-29",
    "kind": "pro_rata_spin",
    "value_pct": 6,
-   "verdict": "reject",
-   "used": false,
-   "why_excluded": "reject",
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
    "sources": [
-    "https://press.spglobal.com/2014-05-22-Washington-Prime-Group-NOW-Civeo-Set-to-Join-S-P-MidCap-400-UTi-Worldwide-General-Cable-Matthews-International-to-Join-S-P-SmallCap-600",
-    "https://www.insideindianabusiness.com/?p=15130"
+    "https://www.sec.gov/Archives/edgar/data/0001063761/000110465914035590/a14-12175_1ex99d1.htm",
+    "https://investors.simon.com/news-releases/news-release-details/simon-property-group-announces-completion-spin-washington-prime",
+    "https://boxoptions.com/assets/BOXOnnMemo203345.pdf"
    ]
   },
   {
@@ -624,12 +627,14 @@
    "spun": "NOW Inc. (DistributionNOW)",
    "ex_date": "2014-06-02",
    "kind": "pro_rata_spin",
-   "value_pct": 10,
-   "verdict": "reject",
-   "used": false,
-   "why_excluded": "reject",
+   "value_pct": 9.5,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
    "sources": [
-    "https://press.spglobal.com/2014-05-22-Washington-Prime-Group-NOW-Civeo-Set-to-Join-S-P-MidCap-400-UTi-Worldwide-General-Cable-Matthews-International-to-Join-S-P-SmallCap-600"
+    "https://nationaloilva.gcs-web.com/news-releases/news-release-details/national-oilwell-varco-board-directors-approves-spin-now-inc",
+    "https://www.sec.gov/Archives/edgar/data/0001021860/000119312514177372/d718934dex991.htm",
+    "https://www.sec.gov/Archives/edgar/data/0001021860/000119312514227089/d738339d8k.htm"
    ]
   },
   {
@@ -641,7 +646,7 @@
    "value_pct": 4,
    "verdict": "reject",
    "used": false,
-   "why_excluded": "reject",
+   "why_excluded": "unverified (tool limit)",
    "sources": [
     "https://press.spglobal.com/2014-06-02-Time-Set-to-Join-S-P-MidCap-400-Bob-Evans-Farms-to-Join-S-P-SmallCap-600"
    ]
@@ -657,7 +662,9 @@
    "used": false,
    "why_excluded": "reject",
    "sources": [
-    "https://press.spglobal.com/2014-06-24-Affiliated-Managers-Group-Set-to-Join-S-P-500-LaSalle-Hotel-Properties-Rayonier-Advanced-Materials-TimkenSteel-Belden-to-Join-the-S-P-MidCap-400-Others-to-Join-S-P-SmallCap-600"
+    "https://press.spglobal.com/2014-06-24-Affiliated-Managers-Group-Set-to-Join-S-P-500-LaSalle-Hotel-Properties-Rayonier-Advanced-Materials-TimkenSteel-Belden-to-Join-the-S-P-MidCap-400-Others-to-Join-S-P-SmallCap-600",
+    "https://www.sec.gov/Archives/edgar/data/0001597672/000119312514217351/d656767dex991.htm",
+    "https://www.sec.gov/Archives/edgar/data/52827/000005282714000041/a2014separationclosingprof.htm"
    ]
   },
   {
@@ -831,22 +838,6 @@
    ]
   },
   {
-   "parent": "MAS",
-   "parent_now": "MAS",
-   "spun": "TopBuild Corp",
-   "ex_date": "2015-07-01",
-   "kind": "pro_rata_spin",
-   "value_pct": 12,
-   "verdict": "confirmed",
-   "used": true,
-   "why_excluded": null,
-   "sources": [
-    "https://investor.masco.com/news-stream/news-details/2015/Masco-Corporation-Completes-Tax-Free-Spin-off-of-TopBuild-Corp/default.aspx",
-    "https://investor.masco.com/news-stream/news-details/2015/TopBuild-Spin-Off-from-Masco-Corporation-Completed-and-Trading-as-Independent-Company-Begins/default.aspx",
-    "https://www.sec.gov/Archives/edgar/data/0001633931/000110465915049826/a15-15044_1ex99d1.htm"
-   ]
-  },
-  {
    "parent": "BAX",
    "parent_now": "BAX",
    "spun": "Baxalta Inc.",
@@ -890,6 +881,22 @@
    "sources": [
     "https://raw.githubusercontent.com/fja05680/sp500/master/sp500_ticker_start_end.csv",
     "https://www.ghco.com/news-releases/news-release-details/graham-holdings-company-declares-spin-dividend-cable-one-shares/"
+   ]
+  },
+  {
+   "parent": "MAS",
+   "parent_now": "MAS",
+   "spun": "TopBuild Corp",
+   "ex_date": "2015-07-01",
+   "kind": "pro_rata_spin",
+   "value_pct": 12,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://investor.masco.com/news-stream/news-details/2015/Masco-Corporation-Completes-Tax-Free-Spin-off-of-TopBuild-Corp/default.aspx",
+    "https://investor.masco.com/news-stream/news-details/2015/TopBuild-Spin-Off-from-Masco-Corporation-Completed-and-Trading-as-Independent-Company-Begins/default.aspx",
+    "https://www.sec.gov/Archives/edgar/data/0001633931/000110465915049826/a15-15044_1ex99d1.htm"
    ]
   },
   {
@@ -1125,20 +1132,6 @@
    ]
   },
   {
-   "parent": "HON",
-   "parent_now": "HON",
-   "spun": "AdvanSix Inc.",
-   "ex_date": "2016-10-03",
-   "kind": "pro_rata_spin",
-   "value_pct": 0.6,
-   "verdict": "reject",
-   "used": false,
-   "why_excluded": "reject",
-   "sources": [
-    "https://www.sec.gov/Archives/edgar/data/0001673985/000093041317000896/c87482_10k.htm"
-   ]
-  },
-  {
    "parent": "APD",
    "parent_now": "APD",
    "spun": "Versum Materials",
@@ -1155,6 +1148,20 @@
    ]
   },
   {
+   "parent": "HON",
+   "parent_now": "HON",
+   "spun": "AdvanSix Inc.",
+   "ex_date": "2016-10-03",
+   "kind": "pro_rata_spin",
+   "value_pct": 0.6,
+   "verdict": "reject",
+   "used": false,
+   "why_excluded": "reject",
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/0001673985/000093041317000896/c87482_10k.htm"
+   ]
+  },
+  {
    "parent": "JCI",
    "parent_now": "JCI",
    "spun": "Adient plc",
@@ -1168,6 +1175,22 @@
     "https://www.sec.gov/Archives/edgar/data/0000833444/000104746916015901/a2229903zex-99_1.htm",
     "https://investors.adient.com/news-releases/2016/10-31-2016",
     "https://www.garantum.se/globalassets/nyheter/jci.pdf"
+   ]
+  },
+  {
+   "parent": "AA",
+   "parent_now": "HWM",
+   "spun": "Alcoa Corporation",
+   "ex_date": "2016-11-01",
+   "kind": "pro_rata_spin",
+   "value_pct": 26,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/0000004281/000119312516748717/d278490dex991.htm",
+    "https://www.sec.gov/Archives/edgar/data/0000004281/000119312517062657/d293282d10k.htm",
+    "https://www.miaxglobal.com/alert/2016/10/31/miax-corporate-action-alert-alcoa-inc-aa"
    ]
   },
   {
@@ -1202,22 +1225,6 @@
    ]
   },
   {
-   "parent": "AA",
-   "parent_now": "HWM",
-   "spun": "Alcoa Corporation",
-   "ex_date": "2016-11-01",
-   "kind": "pro_rata_spin",
-   "value_pct": 26,
-   "verdict": "confirmed",
-   "used": true,
-   "why_excluded": null,
-   "sources": [
-    "https://www.sec.gov/Archives/edgar/data/0000004281/000119312516748717/d278490dex991.htm",
-    "https://www.sec.gov/Archives/edgar/data/0000004281/000119312517062657/d293282d10k.htm",
-    "https://www.miaxglobal.com/alert/2016/10/31/miax-corporate-action-alert-alcoa-inc-aa"
-   ]
-  },
-  {
    "parent": "CAG",
    "parent_now": "CAG",
    "spun": "Lamb Weston Holdings",
@@ -1226,7 +1233,7 @@
    "value_pct": 25,
    "verdict": "reject",
    "used": false,
-   "why_excluded": "reject",
+   "why_excluded": "duplicate (same event confirmed in another entry)",
    "sources": [
     "https://conagrabrands.com/investor-relations/stock-information/spin-off-information",
     "https://www.miaxglobal.com/sites/default/files/alert-files/CAG_Distribution_40015.pdf"
@@ -1257,7 +1264,7 @@
    "value_pct": 33,
    "verdict": "reject",
    "used": false,
-   "why_excluded": "reject",
+   "why_excluded": "duplicate (same event confirmed in another entry)",
    "sources": [
     "https://miaxglobal.com/sites/default/files/alert-files/XRX_Distribution_40346.pdf",
     "https://www.streetinsider.com/Press+Releases/Xerox+Board+Approves+Terms+of+Separation/12219188.html"
@@ -1288,7 +1295,7 @@
    "value_pct": 10,
    "verdict": "reject",
    "used": false,
-   "why_excluded": "reject",
+   "why_excluded": "duplicate (same event confirmed in another entry)",
    "sources": [
     "https://miaxglobal.com/sites/default/files/alert-files/VAR_Distribution_40553.pdf",
     "https://www.sec.gov/Archives/edgar/data/0001681622/000119312517022649/d146912dex992.htm"
@@ -1319,7 +1326,7 @@
    "value_pct": 18,
    "verdict": "reject",
    "used": false,
-   "why_excluded": "reject",
+   "why_excluded": "duplicate (same event confirmed in another entry)",
    "sources": [
     "https://www.miaxglobal.com/sites/default/files/alert-files/CTXS_Distribution_40570.pdf",
     "https://www.sec.gov/Archives/edgar/data/0000877890/000087789017000106/ctxs06-30x201710xq.htm"
@@ -1348,12 +1355,13 @@
    "ex_date": "2017-02-02",
    "kind": "pro_rata_spin",
    "value_pct": 8,
-   "verdict": "reject",
-   "used": false,
-   "why_excluded": "reject",
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
    "sources": [
-    "https://investors.biogen.com/node/17801",
-    "https://www.sec.gov/Archives/edgar/data/0000875045/000087504517000007/ex991pressrelease2-1x17.htm"
+    "https://www.sec.gov/Archives/edgar/data/875045/000087504517000007/ex991pressrelease2-1x17.htm",
+    "https://investors.biogen.com/node/17831",
+    "https://miaxglobal.com/sites/default/files/alert-files/BIIB_Distribution_40469.pdf"
    ]
   },
   {
@@ -1365,7 +1373,7 @@
    "value_pct": 25,
    "verdict": "reject",
    "used": false,
-   "why_excluded": "reject",
+   "why_excluded": "duplicate (same event confirmed in another entry)",
    "sources": [
     "https://www.miaxglobal.com/sites/default/files/alert-files/HPE_distribution_40929.pdf",
     "https://www.miaxglobal.com/alerts/2017/04/03/miax-options-and-miax-pearl-corporate-action-alert-hewlett-packard-enterprise"
@@ -1393,12 +1401,13 @@
    "spun": "Cars.com Inc.",
    "ex_date": "2017-06-01",
    "kind": "pro_rata_spin",
-   "value_pct": 35,
-   "verdict": "reject",
-   "used": false,
-   "why_excluded": "reject",
+   "value_pct": 34,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
    "sources": [
-    "https://www.sec.gov/Archives/edgar/data/0001683606/000156459017016955/cars-10q_20170630.htm",
+    "https://www.sec.gov/Archives/edgar/data/0000039899/000119312517164289/d392339dex992.htm",
+    "https://www.sec.gov/Archives/edgar/data/0000039899/000003989918000011/tgna-20171231x10k.htm",
     "https://press.spglobal.com/2017-05-24-IHS-Markit-Set-to-Join-S-P-500-TEGNA-and-Cars-com-to-Join-S-P-MidCap-400-J-C-Penney-Time-and-Independence-Realty-Trust-to-Join-S-P-SmallCap-600"
    ]
   },
@@ -1408,13 +1417,14 @@
    "spun": "JBG SMITH Properties",
    "ex_date": "2017-07-18",
    "kind": "pro_rata_spin",
-   "value_pct": 16,
-   "verdict": "reject",
-   "used": false,
-   "why_excluded": "reject",
+   "value_pct": 19,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
    "sources": [
-    "https://miaxglobal.com/sites/default/files/alert-files/VNO_distribution_41500.pdf",
-    "https://www.sec.gov/Archives/edgar/data/0001689796/000104746917004268/a2232527zex-99_1.htm"
+    "https://press.spglobal.com/2017-07-11-JBG-SMITH-Properties-Set-to-Join-S-P-MidCap-400-Chicos-FAS-to-Join-S-P-SmallCap-600",
+    "https://investors.vno.com/news-releases/news-release-details/vornado-announces-completion-spin-jbg-smith-properties-and",
+    "https://www.benzinga.com/node/9787264"
    ]
   },
   {
@@ -1426,7 +1436,7 @@
    "value_pct": 10,
    "verdict": "reject",
    "used": false,
-   "why_excluded": "reject",
+   "why_excluded": "duplicate (same event confirmed in another entry)",
    "sources": [
     "https://investor.metlife.com/news/news-details/2017/MetLife-Completes-Spin-Off-of-Brighthouse-Financial/default.aspx",
     "https://www.miaxglobal.com/sites/default/files/alert-files/MET_distribution_41617.pdf",
@@ -1458,7 +1468,7 @@
    "value_pct": 23,
    "verdict": "reject",
    "used": false,
-   "why_excluded": "reject",
+   "why_excluded": "duplicate (same event confirmed in another entry)",
    "sources": [
     "https://www.sec.gov/Archives/edgar/data/0001645590/000156761917001826/s001851x1_8k.htm",
     "https://miaxglobal.com/sites/default/files/alert-files/HPE_distribution_41713.pdf"
@@ -1489,7 +1499,7 @@
    "value_pct": 4.4,
    "verdict": "reject",
    "used": false,
-   "why_excluded": "reject",
+   "why_excluded": "duplicate (same event confirmed in another entry)",
    "sources": [
     "https://www.insideradio.com/done-deal-entercom-completes-merger-with-cbs-radio/article_c037a7f8-cb9e-11e7-94ad-c74d098a71ed.html",
     "https://www.sec.gov/Archives/edgar/data/0001275272/000119312517313791/d369476ds4a.htm"
@@ -1517,14 +1527,14 @@
    "spun": "Delphi Technologies PLC",
    "ex_date": "2017-12-05",
    "kind": "pro_rata_spin",
-   "value_pct": 16,
-   "verdict": "reject",
-   "used": false,
-   "why_excluded": "reject",
+   "value_pct": 17,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
    "sources": [
-    "https://www.miaxglobal.com/sites/default/files/alert-files/DLPH_Dist_Name_42232.pdf",
-    "https://www.sec.gov/Archives/edgar/data/0001521332/000119312517363912/d453817d8k.htm",
-    "https://ir.aptiv.com/news/news-details/2017/Delphi-Board-of-Directors-Approves-Delphi-Technologies-Spin-off/default.aspx"
+    "https://ir.aptiv.com/news/news-details/2017/Delphi-Board-of-Directors-Approves-Delphi-Technologies-Spin-off/default.aspx",
+    "https://www.sec.gov/Archives/edgar/data/0001521332/000119312517344144/d498099dex994.htm",
+    "https://www.sec.gov/Archives/edgar/data/1521332/000119312517363912/d453817d8k.htm"
    ]
   },
   {
