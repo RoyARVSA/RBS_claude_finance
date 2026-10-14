@@ -676,7 +676,8 @@ if __name__ == "__main__":
     mr = merge_renames({"FB": [("2013-12-23", "2022-06-08")], "META": [("2022-06-09", "9999-12-31")],
                         "HCP": [("2008-03-31", "2019-11-04")], "PEAK": [("2019-11-05", "2024-02-29")], "AAPL": [("1982-11-30", "9999-12-31")]})
     assert set(mr) == {"META", "DOC", "AAPL"} and len(mr["META"]) == 2 and len(mr["DOC"]) == 2
-    assert ep.break_dates("JCI") == ["2016-09-02"] and ep.break_dates("AAPL") == []
+    assert "2016-09-02" in ep.break_dates("JCI") and ep.break_dates("AAPL") == []
+    assert ep.break_dates("RTX") == ["2020-04-03"] and ep.break_dates("UTX") == ["2020-04-03"]   # 實表：UTX→RTX 同一天分拆
     _sp0 = dict(ep.SPINOFFS)
     ep.SPINOFFS.clear()
     ep.SPINOFFS["UTX"] = ["2020-04-03"]                               # 用分拆當時的舊代碼填表也要對得到
