@@ -320,6 +320,6 @@ if __name__ == "__main__":
     assert st6["lanes"]["lanes"]["val"]["positions"] == st6["lanes"]["lanes"]["base"]["positions"]
     assert "估值覆蓋 1 檔" in lanes_text(st5) and "真帳已開估值層" not in lanes_text(st5)
     st5["thresholds"] = {"val_enabled": True}                                     # 真帳已開 → 車道標「＝現行」
-    assert "真帳已開估值層＝現行" in lanes_text(st5)
+    assert lanes_text(st5).count("真帳已開估值層＝現行") == 1                      # 只標在估值車道那一行
     print("✅ 3 淨值歷史／殭屍倉／文字／reset／壞列／晚加入車道自帶起算基準／估值層車道只影響自己")
     print("\nlanes selftest OK ✅")

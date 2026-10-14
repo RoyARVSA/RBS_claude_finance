@@ -240,6 +240,13 @@ def _selftest() -> int:
     def _boom(*a, **k):
         raise AssertionError("不該抓價格")
     assert "早於" in run_one("value end=2010", wl, fetch_fn=_boom) and "早於" in run_one("factors end=2003", wl, fetch_fn=_boom)
+    # 邊界：各自的預設起點（value 2011、factors 2004）之後的 end 不能被誤擋
+    _ep.load = lambda path=None: vstore
+    try:
+        assert "早於" not in run_one("value end=2012", wl, fetch_fn=lambda s, p: {}, periods=vper)
+    finally:
+        _ep.load = _orig
+    assert "早於" not in run_one("factors end=2008", wl, fetch_fn=lambda s, p: {}, periods=vper)
     assert parse_kv(["end=2020"])[0] == {"end": "2020-12-31"} and parse_kv(["start=20x4"])[1] and parse_kv(["sample=5"])[1]
     assert parse_kv(["composite=maybe"])[1] and "早於" in run_one("factors start=2020 end=2010", wl)
     assert parse_kv(["start=2004", "end=2020-06-30", "q=20%", "sample=300", "composite=off"])[0] == \

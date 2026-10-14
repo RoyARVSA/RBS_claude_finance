@@ -279,11 +279,13 @@ if __name__ == "__main__":
           "UNI": [{"d": f"2026-0{1 + i // 30}-{1 + i % 28:02d}"} for i in range(70)],   # 清單外 70 列 → 剪到 60
           "OLD": [{"d": "2025-07-01"}],                                       # 清單外 > 400 天 → 刪
           "KEEP": [{"d": "2025-09-01"}],                                      # 清單外 373 天 → 留（移出者一年內仍可評估）
-          "BAD": [{"d": "not-a-date"}], "EMPTY": [], "JUNK": {"x": 1}}
+          "BAD": [{"d": "not-a-date"}], "EMPTY": [], "JUNK": {"x": 1},
+          "LONG": [{"d": f"2024-0{1 + i % 9}-01"} for i in range(9)] + [{"d": "2026-09-01"}] * 61}   # 最舊列 > 400 天、最新列近 → 留
+    long_tail = vh["LONG"][-60:]
     uni_tail = vh["UNI"][-60:]
     n = prune_val_hist(vh, ["WL"], "2026-09-09")
-    assert set(vh) == {"WL", "UNI", "KEEP", "BAD"} and len(vh["WL"]) == 90 and len(vh["UNI"]) == 60, {k: len(v) for k, v in vh.items()}
-    assert vh["UNI"] == uni_tail and n == 4                                    # 留最新的 60 列
+    assert set(vh) == {"WL", "UNI", "KEEP", "BAD", "LONG"} and len(vh["WL"]) == 90 and len(vh["UNI"]) == 60, {k: len(v) for k, v in vh.items()}
+    assert vh["UNI"] == uni_tail and vh["LONG"] == long_tail and n == 5         # 留最新的 60 列；過期看最後一列
     assert prune_val_hist(vh, ["WL"], "2026-09-09") == 0                       # 冪等
     assert hist_cap("WL", ["WL"]) == 80 and hist_cap("UNI", ["WL"]) == 60
     blob = {"__enc__": "v1", "nonce": "x", "data": "y", "tag": "z", "z": 1}       # 未解密的密文塊：不得動

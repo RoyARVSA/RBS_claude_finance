@@ -252,6 +252,7 @@ if __name__ == "__main__":
     assert decrypt_block(flip, KEY) is None                # 拿掉旗標 → tag 不符
     flip2 = dict(raw, z=1)
     assert decrypt_block(flip2, KEY) is None               # 加上旗標 → tag 不符
+    assert _open(flip, KEY) is None and _open(flip2, KEY) is None   # 擋在 tag 層（不是靠解壓縮／JSON 失敗）
     # 邊界挪移偽造（對抗驗證 Low）：nonce 多吃一個 byte 讓 HMAC 輸入完全相同 → 必須被擋（nonce 長度）
     n0, c0 = base64.b64decode(eb["nonce"]), base64.b64decode(eb["data"])
     shift = {"__enc__": "v1", "nonce": base64.b64encode(n0 + c0[:1]).decode(),

@@ -280,11 +280,15 @@ def load(path: Path | str = OUT_PATH) -> dict | None:
 
 
 def ticker_to_company(store: dict) -> dict:
-    """{代碼: 公司}：抽取時對上的代碼（含 RENAMES 舊代碼）。代碼重複使用的早期期間另由 reuse_ok() 遮掉。"""
+    """{代碼: 公司}：抽取時對上的代碼（含 RENAMES 舊代碼）＋各自的現行代碼（canonical）。
+    離開指數後才改名的公司（ADS→BFH、GPS→GAP、WYND→TNL）成分表只有舊代碼，回測卻用現行代碼抓價格
+    → 兩個都要對得到（對抗驗證 Low）。既有對應優先。代碼重複使用的早期期間另由 reuse_ok() 遮掉。"""
     out = {}
     for c in (store.get("companies") or {}).values():
         for t in c.get("tickers") or []:
             out[t] = c
+    for t, c in list(out.items()):
+        out.setdefault(canonical(t), c)
     return out
 
 
@@ -304,13 +308,16 @@ def canonical(ticker: str) -> str:
 
 
 def break_dates(ticker: str) -> list[str]:
-    """「斷點」：這天以前的申報不再代表這個代碼的現況——代碼重複使用日＋分拆除權日（SPINOFFS）。
-    斷點之前申報的模型／財報，在斷點（含）之後失效，等下一份年報。"""
+    """「斷點」：代碼重複使用日＋分拆除權日（SPINOFFS）。**期末早於斷點**的年報，於斷點（含）之後失效，
+    等下一份期末在斷點之後的年報——看期末不看申報日：分拆後才申報、但期末在分拆前的年報仍含被分拆事業。
+    表的鍵一律正規化成現行代碼再比對（填表時用分拆當時的舊代碼也對得到）。"""
     t = canonical(ticker)
-    out = list(SPINOFFS.get(t, ()))
-    if t in TICKER_REUSE:
-        out.append(TICKER_REUSE[t])
-    return sorted(out)
+    out = []
+    for table in (SPINOFFS, {k: [v] for k, v in TICKER_REUSE.items()}):
+        for k, ds in table.items():
+            if canonical(k) == t:
+                out.extend(ds)
+    return sorted(set(out))
 
 
 # ── 4. Colab 進入點（需網路；SEC 擋雲端 IP 時退回手動下載）──────────────────────
