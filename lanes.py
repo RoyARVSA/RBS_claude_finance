@@ -210,6 +210,8 @@ def lanes_text(state: dict, real_equity: float | None = None, real_start: float 
             tag = "（候選池閘門未過＝現行）"
         if name == "pool_meta" and not fl.get("meta_usable"):
             tag = "（meta 未過閘門＝候選池）"
+        if name == "val" and (state.get("thresholds") or {}).get("val_enabled"):
+            tag = "（真帳已開估值層＝現行）"
         if s["equity"] is None:
             lines.append(f"• {LANE_LABELS[name]}{tag}：尚無資料")
             continue
@@ -316,6 +318,8 @@ if __name__ == "__main__":
     st6: dict = {}
     run_lanes(st6, scored, {"max_positions": 10}, "risk_on", T)                  # 沒給 val_ctx → val 車道＝base
     assert st6["lanes"]["lanes"]["val"]["positions"] == st6["lanes"]["lanes"]["base"]["positions"]
-    assert "估值覆蓋 1 檔" in lanes_text(st5)
+    assert "估值覆蓋 1 檔" in lanes_text(st5) and "真帳已開估值層" not in lanes_text(st5)
+    st5["thresholds"] = {"val_enabled": True}                                     # 真帳已開 → 車道標「＝現行」
+    assert "真帳已開估值層＝現行" in lanes_text(st5)
     print("✅ 3 淨值歷史／殭屍倉／文字／reset／壞列／晚加入車道自帶起算基準／估值層車道只影響自己")
     print("\nlanes selftest OK ✅")

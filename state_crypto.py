@@ -11,6 +11,10 @@ paper 帳戶淨值、引擎簿記、全部策略參數攤在陽光下（審查�
   • keystream = HMAC-SHA256(key, nonce ‖ counter) 區塊串接，XOR 明文
   • 完整性：tag = HMAC-SHA256(key, nonce ‖ ciphertext)，解密先驗 tag
   • 每次加密隨機 nonce——同內容每次密文不同（公開 diff 看不出「沒變」）
+  • 加密前 zlib 壓縮（區塊帶 "z":1、tag 改用 b"tagz" 域分隔＝旗標也受驗證）：
+    隨機 nonce 讓每次 commit 的密文都是全新內容、git 無法差異壓縮 → 先壓縮把每次
+    commit 的增量砍到約 1/5–1/9（#88）。讀取端同時支援舊的未壓縮區塊；
+    **舊版程式讀到壓縮區塊＝解密失敗→當鎖定、密文原樣保留（不會毀資料），升級後重開即可**
 
 誠實邊界（文件同步聲明）：
   • 這是「防瀏覽級」保護（擋公開 repo 的路人與爬蟲），非審計級 AEAD；
@@ -34,6 +38,7 @@ import hashlib
 import hmac
 import json
 import os
+import zlib
 
 # 加密的 state 頂層鍵（其餘留明文：watchlist/weather/signal_history 等
 # 皆為公開資料的衍生，加密徒增體積）
@@ -66,19 +71,30 @@ def _keystream(key: bytes, nonce: bytes, n: int) -> bytes:
     return out[:n]
 
 
-def encrypt_block(obj, key: str) -> dict:
-    """任意 JSON 可序列化物件 → {"__enc__":"v1", nonce, data, tag}。"""
+def _tag_prefix(z: bool) -> bytes:
+    return b"tagz" if z else b"tag"
+
+
+def encrypt_block(obj, key: str, compress: bool = True) -> dict:
+    """任意 JSON 可序列化物件 → {"__enc__":"v1", nonce, data, tag[, z]}（預設先 zlib 壓縮，見檔頭 #88）。"""
     kb = hashlib.sha256(key.encode("utf-8")).digest()
     nonce = os.urandom(16)
-    pt = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+    pt = json.dumps(obj, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    z = bool(compress)
+    if z:
+        pt = zlib.compress(pt, 9)
     ct = bytes(a ^ b for a, b in zip(pt, _keystream(kb, nonce, len(pt))))
     # b"tag" 前綴＝域分隔：tag 與 keystream 同 key，不加前綴在極端邊角
-    # （len(ct)=8 且恰等於 counter bytes）會洩 keystream 塊（對抗驗證 Low-2）
-    tag = hmac.new(kb, b"tag" + nonce + ct, hashlib.sha256).hexdigest()
-    return {_MAGIC: "v1",
-            "nonce": base64.b64encode(nonce).decode(),
-            "data": base64.b64encode(ct).decode(),
-            "tag": tag}
+    # （len(ct)=8 且恰等於 counter bytes）會洩 keystream 塊（對抗驗證 Low-2）；
+    # 壓縮區塊用 b"tagz"：竄改 z 旗標＝tag 不符（不會拿未壓縮規則去解壓縮資料）
+    tag = hmac.new(kb, _tag_prefix(z) + nonce + ct, hashlib.sha256).hexdigest()
+    out = {_MAGIC: "v1",
+           "nonce": base64.b64encode(nonce).decode(),
+           "data": base64.b64encode(ct).decode(),
+           "tag": tag}
+    if z:
+        out["z"] = 1
+    return out
 
 
 def is_enc(blob) -> bool:
@@ -93,10 +109,13 @@ def decrypt_block(blob: dict, key: str):
         kb = hashlib.sha256(key.encode("utf-8")).digest()
         nonce = base64.b64decode(blob["nonce"])
         ct = base64.b64decode(blob["data"])
-        want = hmac.new(kb, b"tag" + nonce + ct, hashlib.sha256).hexdigest()
+        z = blob.get("z") == 1
+        want = hmac.new(kb, _tag_prefix(z) + nonce + ct, hashlib.sha256).hexdigest()
         if not hmac.compare_digest(want, str(blob.get("tag", ""))):
             return None
         pt = bytes(a ^ b for a, b in zip(ct, _keystream(kb, nonce, len(ct))))
+        if z:
+            pt = zlib.decompress(pt)
         return json.loads(pt.decode("utf-8"))
     except Exception:
         return None
@@ -207,5 +226,35 @@ if __name__ == "__main__":
     eb = encrypt_block(big, KEY)
     assert decrypt_block(eb, KEY) == big
     print("✅ 6 journal 級大物件")
+
+    # 7) 壓縮（#88）：預設壓縮且變小、舊格式（未壓縮）仍可讀、竄改 z 旗標＝None、
+    #    舊版讀取端（不認 z）讀壓縮區塊＝失敗（→ 當鎖定保留），絕不回壞資料
+    raw = encrypt_block(big, KEY, compress=False)
+    assert "z" not in raw and eb.get("z") == 1
+    assert len(eb["data"]) * 3 < len(raw["data"]), (len(eb["data"]), len(raw["data"]))
+    assert decrypt_block(raw, KEY) == big                  # 舊格式相容
+    flip = dict(eb)
+    flip.pop("z")
+    assert decrypt_block(flip, KEY) is None                # 拿掉旗標 → tag 不符
+    flip2 = dict(raw, z=1)
+    assert decrypt_block(flip2, KEY) is None               # 加上旗標 → tag 不符
+
+    def _legacy_decrypt(blob, key):                         # 舊版 decrypt_block 的邏輯（不認 z）
+        try:
+            kb = hashlib.sha256(key.encode("utf-8")).digest()
+            nonce, ct = base64.b64decode(blob["nonce"]), base64.b64decode(blob["data"])
+            if not hmac.compare_digest(hmac.new(kb, b"tag" + nonce + ct, hashlib.sha256).hexdigest(), blob["tag"]):
+                return None
+            pt = bytes(a ^ b for a, b in zip(ct, _keystream(kb, nonce, len(ct))))
+            return json.loads(pt.decode("utf-8"))
+        except Exception:
+            return None
+    assert _legacy_decrypt(eb, KEY) is None and _legacy_decrypt(raw, KEY) == big
+    # state 級：舊未壓縮塊與新壓縮塊混在同一份 state 都能讀；再存一次全部變壓縮
+    mixed = {"watchlist": ["AAPL"], "engine": raw, "lanes": encrypt_block({"x": 1}, KEY)}
+    dm, fm = decrypt_state(mixed, KEY)
+    assert fm == [] and dm["engine"] == big and dm["lanes"] == {"x": 1}
+    assert encrypt_state(dm, KEY)["engine"].get("z") == 1
+    print("✅ 7 壓縮區塊：變小、舊格式相容、旗標受驗證、舊版讀取端安全失敗")
 
     print("\nstate_crypto selftest OK ✅")

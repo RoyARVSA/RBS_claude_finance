@@ -2370,7 +2370,7 @@ MODEL_OVERRIDE_KEYS = ("rev_g", "opm_target", "beta", "wacc", "tgr", "tax", "gui
 def run_company_model(state: dict, ticker: str, today: str) -> tuple[str, dict | None]:
     """
     /model 主體：fin_data（PIT 三表）+ 市場資料 + 預估快照 + 品質評分 → company_model。
-    人工覆蓋存 state["models"][T]["overrides"]（加密區）；估值歷史 state["val_hist"][T]（週頻、cap 80）。
+    人工覆蓋存 state["models"][T]["overrides"]（加密區）；估值歷史 state["val_hist"][T]（週頻、觀察清單 cap 80／其他 60）。
     回 (文字, 結果 dict|None)。任何失敗回錯誤文字，不拋。
     """
     import fin_data as fd
@@ -2405,15 +2405,18 @@ def run_company_model(state: dict, ticker: str, today: str) -> tuple[str, dict |
     try:
         vh = state.setdefault("val_hist", {}).setdefault(ticker, [])
         sc, sig = res.get("scenarios", {}), res.get("signal", {})
-        row = {"d": today, "px": profile.get("price"), "bear": sc.get("bear"), "base": sc.get("base"),
-               "bull": sc.get("bull"), "mos": sig.get("mos"), "verdict": sig.get("verdict"),
-               "method": res.get("method")}
+        import val_report as _vr                       # 數字壓 5 位有效數字（加密區塊體積，#88）
+        _m = _vr._f(sig.get("mos"))
+        row = {"d": today, "px": _vr.sig5(profile.get("price")), "bear": _vr.sig5(sc.get("bear")),
+               "base": _vr.sig5(sc.get("base")), "bull": _vr.sig5(sc.get("bull")),
+               "mos": round(_m, 4) if _m is not None else None,
+               "verdict": sig.get("verdict"), "method": res.get("method")}
         wk = lambda ds: datetime.strptime(ds[:10], "%Y-%m-%d").isocalendar()[:2]
         if vh and wk(vh[-1]["d"]) == wk(today):
             vh[-1] = row
         else:
             vh.append(row)
-        del vh[:-80]
+        del vh[:-_vr.hist_cap(ticker, state.get("watchlist"))]
     except Exception:
         pass
     txt = cm.model_text(res, ticker) + "\n\n" + ql.quality_text(q, ticker)
@@ -2495,7 +2498,9 @@ def refresh_models(state: dict, elapsed_s: float = 0.0, max_n: int = 2, max_age_
     閒置輪輪替建模：watchlist ∪ 選股池前 model_universe_top 名（預設 50；0＝只建 watchlist）內
     「未建模或 val_hist 超過 max_age_days」者——watchlist 優先、各自最舊優先，每輪 ≤ max_n 檔
     （每檔約 20–40 秒網路）。閉市輪且 elapsed 小才跑；/playbook build 以 force_list 直接指定。
-    擴大到選股池是為了讓 VRT 方法的 MoS 有足夠的橫斷面樣本做前瞻 IC（val_report），不影響真帳（val_enabled 仍預設關）。
+    擴大到選股池是為了讓 VRT 方法的 MoS 有足夠的橫斷面樣本做前瞻 IC（val_report）。預設不影響真帳；
+    但若 val_enabled 與 alpha_pool_enabled 都開，選股池代碼的估值會進真帳候選池的部位乘數。
+    每輪順手修剪 val_hist（prune_val_hist：觀察清單外 ≤60 列、400 天沒更新刪除，#88）。
     """
     th = state.get("thresholds") or {}
     if not th.get("model_auto_refresh", True) and not force_list:
@@ -2511,8 +2516,13 @@ def refresh_models(state: dict, elapsed_s: float = 0.0, max_n: int = 2, max_age_
         uni: list[str] = []
         try:
             _ntop = max(0, min(200, int(float(th.get("model_universe_top", 50)))))
-        except (TypeError, ValueError):
+        except Exception:                                   # inf → OverflowError 也要接住
             _ntop = 50
+        try:
+            import val_report as _vr
+            _vr.prune_val_hist(state.setdefault("val_hist", {}), wl, today)
+        except Exception as e:
+            print(f"Models: val_hist 修剪失敗 {type(e).__name__}")
         if _ntop > 0:
             try:
                 import universe as _un
@@ -4006,12 +4016,13 @@ def main() -> int:
     if maybe_rebuild_universe(state, time.monotonic() - _t0):
         save_state(state)
 
-    # Step 1.9: 公司模型輪替更新（閉市閒置輪；每輪 ≤2 檔、7 天一輪；供 /playbook 佈局計畫）
-    if refresh_models(state, time.monotonic() - _t0):
+    # Step 1.9: 候選篩選每日一批（閉市閒置輪）——排在模型輪替前：模型候選一多（選股池前 50）
+    # 每輪都會吃掉 60 秒預算，篩選會被連續擠掉（#88）；篩選一天只跑一次，模型只少一輪
+    if maybe_refresh_screen(state, time.monotonic() - _t0):
         save_state(state)
 
-    # Step 1.10: 候選篩選每週刷新（閉市閒置輪）+ 每月估值治理月報
-    if maybe_refresh_screen(state, time.monotonic() - _t0):
+    # Step 1.10: 公司模型輪替更新（閉市閒置輪；每輪 ≤2 檔、7 天一輪；供 /playbook 佈局計畫）+ 每月估值治理月報
+    if refresh_models(state, time.monotonic() - _t0):
         save_state(state)
     if _should_send_valreport(state):
         try:

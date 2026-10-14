@@ -142,8 +142,8 @@ def run_factor_research(toks: list[str], fetch_fn=None, periods: dict | None = N
     if kind == "value":
         if set(kv) - {"start", "end", "q"}:
             return "⚠️ value 只吃 start=／end=／q=（例 value start=2011）"
-        if kv.get("start") and kv.get("end") and kv["start"] >= kv["end"]:
-            return "⚠️ start 必須早於 end"
+        if kv.get("end") and kv.get("start", "2011-01-01") >= kv["end"]:    # 預設起點也要比（end=2010 不先抓一輪價格）
+            return "⚠️ start 必須早於 end（value 預設 start=2011）"
         import value_research as vr
         f3 = (lambda syms, start: fetch_fn(syms, "")) if fetch_fn else None
         return vr.run_value(kv.get("start", "2011-01-01"), kv.get("end"), kv.get("q", 0.2), periods=periods,
@@ -153,8 +153,8 @@ def run_factor_research(toks: list[str], fetch_fn=None, periods: dict | None = N
             return "⚠️ sectors 只吃 start=（例 sectors start=1999）"
         f2 = (lambda syms, start: fetch_fn(syms, "")) if fetch_fn else None
         return fr.run_sectors(kv.get("start", "1999-01-01"), fetch_fn=f2)["text"]
-    if kv.get("start") and kv.get("end") and kv["start"] >= kv["end"]:
-        return "⚠️ start 必須早於 end"
+    if kv.get("end") and kv.get("start", "2004-01-01") >= kv["end"]:
+        return "⚠️ start 必須早於 end（factors 預設 start=2004）"
     f2 = (lambda syms, start: fetch_fn(syms, "")) if fetch_fn else None
     return fr.run_factors(kv.get("start", "2004-01-01"), kv.get("end"), kv.get("q", 0.2), kv.get("composite", True),
                           kv.get("sample"), kv.get("seed", 1), periods=periods, fetch_fn=f2)["text"]
@@ -236,6 +236,10 @@ def _selftest() -> int:
     finally:
         _ep.load = _orig
     assert "VRT 方法" in vt and "MoS" in vt, vt[:300]
+
+    def _boom(*a, **k):
+        raise AssertionError("不該抓價格")
+    assert "早於" in run_one("value end=2010", wl, fetch_fn=_boom) and "早於" in run_one("factors end=2003", wl, fetch_fn=_boom)
     assert parse_kv(["end=2020"])[0] == {"end": "2020-12-31"} and parse_kv(["start=20x4"])[1] and parse_kv(["sample=5"])[1]
     assert parse_kv(["composite=maybe"])[1] and "早於" in run_one("factors start=2020 end=2010", wl)
     assert parse_kv(["start=2004", "end=2020-06-30", "q=20%", "sample=300", "composite=off"])[0] == \

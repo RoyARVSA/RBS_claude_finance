@@ -96,6 +96,9 @@ TICKER_REUSE = {"JCI": "2016-09-02", "CB": "2016-01-14", "IR": "2020-03-02", "DO
                 "DD": "2019-06-03", "GM": "2010-11-18", "FOXA": "2019-03-20", "FOX": "2019-03-20",
                 "NWSA": "2013-06-28", "NWS": "2013-06-28", "ADT": "2018-01-19", "SNDK": "2025-02-24"}
 # （保守遮罩：寧可少算一段，也不要把別家公司的財報接到這個代碼）
+# 分拆除權日（S&P 500 母公司把子公司股票配給股東；鍵＝母公司現行代碼）：除權後價格下跳，但前一份年報
+# 仍含被分拆事業 → 估值看起來很便宜。回測把除權日當斷點（break_dates）。資料：網路查證（見 data/edgar/README.md）
+SPINOFFS: dict[str, list[str]] = {}
 DEI_TAGS = {"cover_shares": ["EntityCommonStockSharesOutstanding"]}     # 封面股數（申報日附近的流通股）
 FLOW_FIELDS = {"revenue", "gross_profit", "operating_income", "pretax_income", "tax_provision", "net_income",
                "interest_expense", "diluted_shares", "sga", "rnd", "da", "capex", "sbc", "cfo", "buyback",
@@ -186,6 +189,9 @@ def pit_periods(company: dict, as_of: str, max_periods: int = 5) -> list[dict]:
     rows = company.get("rows") or []
     vis = _visible(rows, as_of)
     tag_pos = {t: i for i, t in enumerate(TAGS)}
+    by_tag: dict[int, list] = {}                             # 先依科目分桶（逐科目掃全部可見值太慢）
+    for k, vf in vis.items():
+        by_tag.setdefault(k[0], []).append((k, vf))
     ends = sorted({k[1] for k in vis if k[2] is not None}, reverse=True)
     # 同一財年可能有 52/53 週差異：期末相距 < 20 天視為同一期，保留較新者
     uniq: list[str] = []
@@ -198,23 +204,24 @@ def pit_periods(company: dict, as_of: str, max_periods: int = 5) -> list[dict]:
         if len(periods) >= max_periods:                      # 有效期別才佔名額
             break
         row = {"period_end": pe, "freq": "A", "source": "edgar"}
+        filed_of: dict[str, str] = {}                        # 每個科目取自哪一天的申報（股數換拆股基準用）
         filed_max = ""
         for field, tags in list(FIELD_TAGS.items()) + list(DEI_TAGS.items()):
             # 逐期合併：先取「涵蓋這一期的最新一份申報」，再在那份申報裡依科目優先序挑——
             # 避免舊的高優先科目蓋過新申報以低優先科目重編的數字（驗證 Low：ASC 606／重編混基準）
             cands = []
             for rank, t in enumerate(tags):
-                ti = tag_pos[t]
-                for k, (v, filed) in vis.items():
-                    if k[0] == ti and ((field in FLOW_FIELDS and k[2] is not None and _near(k[1], pe)) or
-                                       (field not in FLOW_FIELDS and k[2] is None and (_near(k[1], pe) or
-                                        (field == "cover_shares" and 0 <= _days(pe, k[1]) <= 120)))):
+                for k, (v, filed) in by_tag.get(tag_pos[t], ()):
+                    if ((field in FLOW_FIELDS and k[2] is not None and _near(k[1], pe)) or
+                            (field not in FLOW_FIELDS and k[2] is None and (_near(k[1], pe) or
+                             (field == "cover_shares" and 0 <= _days(pe, k[1]) <= 120)))):
                         cands.append((filed, -rank, v))
             val = None
             if cands:
                 fl = max(c[0] for c in cands)
                 val = max((c for c in cands if c[0] == fl), key=lambda c: c[1])[2]
                 filed_max = max(filed_max, fl)
+                filed_of[field] = fl
             row[field] = val
         cur_ = row.get("debt_cur_total")
         if cur_ is None and (row.get("debt_lt_cur") is not None or row.get("debt_st") is not None):
@@ -231,9 +238,11 @@ def pit_periods(company: dict, as_of: str, max_periods: int = 5) -> list[dict]:
             row["capex"] = -row["capex"]                      # 統一負值（現金流出），同 fin_data
         if row.get("shares_out") is None and row.get("cover_shares") is not None:
             row["shares_out"] = row["cover_shares"]
+            filed_of["shares_out"] = filed_of.get("cover_shares")
         row["ebit"] = row.get("operating_income")
         row["fcf"] = (row["cfo"] + row["capex"]) if row.get("cfo") is not None and row.get("capex") is not None else None
         row["available_at"] = (date.fromisoformat(filed_max) + timedelta(days=1)).isoformat() if filed_max else None
+        row["_filed"] = filed_of
         if any(row.get(k) is not None for k in ("revenue", "net_income", "total_assets")):
             periods.append(row)
     return periods
@@ -283,6 +292,25 @@ def reuse_ok(ticker: str, d: str) -> bool:
     """代碼在日期 d 是否屬於現在這家公司（TICKER_REUSE：此日期前是別家公司 → False）。"""
     s = TICKER_REUSE.get(_norm(ticker))
     return s is None or str(d)[:10] >= s
+
+
+def canonical(ticker: str) -> str:
+    """改名鏈走到底（FB→META、HCP→DOC）：回測一律用現行代碼抓價格、併成分期間。"""
+    t, seen = _norm(ticker), set()
+    while t in RENAMES and t not in seen:
+        seen.add(t)
+        t = RENAMES[t]
+    return t
+
+
+def break_dates(ticker: str) -> list[str]:
+    """「斷點」：這天以前的申報不再代表這個代碼的現況——代碼重複使用日＋分拆除權日（SPINOFFS）。
+    斷點之前申報的模型／財報，在斷點（含）之後失效，等下一份年報。"""
+    t = canonical(ticker)
+    out = list(SPINOFFS.get(t, ()))
+    if t in TICKER_REUSE:
+        out.append(TICKER_REUSE[t])
+    return sorted(out)
 
 
 # ── 4. Colab 進入點（需網路；SEC 擋雲端 IP 時退回手動下載）──────────────────────
