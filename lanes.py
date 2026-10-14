@@ -9,6 +9,8 @@ lanes.py – 多線平行帳（策略車道）：同一輪訊號下，讓「舊�
   pool_meta  + meta-labeling 勝率倍數（模型沒過閘門時 = pool）
   risk2      現行候選、單筆風險 ×2（預設 1%→2%，恐貪/節流縮放保留）、單檔上限 20%——
              2026-10 研究候選（隨機 S&P 500 抽樣 15 組：報酬≈舊邏輯、回撤低得多），前瞻驗證中
+  val        現行候選＋估值層（VRT 方法 company_model 的 MoS → 部位乘數／不加碼／提早加碼／排序傾斜）——
+             真帳 val_enabled 預設關，這條車道讓估值層「開了會怎樣」前瞻累積；其餘車道輸入不變
 
 每輪 cron：decide → 以掃描價成交（單邊 0.05% 成本）→ 每日淨值一點；殭屍倉防護同鏡像帳。
 state["lanes"] 加密（虛擬持倉 ≈ 引擎當下會持有什麼，與真帳高度相關）。/lanes 看比較表；不推播每筆單。
@@ -26,15 +28,20 @@ LANE_DEFS = {                      # name → (用候選池, 用 meta 倍數, �
     "pool_meta": (True, True, {}),
     # risk_mult：乘在真帳 config 的 risk_pct 上（保留恐貪縮倉／反思節流的相對縮放）；其餘鍵直接覆蓋
     "risk2": (False, False, {"risk_mult": 2.0, "max_position_pct": 0.20}),
+    # val：不是引擎設定鍵——run_lanes 把呼叫端給的估值層上下文（val_ctx）併進這條車道的列
+    "val": (False, False, {"val": True}),
 }
 LANE_LABELS = {"base": "現行（watchlist）", "pool": "＋候選池", "pool_meta": "＋候選池＋meta 部位",
-               "risk2": "風險 ×2／單檔 20%（研究候選）"}
+               "risk2": "風險 ×2／單檔 20%（研究候選）", "val": "估值層開（VRT 方法 MoS 調部位）"}
+LANE_ONLY_KEYS = ("val",)          # 車道層用的覆蓋鍵（不進引擎 config）
 
 
 def lane_config(config: dict, overrides: dict) -> dict:
     """車道的引擎設定＝真帳 config 疊上覆蓋（純函數，不改原 config）。"""
     out = dict(config or {})
     for k, v in (overrides or {}).items():
+        if k in LANE_ONLY_KEYS:
+            continue
         if k == "risk_mult":
             import trade_engine as te
             out["risk_pct"] = float(out.get("risk_pct", te.ENGINE_DEFAULTS["risk_pct"])) * float(v)
@@ -89,7 +96,8 @@ def _apply(book: dict, orders: list[dict], prices: dict) -> int:
 
 
 def run_lanes(state: dict, scored: list[dict], config: dict, regime: str | None, today: str,
-              meta_usable: bool = False, pool_available: bool = False, real_equity: float | None = None) -> dict:
+              meta_usable: bool = False, pool_available: bool = False, real_equity: float | None = None,
+              val_ctx: dict | None = None) -> dict:
     """
     每輪呼叫。scored：完整列（含候選池列 pool=True、meta_mult/meta_p 已附）；config：與真帳同。
     就地更新 state["lanes"]；回 {name: n_filled}。任何車道炸掉不影響其他車道。
@@ -120,6 +128,10 @@ def run_lanes(state: dict, scored: list[dict], config: dict, regime: str | None,
             book["spy_start"] = prices["SPY"]           # 加入當輪 SPY 缺報價 → 之後補（同整組層級的做法）
         try:
             rows = lane_scored(scored, use_pool, use_meta)
+            if (overrides or {}).get("val"):           # 估值層車道：併入估值上下文（val_mult/val_tilt/val_no_add/val_early）
+                vc = val_ctx or {}
+                rows = [dict(r, **vc.get(r["ticker"], {})) for r in rows]
+                book["val_cov"] = sum(1 for r in rows if r["ticker"] in vc)
             pos_book = book.setdefault("positions", {})
             for sym, p in list(pos_book.items()):                     # 殭屍倉：連續 N 天無報價 → 凍結價強平
                 if sym in prices:
@@ -206,8 +218,10 @@ def lanes_text(state: dict, real_equity: float | None = None, real_start: float 
             spy0 = b.get("spy_start")
             own = (f"（{b['started']} 起" + (f"，SPY 同期 {L['spy_last'] / spy0 - 1:+.2%}" if spy0 and L.get("spy_last")
                                               else "，SPY 基準缺——勿與下方 SPY 同期直接比") + "）")
+        if name == "val":
+            own += f"［估值覆蓋 {int(b.get('val_cov') or 0)} 檔］"
         ce = b.get("cfg_eff")
-        if ce:
+        if ce and name != "val":
             own += f"［實際單筆風險 {ce['risk_pct']:.1%}、單檔上限 {ce['max_position_pct']:.0%}］"
         lines.append(f"• {LANE_LABELS[name]}{tag}{own}：{s['ret']:+.2%}｜回撤 {s['max_dd']:.1%}｜"
                      f"持倉 {s['n_pos']}｜成交 {s['n_trades']}｜{s['days']} 日" + (f"｜⚠️ 上輪錯誤 {s['error']}" if s.get("error") else ""))
@@ -292,5 +306,16 @@ if __name__ == "__main__":
     assert st4["lanes"]["lanes"]["risk2"]["spy_start"] is None and "SPY 基準缺" in lanes_text(st4)
     run_lanes(st4, up, {"max_positions": 10}, "risk_on", "2026-09-23")
     assert st4["lanes"]["lanes"]["risk2"]["spy_start"] == 525.0
-    print("✅ 3 淨值歷史／殭屍倉／文字／reset／壞列／晚加入車道自帶起算基準")
+    # 6) 估值層車道：只有 val 車道吃 val_ctx（AAA 部位 ×0.5）；其他車道列不變；val 不進引擎 config
+    st5: dict = {}
+    vctx = {"AAA": {"val_mult": 0.5, "val_tilt": 0.0, "val_no_add": False, "val_early": False}}
+    run_lanes(st5, scored, {"max_positions": 10}, "risk_on", T, val_ctx=vctx)
+    L5 = st5["lanes"]["lanes"]
+    assert L5["val"]["positions"]["AAA"]["qty"] == L5["base"]["positions"]["AAA"]["qty"] // 2, (L5["val"]["positions"], L5["base"]["positions"])
+    assert L5["val"]["val_cov"] == 1 and "val" not in lane_config({}, LANE_DEFS["val"][2])
+    st6: dict = {}
+    run_lanes(st6, scored, {"max_positions": 10}, "risk_on", T)                  # 沒給 val_ctx → val 車道＝base
+    assert st6["lanes"]["lanes"]["val"]["positions"] == st6["lanes"]["lanes"]["base"]["positions"]
+    assert "估值覆蓋 1 檔" in lanes_text(st5)
+    print("✅ 3 淨值歷史／殭屍倉／文字／reset／壞列／晚加入車道自帶起算基準／估值層車道只影響自己")
     print("\nlanes selftest OK ✅")

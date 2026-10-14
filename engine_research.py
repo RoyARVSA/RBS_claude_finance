@@ -63,11 +63,11 @@ def run_one(cmd: str, watchlist: list[str], fetch_fn=None, periods: dict | None 
     toks = cmd.split()
     if toks and toks[0].lower() in ("/engtest", "engtest"):
         toks = toks[1:]                                  # 容忍貼上時帶了指令前綴
-    if toks and toks[0].lower() in ("factors", "sectors"):
+    if toks and toks[0].lower() in ("factors", "sectors", "value"):
         return run_factor_research(toks, fetch_fn=fetch_fn, periods=periods)
     if toks and toks[0].lower() not in ("run", "opt", "pit", "try", "clear") \
             and toks[0].lower() not in eb.PERIOD_DAYS and "=" not in toks[0]:
-        return f"⚠️ 未知子指令 `{toks[0]}`（可用：run／opt／pit／try／factors／sectors）"
+        return f"⚠️ 未知子指令 `{toks[0]}`（可用：run／opt／pit／try／factors／sectors／value）"
     if toks and toks[0].lower() == "run":
         toks = toks[1:]
     a = eb.parse_engtest_args(toks)
@@ -139,6 +139,15 @@ def run_factor_research(toks: list[str], fetch_fn=None, periods: dict | None = N
     kv, errs = parse_kv(toks[1:])
     if errs:
         return "⚠️ " + "；".join(errs)
+    if kind == "value":
+        if set(kv) - {"start", "end", "q"}:
+            return "⚠️ value 只吃 start=／end=／q=（例 value start=2011）"
+        if kv.get("start") and kv.get("end") and kv["start"] >= kv["end"]:
+            return "⚠️ start 必須早於 end"
+        import value_research as vr
+        f3 = (lambda syms, start: fetch_fn(syms, "")) if fetch_fn else None
+        return vr.run_value(kv.get("start", "2011-01-01"), kv.get("end"), kv.get("q", 0.2), periods=periods,
+                            price_fn=f3)["text"]
     if kind == "sectors":
         if set(kv) - {"start"}:
             return "⚠️ sectors 只吃 start=（例 sectors start=1999）"
@@ -215,6 +224,18 @@ def _selftest() -> int:
     assert "選股因子研究" in ft and "12-1 動能" in ft, ft[:300]
     assert "未知參數" in run_one("factors bogus=1", wl) and "不合法" in run_one("factors q=0.9", wl)
     assert "只吃 start" in run_one("sectors q=0.2", wl)
+    assert "value 只吃" in run_one("value composite=on", wl)
+    import value_research as vr
+    vstore, vprices, vper = vr._synthetic(n_co=40)
+    import edgar_pit as _ep
+    _orig = _ep.load
+    _ep.load = lambda path=None: vstore
+    try:
+        vt = run_one("value start=2012 end=2018-12-31", wl, fetch_fn=lambda s, p: {k: vprices[k] for k in s if k in vprices},
+                     periods=vper)
+    finally:
+        _ep.load = _orig
+    assert "VRT 方法" in vt and "MoS" in vt, vt[:300]
     assert parse_kv(["end=2020"])[0] == {"end": "2020-12-31"} and parse_kv(["start=20x4"])[1] and parse_kv(["sample=5"])[1]
     assert parse_kv(["composite=maybe"])[1] and "早於" in run_one("factors start=2020 end=2010", wl)
     assert parse_kv(["start=2004", "end=2020-06-30", "q=20%", "sample=300", "composite=off"])[0] == \
