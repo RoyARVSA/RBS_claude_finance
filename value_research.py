@@ -369,18 +369,25 @@ def forward_returns(R: pd.DataFrame, k: int) -> pd.DataFrame:
     窗內任一期缺值 → NaN（不拿缺資料的期間湊數）。"""
     if k == 1:
         return R.copy()
-    G = np.log1p(R)
+    G = np.log1p(R.clip(lower=-0.999999))                # −100% 的月份不能變成 −inf 被當缺值丟掉
     return np.expm1(G.rolling(k, min_periods=k).sum().shift(-(k - 1)))
 
 
 def horizon_ic(F: pd.DataFrame, R: pd.DataFrame, M: pd.DataFrame, k: int) -> dict:
-    """k 期前瞻報酬的橫斷面 Rank IC；重疊 → Newey-West 落差至少 k−1。"""
+    """k 期前瞻報酬的橫斷面 Rank IC；重疊 → Newey-West 落差至少 k−1。
+    重疊視窗下 NW 仍會高估顯著性（模擬：12 個月 |t|>1.96 約 12%，#92）→ 另給「不重疊 t」（每 k 期取一期）。"""
     import factor_eval as fe
     ics = fr.rank_ic_rows(F.reindex(R.index), forward_returns(R, k), M)
     if len(ics) < 12:
         return {"n": len(ics)}
     lag = max(k - 1, int(4 * (len(ics) / 100) ** (2 / 9)), 1)
-    return {"n": len(ics), "mean": float(ics.mean()), "t_nw": fe._nw_t(ics, lag)}
+    out = {"n": len(ics), "mean": float(ics.mean()), "t_nw": fe._nw_t(ics, lag)}
+    if k > 1:
+        sub = ics.iloc[::k]
+        if len(sub) >= 6 and float(sub.std(ddof=1)) > 0:
+            out["t_nonoverlap"] = float(sub.mean() / (sub.std(ddof=1) / math.sqrt(len(sub))))
+            out["n_nonoverlap"] = len(sub)
+    return out
 
 
 def gics_l1_map() -> dict:
@@ -404,7 +411,8 @@ def sector_neutral(F: pd.DataFrame, M: pd.DataFrame, sec: dict, min_group: int =
             continue
         sub = F[cols].where(ok[cols])
         cnt = sub.notna().sum(axis=1)
-        pct = sub.rank(axis=1, pct=True)
+        # (rank − 0.5)／n：每組平均都是 0.5。rank(pct=True) 的組平均＝(n+1)/2n，小產業會系統性排前面（#92）
+        pct = (sub.rank(axis=1) - 0.5).div(cnt.replace(0, np.nan), axis=0)
         out[cols] = pct.where(cnt >= min_group, axis=0)
     return out
 
@@ -415,9 +423,9 @@ def sector_tilt(F: pd.DataFrame, M: pd.DataFrame, sec: dict, q: float = 0.2) -> 
     pct = F.where(ok).rank(axis=1, pct=True)
     top = pct > 1 - q
     cols = list(F.columns)
-    lab = pd.Series([sec.get(c) for c in cols], index=cols)
+    lab = pd.Series([sec.get(c) or "na" for c in cols], index=cols)
     diffs = {}
-    for s in GICS_L1:
+    for s in list(GICS_L1) + ["na"]:                    # na＝現行 GICS 對不到（多半是已下市者）
         m = (lab == s).values
         if not m.any():
             continue
@@ -441,13 +449,15 @@ def mos_distribution(F: pd.DataFrame, M: pd.DataFrame) -> dict:
 def robustness(F: dict, R: pd.DataFrame, M: pd.DataFrame, spy_r: pd.Series, q: float = 0.2, sec: dict | None = None) -> dict:
     sec = sec if sec is not None else gics_l1_map()
     out = {"horizons": {k: {h: horizon_ic(F[k], R, M, h) for h in HORIZONS} for k in ROBUST_KEYS if k in F}}
-    if "mos" in F and sec:
+    if "mos" in F and sec and any(c in sec for c in F["mos"].columns):
         Fn = sector_neutral(F["mos"].reindex(R.index), M, sec)
         top = fr.quantile_portfolio(Fn, R, M, q, top=True)
         out["neutral"] = {"ic": {h: horizon_ic(Fn, R, M, h) for h in (1, 12)},
                           "top_vs_spy": fr._excess(top["net"], spy_r) if len(top) else {}}
         out["tilt"] = sector_tilt(F["mos"].reindex(R.index), M, sec, q)
         out["n_sector"] = sum(1 for c in F["mos"].columns if c in sec)
+        out["n_all"] = len(F["mos"].columns)
+    out["q"] = q
     if "mos" in F:
         out["dist"] = mos_distribution(F["mos"].reindex(R.index), M)
     return out
@@ -457,21 +467,26 @@ def robustness_text(rb: dict) -> str:
     def _ic(d):
         if d.get("mean") is None:
             return "—"
-        return f"{d['mean']:+.3f}（t {fr._f(d.get('t_nw'), 1)}）"
-    lines = ["\n*穩健性檢查*（價值訊號走得慢：看 1／3／6／12 個月前瞻報酬；重疊期間用 Newey-West 修正 t）"]
+        no = d.get("t_nonoverlap")
+        return f"{d['mean']:+.3f}（t {fr._f(d.get('t_nw'), 1)}" + (f"／不重疊 {fr._f(no, 1)}" if no is not None else "") + "）"
+    qq = f"前 {rb.get('q', 0.2):.0%}"
+    lines = ["\n*穩健性檢查*（價值訊號走得慢：看 1／3／6／12 個月前瞻報酬。重疊期間的 t 即使用 Newey-West 修正仍偏高"
+             "（12 個月約要 2.6 才算顯著），以「不重疊 t」為準）"]
     for k, hs in (rb.get("horizons") or {}).items():
         lines.append(f"・{VALUE_LABELS.get(k, k)}：" + "｜".join(f"{h}個月 {_ic(hs[h])}" for h in HORIZONS if h in hs))
     nt = rb.get("neutral")
     if nt:
         vs = nt.get("top_vs_spy") or {}
-        lines.append(f"・產業中性 MoS（同 GICS 產業內排名，拿掉「整個產業便宜」）：1個月 {_ic(nt['ic'].get(1, {}))}｜"
-                     f"12個月 {_ic(nt['ic'].get(12, {}))}｜前 20% vs SPY {fr._p(vs.get('cagr_diff'))}（IR {fr._f(vs.get('ir'))}）")
+        lines.append(f"・產業中性 MoS（同 GICS 產業內排名，拿掉「整個產業便宜」；涵蓋 {rb.get('n_sector', 0)}／{rb.get('n_all', 0)} 家，"
+                     f"現行 GICS 對不到的多半是已下市者）：1個月 {_ic(nt['ic'].get(1, {}))}｜"
+                     f"12個月 {_ic(nt['ic'].get(12, {}))}｜{qq} vs SPY {fr._p(vs.get('cagr_diff'))}（IR {fr._f(vs.get('ir'))}）")
     tl = rb.get("tilt") or {}
     if tl:
         srt = sorted(tl.items(), key=lambda kv: kv[1])
-        over = "、".join(f"{GICS_L1[s]} {v * 100:+.0f}pp" for s, v in srt[::-1][:3] if v > 0)
-        under = "、".join(f"{GICS_L1[s]} {v * 100:+.0f}pp" for s, v in srt[:3] if v < 0)
-        lines.append(f"・MoS 前 20% 的產業偏重（相對可選池）：偏重 {over or '—'}｜偏輕 {under or '—'}")
+        nm = lambda s_: GICS_L1.get(s_, "未分類")            # noqa: E731
+        over = "、".join(f"{nm(s_)} {v * 100:+.0f}pp" for s_, v in srt[::-1][:3] if v >= 0.005)
+        under = "、".join(f"{nm(s_)} {v * 100:+.0f}pp" for s_, v in srt[:3] if v <= -0.005)
+        lines.append(f"・MoS {qq} 的產業偏重（相對可選池）：偏重 {over or '—'}｜偏輕 {under or '—'}")
     ds = rb.get("dist") or {}
     if ds:
         lines.append(f"・MoS 分佈（{ds['n']:,} 個股票月）：中位數 {ds['median']:+.0%}｜10–90% 區間 {ds['p10']:+.0%}～{ds['p90']:+.0%}｜"
@@ -863,13 +878,19 @@ if __name__ == "__main__":
     M10 = pd.DataFrame(True, index=d10[:1], columns=cols10)
     sec10 = {c: ("10" if i < 6 else ("45" if i < 11 else "55")) for i, c in enumerate(cols10)}
     sn = sector_neutral(F10, M10, sec10).iloc[0]
-    assert abs(sn["S5"] - 1.0) < 1e-12 and abs(sn["S6"] - 0.2) < 1e-12 and np.isnan(sn["S11"]), sn   # 公用只有 1 檔 → 空
+    assert abs(sn["S5"] - 5.5 / 6) < 1e-12 and abs(sn["S6"] - 0.1) < 1e-12 and np.isnan(sn["S11"]), sn   # 公用只有 1 檔 → 空
+    assert abs(sn[[f"S{i}" for i in range(6)]].mean() - 0.5) < 1e-12 and abs(sn[[f"S{i}" for i in range(6, 11)]].mean() - 0.5) < 1e-12
     tl = sector_tilt(F10, M10, sec10, 0.25)
     assert abs(sum(tl.values())) < 1e-12 and tl["55"] > 0, tl
+    tl2 = sector_tilt(F10, M10, {k: v for k, v in sec10.items() if k != "S11"}, 0.25)   # 對不到產業的 → 「未分類」那格
+    assert tl2.get("na", 0) > 0 and abs(sum(tl2.values())) < 1e-12, tl2
+    R10b = pd.DataFrame({"A": [-1.0, 0.1, 0.1, 0.1]}, index=d10)
+    assert abs(forward_returns(R10b, 2)["A"].iloc[0] + 1) < 1e-5                       # −100% 不被當缺值丟掉
     sec_syn = {f"C{i:03d}": ("20" if i % 3 == 0 else ("45" if i % 3 == 1 else "30")) for i in range(60)}
     out10 = run_value("2011-01-01", "2019-06-30", store=store, periods=per, price_fn=pf, sectors={}, sec_l1=sec_syn)
     h10 = out10["robust"]["horizons"]["mos"]
     assert h10[1]["mean"] > 0.05 and h10[1]["t_nw"] > 3 and h10[3]["mean"] > 0.05, h10
+    assert h10[3].get("t_nonoverlap") is not None and h10[3]["n_nonoverlap"] < h10[3]["n"] and "t_nonoverlap" not in h10[1]
     assert out10["robust"]["neutral"]["ic"][1]["mean"] > 0.05 and out10["robust"]["dist"]["n"] > 1000
     out10b = run_value("2011-01-01", "2019-06-30", store=store7, periods=per7, price_fn=pf7, sectors={}, sec_l1=sec_syn)
     assert all(abs(v["t_nw"]) < 2.5 for v in out10b["robust"]["horizons"]["mos"].values() if v.get("t_nw") is not None), \
