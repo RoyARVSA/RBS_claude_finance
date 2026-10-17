@@ -116,6 +116,13 @@ def to_basis(periods: list[dict], splits: pd.Series, t: pd.Timestamp) -> tuple[l
     return out, Ft
 
 
+def debt_suspect(p: dict) -> bool:
+    """負債科目漏抓的跡象（#91）：利息費用 > 總資產 0.2%、負債卻 < 4 × 利息（隱含利率 > 25%）。
+    DCF 的權益價值＝企業價值 − 淨負債 → 漏抓負債會把合理價灌高、被誤排進「便宜」那一組。"""
+    ie, td, ta = p.get("interest_expense"), p.get("total_debt"), p.get("total_assets")
+    return bool(ie and ie > 0 and ta and ta > 0 and ie > 0.002 * ta and (td or 0.0) < 4 * ie)
+
+
 def _scaled(x, F):
     return float(x) / F if x is not None and math.isfinite(float(x)) else None
 
@@ -145,6 +152,9 @@ def build_models(company: dict, px: pd.DataFrame, spy_close: pd.Series, rf_serie
             continue
         periods, F = to_basis(periods, sp, md)
         fail = {"date": md, "filed": f, "pe": periods[0].get("period_end"), "base": None}
+        if not cm.NON_DCF_SECTORS.get(sector) and debt_suspect(periods[0]):   # 金融 RIM／地產 DDM 不用淨負債
+            out.append(dict(fail, why="debt"))
+            continue
         price_raw = float(px["Close"].iloc[pos]) * F
         shares = periods[0].get("diluted_shares") or periods[0].get("shares_out")
         if not shares or shares <= 0 or price_raw <= 0:
@@ -269,7 +279,7 @@ def classic_factors(companies: dict, prices: dict, dates: pd.DatetimeIndex, clos
             vals["ey"][i] = _r(ni, mcap)
             vals["fcfy"][i] = _r(fcf, mcap)
             vals["bm"][i] = _r(eq, mcap)
-            vals["roic"][i] = _r(ebit * (1 - tr) if ebit is not None else None, ic)
+            vals["roic"][i] = np.nan if debt_suspect(p0) else _r(ebit * (1 - tr) if ebit is not None else None, ic)
             vals["gpa"][i] = _r(p0.get("gross_profit"), ta)
             vals["accruals"][i] = _r((ni - cfo) if (ni is not None and cfo is not None) else None, ta)
             vals["asset_growth"][i] = (ta / ta_prev - 1) if (ta and ta_prev and ta_prev > 0) else np.nan
@@ -433,9 +443,11 @@ def run_value(start: str = "2011-01-01", end: str | None = None, q: float = 0.2,
     meta = {"start": str(R.index[0].date()), "end": str(R.index[-1].date()), "q": q, "spy": fr.perf(spy_r), "ew": fr.perf(ew_r)}
     n_models = sum(1 for v in models.values() for r in v if r.get("base") is not None)
     n_fail = sum(1 for v in models.values() for r in v if r.get("base") is None)
+    n_debt = sum(1 for v in models.values() for r in v if r.get("why") == "debt")
     n_brk = sum(1 for t in have if breaks.get(t))
     text = (value_text(study, acc_res, cov, meta) + f"\n（共重建 {n_models:,} 份年報模型、{sum(1 for v in models.values() if v)} 家公司"
-            + (f"；{n_fail:,} 份建不了模（該期 MoS 留空）" if n_fail else "")
+            + (f"；{n_fail:,} 份建不了模（該期 MoS 留空"
+               + (f"，其中 {n_debt:,} 份負債科目疑似漏抓" if n_debt else "") + "）" if n_fail else "")
             + (f"；{n_brk} 檔有分拆／代碼重複使用斷點" if n_brk else "") + "）")
     return {"study": study, "coverage": cov, "acc": acc_res, "meta": meta, "models": models, "members": M,
             "factors": F, "text": text}
@@ -637,6 +649,21 @@ if __name__ == "__main__":
     mods6 = build_models(c0, prices6["C000"], prices6["SPY"]["Close"], None, None, "C000", "2014-01-01")
     m16 = [m for m in mods6 if m["filed"] == "2016-02-20"]
     assert m16 and m16[0]["base"] is None and any(m["base"] for m in mods6 if m["filed"] == "2017-02-20"), m16
+    c2 = store6["companies"]["2"]                                      # 負債漏抓（利息很大、負債 0）→ 擋下（#91）
+    ie_i = tpos["InterestExpense"]
+    for r in list(c2["rows"]):
+        if r[0] == debt_i and r[1] == "2015-12-31":
+            c2["rows"].remove(r)
+        if r[0] == rvi and r[1] == "2015-12-31":
+            c2["rows"].append([ie_i, r[1], r[2], r[3] * 0.05, r[4], "10-K"])
+    mods6c = build_models(c2, prices6["C002"], prices6["SPY"]["Close"], None, None, "C002", "2014-01-01")
+    m16c = [m for m in mods6c if m["filed"] == "2016-02-20"]
+    assert m16c and m16c[0]["base"] is None and m16c[0].get("why") == "debt", m16c
+    mods6d = build_models(c2, prices6["C002"], prices6["SPY"]["Close"], None, "Financial Services", "C002", "2014-01-01")
+    assert all(m.get("why") != "debt" for m in mods6d)                 # 金融走 RIM，不看淨負債
+    assert debt_suspect({"interest_expense": 50.0, "total_debt": 100.0, "total_assets": 1e4}) and \
+        not debt_suspect({"interest_expense": 50.0, "total_debt": 1000.0, "total_assets": 1e4}) and \
+        not debt_suspect({"interest_expense": 5.0, "total_debt": None, "total_assets": 1e4})
     c1 = store6["companies"]["1"]                                      # FY2016 缺股數 → 也記 base=None
     c1["rows"] = [r for r in c1["rows"] if not (r[0] == shi and r[1] == "2016-12-31")]
     mods6b = build_models(c1, prices6["C001"], prices6["SPY"]["Close"], None, None, "C001", "2014-01-01")
