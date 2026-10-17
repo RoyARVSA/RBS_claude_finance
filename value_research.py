@@ -356,6 +356,129 @@ def accumulate_portfolio(A: pd.DataFrame, R: pd.DataFrame, M: pd.DataFrame, spy_
             "cash_months": int(cash), "net": df["net"]}
 
 
+# ── 4b. 穩健性檢查：多期 IC、產業中性、前 20% 的產業偏重、MoS 分佈 ────────────────
+
+ROBUST_KEYS = ("mos", "fcfy", "roic", "ey", "bm")
+HORIZONS = (1, 3, 6, 12)
+GICS_L1 = {"10": "能源", "15": "原物料", "20": "工業", "25": "非必需消費", "30": "必需消費", "35": "醫療保健",
+           "40": "金融", "45": "資訊科技", "50": "通訊服務", "55": "公用事業", "60": "不動產"}
+
+
+def forward_returns(R: pd.DataFrame, k: int) -> pd.DataFrame:
+    """R＝逐期報酬（訊號日 i 次日開盤 → 訊號日 i+1 次日開盤）；回訊號日 i 起往後 k 期的累積報酬（重疊）。
+    窗內任一期缺值 → NaN（不拿缺資料的期間湊數）。"""
+    if k == 1:
+        return R.copy()
+    G = np.log1p(R)
+    return np.expm1(G.rolling(k, min_periods=k).sum().shift(-(k - 1)))
+
+
+def horizon_ic(F: pd.DataFrame, R: pd.DataFrame, M: pd.DataFrame, k: int) -> dict:
+    """k 期前瞻報酬的橫斷面 Rank IC；重疊 → Newey-West 落差至少 k−1。"""
+    import factor_eval as fe
+    ics = fr.rank_ic_rows(F.reindex(R.index), forward_returns(R, k), M)
+    if len(ics) < 12:
+        return {"n": len(ics)}
+    lag = max(k - 1, int(4 * (len(ics) / 100) ** (2 / 9)), 1)
+    return {"n": len(ics), "mean": float(ics.mean()), "t_nw": fe._nw_t(ics, lag)}
+
+
+def gics_l1_map() -> dict:
+    """現行 GICS 前兩碼（data/gics/members.json）。"""
+    import json
+    from pathlib import Path
+    p = Path(__file__).resolve().parent / "data" / "gics" / "members.json"
+    try:
+        return {t: str(c)[:2] for t, c in (json.loads(p.read_text()).get("tickers") or {}).items() if str(c)[:2] in GICS_L1}
+    except Exception:
+        return {}
+
+
+def sector_neutral(F: pd.DataFrame, M: pd.DataFrame, sec: dict, min_group: int = 5) -> pd.DataFrame:
+    """同一 GICS 產業、同一期的成分內百分位排名（產業 < min_group 檔 → NaN）：拿掉「整個產業便宜」的成分。"""
+    ok = F.notna() & M.reindex_like(F).fillna(False).astype(bool)
+    out = pd.DataFrame(np.nan, index=F.index, columns=F.columns)
+    for s in set(sec.values()):
+        cols = [c for c in F.columns if sec.get(c) == s]
+        if not cols:
+            continue
+        sub = F[cols].where(ok[cols])
+        cnt = sub.notna().sum(axis=1)
+        pct = sub.rank(axis=1, pct=True)
+        out[cols] = pct.where(cnt >= min_group, axis=0)
+    return out
+
+
+def sector_tilt(F: pd.DataFrame, M: pd.DataFrame, sec: dict, q: float = 0.2) -> dict:
+    """前 q 的產業占比 − 可選池（成分且有值）的產業占比，逐期平均（百分點）。"""
+    ok = F.notna() & M.reindex_like(F).fillna(False).astype(bool)
+    pct = F.where(ok).rank(axis=1, pct=True)
+    top = pct > 1 - q
+    cols = list(F.columns)
+    lab = pd.Series([sec.get(c) for c in cols], index=cols)
+    diffs = {}
+    for s in GICS_L1:
+        m = (lab == s).values
+        if not m.any():
+            continue
+        n_top, n_all = top.sum(axis=1), ok.sum(axis=1)
+        w_top = top.loc[:, m].sum(axis=1) / n_top.replace(0, np.nan)
+        w_all = ok.loc[:, m].sum(axis=1) / n_all.replace(0, np.nan)
+        d = (w_top - w_all).dropna()
+        if len(d):
+            diffs[s] = float(d.mean())
+    return diffs
+
+
+def mos_distribution(F: pd.DataFrame, M: pd.DataFrame) -> dict:
+    v = F.where(M.reindex_like(F).fillna(False).astype(bool)).stack().dropna()
+    if not len(v):
+        return {}
+    return {"n": int(len(v)), "median": float(v.median()), "p10": float(v.quantile(0.1)), "p90": float(v.quantile(0.9)),
+            "gt100": float((v > 1.0).mean()), "lt_m50": float((v < -0.5).mean())}
+
+
+def robustness(F: dict, R: pd.DataFrame, M: pd.DataFrame, spy_r: pd.Series, q: float = 0.2, sec: dict | None = None) -> dict:
+    sec = sec if sec is not None else gics_l1_map()
+    out = {"horizons": {k: {h: horizon_ic(F[k], R, M, h) for h in HORIZONS} for k in ROBUST_KEYS if k in F}}
+    if "mos" in F and sec:
+        Fn = sector_neutral(F["mos"].reindex(R.index), M, sec)
+        top = fr.quantile_portfolio(Fn, R, M, q, top=True)
+        out["neutral"] = {"ic": {h: horizon_ic(Fn, R, M, h) for h in (1, 12)},
+                          "top_vs_spy": fr._excess(top["net"], spy_r) if len(top) else {}}
+        out["tilt"] = sector_tilt(F["mos"].reindex(R.index), M, sec, q)
+        out["n_sector"] = sum(1 for c in F["mos"].columns if c in sec)
+    if "mos" in F:
+        out["dist"] = mos_distribution(F["mos"].reindex(R.index), M)
+    return out
+
+
+def robustness_text(rb: dict) -> str:
+    def _ic(d):
+        if d.get("mean") is None:
+            return "—"
+        return f"{d['mean']:+.3f}（t {fr._f(d.get('t_nw'), 1)}）"
+    lines = ["\n*穩健性檢查*（價值訊號走得慢：看 1／3／6／12 個月前瞻報酬；重疊期間用 Newey-West 修正 t）"]
+    for k, hs in (rb.get("horizons") or {}).items():
+        lines.append(f"・{VALUE_LABELS.get(k, k)}：" + "｜".join(f"{h}個月 {_ic(hs[h])}" for h in HORIZONS if h in hs))
+    nt = rb.get("neutral")
+    if nt:
+        vs = nt.get("top_vs_spy") or {}
+        lines.append(f"・產業中性 MoS（同 GICS 產業內排名，拿掉「整個產業便宜」）：1個月 {_ic(nt['ic'].get(1, {}))}｜"
+                     f"12個月 {_ic(nt['ic'].get(12, {}))}｜前 20% vs SPY {fr._p(vs.get('cagr_diff'))}（IR {fr._f(vs.get('ir'))}）")
+    tl = rb.get("tilt") or {}
+    if tl:
+        srt = sorted(tl.items(), key=lambda kv: kv[1])
+        over = "、".join(f"{GICS_L1[s]} {v * 100:+.0f}pp" for s, v in srt[::-1][:3] if v > 0)
+        under = "、".join(f"{GICS_L1[s]} {v * 100:+.0f}pp" for s, v in srt[:3] if v < 0)
+        lines.append(f"・MoS 前 20% 的產業偏重（相對可選池）：偏重 {over or '—'}｜偏輕 {under or '—'}")
+    ds = rb.get("dist") or {}
+    if ds:
+        lines.append(f"・MoS 分佈（{ds['n']:,} 個股票月）：中位數 {ds['median']:+.0%}｜10–90% 區間 {ds['p10']:+.0%}～{ds['p90']:+.0%}｜"
+                     f"> +100% 占 {ds['gt100']:.0%}｜< −50% 占 {ds['lt_m50']:.0%}")
+    return "\n".join(lines)
+
+
 # ── 5. 進入點 ────────────────────────────────────────────────────────────────
 
 def sector_map() -> dict:
@@ -381,7 +504,7 @@ def merge_renames(periods: dict) -> dict:
 
 
 def run_value(start: str = "2011-01-01", end: str | None = None, q: float = 0.2, store: dict | None = None,
-              periods: dict | None = None, price_fn=None, sectors: dict | None = None) -> dict:
+              periods: dict | None = None, price_fn=None, sectors: dict | None = None, sec_l1: dict | None = None) -> dict:
     import edgar_pit as ep
     store = store if store is not None else ep.load()
     if not store or not store.get("companies"):
@@ -440,6 +563,7 @@ def run_value(start: str = "2011-01-01", end: str | None = None, q: float = 0.2,
     allM = fr.membership_matrix(periods, R.index, members)
     cov = pd.DataFrame({"members": allM.sum(axis=1), "modeled": (M & MOS.reindex_like(M).notna()).sum(axis=1)})
     acc_res = accumulate_portfolio(ACC, R, M, spy_r)
+    rb = robustness(F, R, M, spy_r, q, sec_l1)
     meta = {"start": str(R.index[0].date()), "end": str(R.index[-1].date()), "q": q, "spy": fr.perf(spy_r), "ew": fr.perf(ew_r)}
     n_models = sum(1 for v in models.values() for r in v if r.get("base") is not None)
     n_fail = sum(1 for v in models.values() for r in v if r.get("base") is None)
@@ -448,8 +572,8 @@ def run_value(start: str = "2011-01-01", end: str | None = None, q: float = 0.2,
     text = (value_text(study, acc_res, cov, meta) + f"\n（共重建 {n_models:,} 份年報模型、{sum(1 for v in models.values() if v)} 家公司"
             + (f"；{n_fail:,} 份建不了模（該期 MoS 留空"
                + (f"，其中 {n_debt:,} 份負債科目疑似漏抓" if n_debt else "") + "）" if n_fail else "")
-            + (f"；{n_brk} 檔有分拆／代碼重複使用斷點" if n_brk else "") + "）")
-    return {"study": study, "coverage": cov, "acc": acc_res, "meta": meta, "models": models, "members": M,
+            + (f"；{n_brk} 檔有分拆／代碼重複使用斷點" if n_brk else "") + "）") + robustness_text(rb)
+    return {"study": study, "coverage": cov, "acc": acc_res, "meta": meta, "models": models, "members": M, "robust": rb,
             "factors": F, "text": text}
 
 
@@ -728,5 +852,32 @@ if __name__ == "__main__":
     assert out9["models"].get("BFH") and out9["members"]["BFH"].all(), list(out9["models"])
     g9 = out9["members"][["GOOG", "GOOGL"]]
     assert not (g9["GOOG"] & g9["GOOGL"]).any() and (g9["GOOG"] | g9["GOOGL"]).all() and g9["GOOG"].all()
+    # 10) 穩健性：前瞻報酬算術、產業中性排名、產業偏重加總為 0、有訊號時多期 IC 為正、無訊號時不顯著、文字
+    d10 = pd.date_range("2020-01-31", periods=4, freq="ME")
+    R10 = pd.DataFrame({"A": [0.1, 0.2, -0.1, 0.05], "B": [0.0, np.nan, 0.1, 0.1]}, index=d10)
+    f2 = forward_returns(R10, 2)
+    assert abs(f2["A"].iloc[0] - (1.1 * 1.2 - 1)) < 1e-12 and np.isnan(f2["A"].iloc[3]) and np.isnan(f2["B"].iloc[0])
+    assert forward_returns(R10, 1).equals(R10)
+    cols10 = [f"S{i}" for i in range(12)]
+    F10 = pd.DataFrame([list(range(12))], index=d10[:1], columns=cols10, dtype=float)
+    M10 = pd.DataFrame(True, index=d10[:1], columns=cols10)
+    sec10 = {c: ("10" if i < 6 else ("45" if i < 11 else "55")) for i, c in enumerate(cols10)}
+    sn = sector_neutral(F10, M10, sec10).iloc[0]
+    assert abs(sn["S5"] - 1.0) < 1e-12 and abs(sn["S6"] - 0.2) < 1e-12 and np.isnan(sn["S11"]), sn   # 公用只有 1 檔 → 空
+    tl = sector_tilt(F10, M10, sec10, 0.25)
+    assert abs(sum(tl.values())) < 1e-12 and tl["55"] > 0, tl
+    sec_syn = {f"C{i:03d}": ("20" if i % 3 == 0 else ("45" if i % 3 == 1 else "30")) for i in range(60)}
+    out10 = run_value("2011-01-01", "2019-06-30", store=store, periods=per, price_fn=pf, sectors={}, sec_l1=sec_syn)
+    h10 = out10["robust"]["horizons"]["mos"]
+    assert h10[1]["mean"] > 0.05 and h10[1]["t_nw"] > 3 and h10[3]["mean"] > 0.05, h10
+    assert out10["robust"]["neutral"]["ic"][1]["mean"] > 0.05 and out10["robust"]["dist"]["n"] > 1000
+    out10b = run_value("2011-01-01", "2019-06-30", store=store7, periods=per7, price_fn=pf7, sectors={}, sec_l1=sec_syn)
+    assert all(abs(v["t_nw"]) < 2.5 for v in out10b["robust"]["horizons"]["mos"].values() if v.get("t_nw") is not None), \
+        out10b["robust"]["horizons"]["mos"]
+    t10 = out10["text"]
+    assert "穩健性檢查" in t10 and "產業中性" in t10 and t10.count("*") % 2 == 0 and "_" not in t10, t10[-600:]
+    print(f"✅ 10 穩健性：前瞻報酬、產業中性、偏重加總 0、有訊號 12 個月 IC {h10[12].get('mean', float('nan')):+.3f}、"
+          f"無訊號各期 |t| < 2.5")
+
     print("✅ 9 改名代碼併入現行代碼、離開指數後改名仍建模、雙股權只留一檔、斷點表鍵正規化")
     print("\nvalue_research selftest OK ✅")
