@@ -53,7 +53,7 @@ Telegram 指令（傳給 Bot）：
   /alpha rank|factors|meta – Alpha 脊椎：橫斷面排名／因子 IC 閘門／meta-labeling OOS（夜間工作流產出；無子指令＝資訊疊加層）
   /gics TICKER|verify|exposure [L1-4] – GICS 四層分類查詢／每週數字對帳／持倉產業曝險（只顯示）
   /factor test|add|drop|list – 因子實驗室：DSL 公式 → IC/ICIR/NW t + DSR 帳本；核准者進夜間合成
-  /lanes [reset]          – 多線平行帳：現行／＋候選池／＋候選池＋meta／風險×2 四條虛擬帳同輪比較（含 SPY、真帳同期）
+  /lanes [reset]          – 多線平行帳：現行／＋候選池／＋候選池＋meta／風險×2／估值層開 五條虛擬帳同輪比較（含 SPY、真帳同期）
   /screen                 – 候選篩選（選股池 ∪ 主題 − watchlist；Stage 3 限額；只建議）
   /valreport              – 估值治理月報（覆蓋/事後命中/穩定度/因子 IC/指引覆蓋；每月自動）
   /guidance TICKER [季別] – 指引/KPI 萃取（AV 逐字稿 + LLM 定位轉錄 + 程式驗證）
@@ -149,6 +149,7 @@ SET_CLAMPS = {
     "eng_stop_mult":       (0.25, 5.0),     # 與 trade_engine.decide 夾制一致（/set 回覆＝引擎實際用值）
     "eng_dd_reset_flat_days": (0, 365),     # 回撤鎖空手重置天數（#71）；0 = 不重置
     "eng_max_dd_halt":     (0.02, 0.5),     # 回撤鎖門檻（輸入 10 會等於永不觸發——必須是比例）
+    "model_universe_top":  (0, 200),        # 每週建模範圍：watchlist ∪ 選股池前 N（0＝只建 watchlist）
     "account_size":        (100.0, 1e9),
     "at_max_position_pct": (0.01, 0.50),
     "at_max_positions":    (1.0, 50.0),
@@ -303,8 +304,10 @@ def load_state() -> dict:
                             and TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
                         _tg_send(TELEGRAM_TOKEN, TELEGRAM_CHAT_ID,
                                  f"🚨 STATE_ENC_KEY 已設定但 {len(_enc_failed)} 個"
-                                 "加密區塊解不開（key 錯誤或已輪替？）\n"
-                                 "密文已保留未毀損；換 key 前必須先用舊 key 解密取回")
+                                 "加密區塊解不開（key 錯誤或已輪替？或某處跑的是舊版程式——"
+                                 "例如 Streamlit 沒 Reboot、VPS 沒更新）\n"
+                                 "密文已保留未毀損；*先確認各處程式版本一致，別急著換 key*；"
+                                 "換 key 前必須先用舊 key 解密取回")
                         _ENC_ALERT_SENT = True
             except ImportError:
                 pass
@@ -480,11 +483,12 @@ def _cmd_help() -> str:
         "`/plantest opt [apply]` — 參數尋優：ORB×停損×R:R 掃 27 組，holdout 段把關通過才推薦\n"
         "`/alpha rank|factors|meta` — Alpha 脊椎（夜間工作流）：選股池 400 檔橫斷面排名（因子過 IC 閘門才配權）、因子 IC 表、meta-labeling 勝率模型 OOS 與閘門；`/set alpha_pool_enabled on` 讓前 N 名進候選池、`/set meta_enabled on` 讓部位吃勝率倍數（皆預設關）\n"
         "`/gics TICKER|verify|exposure [L1-4]` — GICS 四層分類（S&P 1500 對照表＋每週神經網路補分類）、每週數字對帳（vs State Street／S&P 官方指數）、持倉產業曝險（超過 40% 標示，只顯示不強制）\n"
-        "`/lanes [reset]` — 多線平行帳：現行 watchlist／＋候選池／＋候選池＋meta 部位／風險×2 單檔 20%（研究候選）四條虛擬帳（各 10 萬起）同一輪訊號並排記帳，含 SPY 與真帳同期；旗標關著也在跑，看完再決定開不開（`/set lanes_enabled off` 關）\n"
+        "`/lanes [reset]` — 多線平行帳：現行 watchlist／＋候選池／＋候選池＋meta 部位／風險×2 單檔 20%（研究候選）／估值層開（VRT 方法 MoS 調部位）五條虛擬帳（各 10 萬起）同一輪訊號並排記帳，含 SPY 與真帳同期；旗標關著也在跑，看完再決定開不開（`/set lanes_enabled off` 關）\n"
         "`/factor test <公式>`｜`add <名稱> <公式>`｜`drop`｜`list` — 因子實驗室：DSL 公式（ret/mom/vol/ma_dist/ext/rsi/volratio/hi_dist/lo_dist）→ IC/ICIR/NW t + DSR 記帳；核准者夜間納入合成\n"
         "`/screen` — 候選篩選：選股池動能前 N ∪ AI 主題 − watchlist，逐批補品質/修正動能（≤8 檔/次、每週閉市輪自動刷新），綜合分排名；只建議、`/add` 後才進建模與佈局\n"
         "`/valreport` — 估值治理月報：覆蓋/過期/待審、各判定的事後命中率、公允價穩定度、MoS 因子 IC、指引覆蓋（每月自動推播；`/set valreport_enabled off` 關）\n"
         "`/guidance TICKER [季別]` — 指引/KPI 萃取：Alpha Vantage 逐字稿 → 便宜 LLM 只做定位轉錄 → 程式驗證（原文逐字回對、數字 regex 回對、修訂 raise/lower 由程式判定、與財報對帳）；通過的項目存加密區供論點監測\n"
+        "`/set model_universe_top 50` — 每週 VRT 方法建模範圍：觀察清單 ∪ 選股池前 N 名（預設 50；0＝只建觀察清單；閉市閒置輪每輪 ≤2 檔）\n"
         "`/set val_enabled on` — 估值層接引擎（預設關）：val_hist 的 MoS → 部位乘數 0.5–1.25×、價高於牛市不加碼、MoS>30% 提早加碼、排序傾斜 ±0.1；先用 `/engtest opt` 看估值層開/關 A/B 是否過 holdout\n"
         "`/rebalance bl` — Black-Litterman：公允價值→期望報酬觀點、信心=情境寬度，先驗等權、單檔上限 25%\n"
         "`/playbook [build N]` — 佈局計畫：把選股池、分析師修正、公司模型（MoS/區間位置）、品質旗標、技術評分、大盤 regime、持倉與論點整合成一份分層計畫（迴避/減碼/累積候選/持有/觀察）+ 四象限 + 權重帶（參考、不下單）；build 逐批建模未建模的 watchlist\n"
@@ -1086,7 +1090,7 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                           "earnings_alert_days", "at_buy_threshold", "at_exit_threshold",
                           "at_max_positions", "at_max_position_pct",
                           "corr_hi", "corr_mid", "screen_max_fetch", "screen_ttl_days", "screen_top",
-                          "event_blackout_days", "alpha_pool_top"}
+                          "event_blackout_days", "alpha_pool_top", "model_universe_top"}
             eng_ok = False
             if key.startswith("eng_"):
                 try:
@@ -1632,7 +1636,7 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                 reply = f"❌ /gics 失敗：{type(e).__name__}"
 
         elif cmd == "/lanes":
-            # 多線平行帳：現行／＋候選池／＋候選池＋meta／風險×2 四條虛擬帳同輪比較（reset 重新起算）
+            # 多線平行帳：現行／＋候選池／＋候選池＋meta／風險×2／估值層開 五條虛擬帳同輪比較（reset 重新起算）
             try:
                 import lanes as _ln
                 if args and args[0].lower() == "reset":
@@ -2368,7 +2372,7 @@ MODEL_OVERRIDE_KEYS = ("rev_g", "opm_target", "beta", "wacc", "tgr", "tax", "gui
 def run_company_model(state: dict, ticker: str, today: str) -> tuple[str, dict | None]:
     """
     /model 主體：fin_data（PIT 三表）+ 市場資料 + 預估快照 + 品質評分 → company_model。
-    人工覆蓋存 state["models"][T]["overrides"]（加密區）；估值歷史 state["val_hist"][T]（週頻、cap 80）。
+    人工覆蓋存 state["models"][T]["overrides"]（加密區）；估值歷史 state["val_hist"][T]（週頻、觀察清單 cap 80／其他 60）。
     回 (文字, 結果 dict|None)。任何失敗回錯誤文字，不拋。
     """
     import fin_data as fd
@@ -2403,15 +2407,18 @@ def run_company_model(state: dict, ticker: str, today: str) -> tuple[str, dict |
     try:
         vh = state.setdefault("val_hist", {}).setdefault(ticker, [])
         sc, sig = res.get("scenarios", {}), res.get("signal", {})
-        row = {"d": today, "px": profile.get("price"), "bear": sc.get("bear"), "base": sc.get("base"),
-               "bull": sc.get("bull"), "mos": sig.get("mos"), "verdict": sig.get("verdict"),
-               "method": res.get("method")}
+        import val_report as _vr                       # 數字壓 5 位有效數字（加密區塊體積，#88）
+        _m = _vr._f(sig.get("mos"))
+        row = {"d": today, "px": _vr.sig5(profile.get("price")), "bear": _vr.sig5(sc.get("bear")),
+               "base": _vr.sig5(sc.get("base")), "bull": _vr.sig5(sc.get("bull")),
+               "mos": round(_m, 4) if _m is not None else None,
+               "verdict": sig.get("verdict"), "method": res.get("method")}
         wk = lambda ds: datetime.strptime(ds[:10], "%Y-%m-%d").isocalendar()[:2]
         if vh and wk(vh[-1]["d"]) == wk(today):
             vh[-1] = row
         else:
             vh.append(row)
-        del vh[:-80]
+        del vh[:-_vr.hist_cap(ticker, state.get("watchlist"))]
     except Exception:
         pass
     txt = cm.model_text(res, ticker) + "\n\n" + ql.quality_text(q, ticker)
@@ -2490,20 +2497,45 @@ def build_playbook(state: dict, today: str) -> dict:
 def refresh_models(state: dict, elapsed_s: float = 0.0, max_n: int = 2, max_age_days: int = 7,
                    force_list: list[str] | None = None) -> list[str]:
     """
-    閒置輪輪替建模：watchlist 內「未建模或 val_hist 超過 max_age_days」者最舊優先，每輪 ≤ max_n 檔
+    閒置輪輪替建模：watchlist ∪ 選股池前 model_universe_top 名（預設 50；0＝只建 watchlist）內
+    「未建模或 val_hist 超過 max_age_days」者——watchlist 優先、各自最舊優先，每輪 ≤ max_n 檔
     （每檔約 20–40 秒網路）。閉市輪且 elapsed 小才跑；/playbook build 以 force_list 直接指定。
+    擴大到選股池是為了讓 VRT 方法的 MoS 有足夠的橫斷面樣本做前瞻 IC（val_report）。預設不影響真帳；
+    但若 val_enabled 與 alpha_pool_enabled 都開，選股池代碼的估值會進真帳候選池的部位乘數。
+    每輪先修剪 val_hist（prune_val_hist：觀察清單外 ≤60 列、400 天沒更新刪除，#88；auto_refresh 關也照修；
+    val_hist 解不開而鎖定時不修）。注意 /clear、/remove 後的下一輪，移出者會從 80 列剪到 60 列。
     """
     th = state.get("thresholds") or {}
+    today = datetime.now(ET).strftime("%Y-%m-%d")
+    if force_list is None and "val_hist" not in (state.get("__enc_locked__") or {}):
+        try:                                               # 修剪不受 model_auto_refresh 影響（便宜、冪等）
+            import val_report as _vr
+            _vr.prune_val_hist(state.setdefault("val_hist", {}), state.get("watchlist") or [], today)
+        except Exception as e:
+            print(f"Models: val_hist 修剪失敗 {type(e).__name__}")
     if not th.get("model_auto_refresh", True) and not force_list:
         return []
-    today = datetime.now(ET).strftime("%Y-%m-%d")
     if force_list is None:
         if elapsed_s > 60 or market_status().get("open"):
             return []
         vh = state.get("val_hist") or {}
         skip = state.get("model_skip") or {}
         cand = []
-        for t in state.get("watchlist") or []:
+        wl = list(state.get("watchlist") or [])
+        uni: list[str] = []
+        try:
+            _ntop = max(0, min(200, int(float(th.get("model_universe_top", 50)))))
+        except Exception:                                   # inf → OverflowError 也要接住
+            _ntop = 50
+        if _ntop > 0:
+            try:
+                import universe as _un
+                _snap = _un.load_latest_snapshot() or {}
+                uni = [r["t"] for r in sorted(_snap.get("top") or [], key=lambda r: r.get("rank", 9e9))
+                       if r.get("t") and r["t"] not in wl][:_ntop]
+            except Exception:
+                uni = []
+        for t in wl + uni:
             try:
                 if skip.get(t) and (datetime.strptime(today, "%Y-%m-%d") - datetime.strptime(str(skip[t]), "%Y-%m-%d")).days < 30:
                     continue
@@ -2516,7 +2548,8 @@ def refresh_models(state: dict, elapsed_s: float = 0.0, max_n: int = 2, max_age_
                 age = 1e9
             if age >= max_age_days:
                 cand.append((t, age))
-        cand.sort(key=lambda x: -x[1])
+        _wlset = set(wl)
+        cand.sort(key=lambda x: (x[0] not in _wlset, -x[1]))          # watchlist 優先，各自最舊優先
         picked = [t for t, _ in cand[:max_n]]
     else:
         picked = list(force_list)[:max_n]
@@ -2539,7 +2572,7 @@ def refresh_models(state: dict, elapsed_s: float = 0.0, max_n: int = 2, max_age_
 
 
 def maybe_refresh_screen(state: dict, elapsed_s: float = 0.0, force: bool = False) -> dict | None:
-    """候選篩選（screener）：閉市閒置輪每 7 天刷新一次（Stage 3 ≤ 8 檔/次）；/screen 可 force。"""
+    """候選篩選（screener）：每個閉市日一批（Stage 3 ≤ 8 檔/次、單檔 screen_ttl_days 天更新）；/screen 可 force。"""
     th = state.get("thresholds") or {}
     try:
         import screener as scn
@@ -3852,7 +3885,7 @@ def run_autotrade(state: dict, results: list[dict]) -> str | None:
         print(f"Mirror: 鏡像帳失敗，跳過 {e}")
         mirror_lines = []
 
-    # 多線平行帳（lanes.py）：現行／＋候選池／＋候選池＋meta／風險×2 四條虛擬帳同輪記帳（不下單、不推播；/lanes 看）
+    # 多線平行帳（lanes.py）：現行／＋候選池／＋候選池＋meta／風險×2／估值層開 五條虛擬帳同輪記帳（不下單、不推播；/lanes 看）
     if th.get("lanes_enabled", True):
         try:
             import lanes as _lanes
@@ -3863,9 +3896,16 @@ def run_autotrade(state: dict, results: list[dict]) -> str | None:
                     s2["meta_p"], s2["meta_mult"] = meta_by_sym[s_["ticker"]]
                 _ln_rows.append(s2)
             _ln_rg = market_regime(state) if th.get("regime_filter_enabled", True) else None
+            _ln_vc = {}
+            try:                                         # 估值層車道的上下文（不論真帳 val_enabled；只併進 val 車道）
+                import engine_backtest as _eb2
+                _ln_px = {s_["ticker"]: float(s_["price"]) for s_ in _ln_rows if s_.get("price")}
+                _ln_vc = _eb2.val_ctx_from_hist(state.get("val_hist") or {}, datetime.now(ET).strftime("%Y-%m-%d"), _ln_px)
+            except Exception as e:
+                print(f"Lanes: 估值層上下文失敗，val 車道等同現行 {type(e).__name__}")
             _lanes.run_lanes(state, _ln_rows, config, _ln_rg.get("regime") if _ln_rg else None,
                              datetime.now(ET).strftime("%Y-%m-%d"), meta_usable=meta_usable, pool_available=pool_available,
-                             real_equity=equity)
+                             real_equity=equity, val_ctx=_ln_vc)
         except Exception as e:
             print(f"Lanes: 多線平行帳失敗，跳過 {type(e).__name__}")   # 不印例外文字（可能含代碼，D14）
 
@@ -3980,12 +4020,13 @@ def main() -> int:
     if maybe_rebuild_universe(state, time.monotonic() - _t0):
         save_state(state)
 
-    # Step 1.9: 公司模型輪替更新（閉市閒置輪；每輪 ≤2 檔、7 天一輪；供 /playbook 佈局計畫）
-    if refresh_models(state, time.monotonic() - _t0):
+    # Step 1.9: 候選篩選每日一批（閉市閒置輪）——排在模型輪替前：模型候選一多（選股池前 50）
+    # 每輪都會吃掉 60 秒預算，篩選會被連續擠掉（#88）；篩選一天只跑一次，模型只少一輪
+    if maybe_refresh_screen(state, time.monotonic() - _t0):
         save_state(state)
 
-    # Step 1.10: 候選篩選每週刷新（閉市閒置輪）+ 每月估值治理月報
-    if maybe_refresh_screen(state, time.monotonic() - _t0):
+    # Step 1.10: 公司模型輪替更新（閉市閒置輪；每輪 ≤2 檔、7 天一輪；供 /playbook 佈局計畫）+ 每月估值治理月報
+    if refresh_models(state, time.monotonic() - _t0):
         save_state(state)
     if _should_send_valreport(state):
         try:

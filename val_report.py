@@ -32,6 +32,49 @@ def _days(a, b):
         return None
 
 
+# ── val_hist 儲存衛生（#88：加密區塊每次 commit 全量重寫，體積＝repo 成長速度）──────
+VAL_HIST_CAP = 80            # 觀察清單內：每檔最多 80 週
+VAL_HIST_CAP_OTHER = 60      # 觀察清單外（選股池／已移出）：約 14 個月，夠 mos_factor 的 50 週門檻
+VAL_HIST_STALE_DAYS = 400    # 觀察清單外、最後一列超過這麼久 → 刪除（已移出者仍保留一年以上供事後評估，M2）
+
+
+def sig5(x):
+    """數字壓到 5 位有效數字；非數字／非有限 → None。"""
+    v = _f(x)
+    return float(f"{v:.5g}") if v is not None else None
+
+
+def hist_cap(ticker: str, watchlist) -> int:
+    return VAL_HIST_CAP if ticker in set(watchlist or []) else VAL_HIST_CAP_OTHER
+
+
+def prune_val_hist(vh: dict, watchlist, today: str) -> int:
+    """觀察清單外的代碼：最多留 VAL_HIST_CAP_OTHER 列；最後一列超過 VAL_HIST_STALE_DAYS 天 → 刪；
+    空的／壞的（非 list）刪。日期解析不了的不刪（寧可多留）。回改動的代碼數。
+    還沒解密的密文塊（{"__enc__": …}）或非 dict → 一律不動（否則會把密文的欄位當代碼刪光）。"""
+    if not isinstance(vh, dict) or "__enc__" in vh:
+        return 0
+    wl = set(watchlist or [])
+    n = 0
+    for t in list(vh):
+        if t in wl:
+            continue
+        rows = vh.get(t)
+        if not isinstance(rows, list) or not rows:
+            vh.pop(t, None)
+            n += 1
+            continue
+        last = rows[-1].get("d") if isinstance(rows[-1], dict) else None
+        age = _days(last, today)
+        if age is not None and age > VAL_HIST_STALE_DAYS:
+            vh.pop(t, None)
+            n += 1
+        elif len(rows) > VAL_HIST_CAP_OTHER:
+            del rows[:-VAL_HIST_CAP_OTHER]
+            n += 1
+    return n
+
+
 def coverage(state: dict, today: str, stale_days: int = 30) -> dict:
     wl = list(state.get("watchlist") or [])
     vh = state.get("val_hist") or {}
@@ -228,4 +271,24 @@ if __name__ == "__main__":
     t = report_text(rep)
     assert t.count("*") % 2 == 0 and "_" not in t
     print(t)
+
+    # val_hist 儲存衛生（#88）
+    assert sig5(123.456789) == 123.46 and sig5(0.000123456) == 0.00012346 and sig5(None) is None
+    assert sig5(float("nan")) is None and sig5("x") is None and sig5(1234567.0) == 1234600.0
+    vh = {"WL": [{"d": "2020-01-01"}] * 90,                                  # 觀察清單內：不動（再舊、再長都不動）
+          "UNI": [{"d": f"2026-0{1 + i // 30}-{1 + i % 28:02d}"} for i in range(70)],   # 清單外 70 列 → 剪到 60
+          "OLD": [{"d": "2025-07-01"}],                                       # 清單外 > 400 天 → 刪
+          "KEEP": [{"d": "2025-09-01"}],                                      # 清單外 373 天 → 留（移出者一年內仍可評估）
+          "BAD": [{"d": "not-a-date"}], "EMPTY": [], "JUNK": {"x": 1},
+          "LONG": [{"d": f"2024-0{1 + i % 9}-01"} for i in range(9)] + [{"d": "2026-09-01"}] * 61}   # 最舊列 > 400 天、最新列近 → 留
+    long_tail = vh["LONG"][-60:]
+    uni_tail = vh["UNI"][-60:]
+    n = prune_val_hist(vh, ["WL"], "2026-09-09")
+    assert set(vh) == {"WL", "UNI", "KEEP", "BAD", "LONG"} and len(vh["WL"]) == 90 and len(vh["UNI"]) == 60, {k: len(v) for k, v in vh.items()}
+    assert vh["UNI"] == uni_tail and vh["LONG"] == long_tail and n == 5         # 留最新的 60 列；過期看最後一列
+    assert prune_val_hist(vh, ["WL"], "2026-09-09") == 0                       # 冪等
+    assert hist_cap("WL", ["WL"]) == 80 and hist_cap("UNI", ["WL"]) == 60
+    blob = {"__enc__": "v1", "nonce": "x", "data": "y", "tag": "z", "z": 1}       # 未解密的密文塊：不得動
+    assert prune_val_hist(blob, [], "2026-09-09") == 0 and len(blob) == 5 and prune_val_hist(None, [], "2026-09-09") == 0
+    print("✅ val_hist 儲存衛生：5 位有效數字、清單外 60 列／400 天、清單內不動、冪等")
     print("\nval_report selftest OK ✅")

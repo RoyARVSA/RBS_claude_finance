@@ -1,0 +1,2581 @@
+{
+ "note": "S&P 500 母公司分拆除權日：網路研究 149 筆＋補漏 14 筆，逐筆對抗核對（2026-10；查核工具額度不足者另行重核）。used=true 者進 edgar_pit.SPINOFFS。非投資建議。",
+ "events": [
+  {
+   "parent": "CVC",
+   "parent_now": "CVC",
+   "spun": "Madison Square Garden, Inc.",
+   "ex_date": "2010-02-10",
+   "kind": "pro_rata_spin",
+   "value_pct": 17,
+   "verdict": "reject",
+   "used": false,
+   "why_excluded": "reject",
+   "sources": [
+    "https://www.cmegroup.com/tools-information/lookups/advisories/clearing/Chadv10-58.html",
+    "https://wrds-www.wharton.upenn.edu/classroom/sp500-introduction/over-time/",
+    "https://money.cnn.com/2010/12/10/markets/SP_500_new_companies/index.htm"
+   ]
+  },
+  {
+   "parent": "STR",
+   "parent_now": "STR",
+   "spun": "QEP Resources, Inc.",
+   "ex_date": "2010-07-01",
+   "kind": "pro_rata_spin",
+   "value_pct": 65,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.cmegroup.com/tools-information/lookups/advisories/clearing/Chadv10-278.html",
+    "https://www.sec.gov/Archives/edgar/data/0001108827/000119312510140185/dex991.htm",
+    "https://www.sec.gov/Archives/edgar/data/0001108827/000119312510152409/dex991.htm"
+   ]
+  },
+  {
+   "parent": "VZ",
+   "parent_now": "VZ",
+   "spun": "New Communications Holdings (Spinco: local wireline business in 14 states), merged into Frontier Communications",
+   "ex_date": "2010-07-02",
+   "kind": "reverse_morris_trust",
+   "value_pct": 6.5,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.cmegroup.com/tools-information/lookups/advisories/clearing/files/Chadv10-281.pdf",
+    "https://www.sec.gov/Archives/edgar/data/0000732712/000119312510152205/dex991.htm",
+    "https://verizon.com/about/node/131693"
+   ]
+  },
+  {
+   "parent": "MDR",
+   "parent_now": "MDR",
+   "spun": "The Babcock & Wilcox Company",
+   "ex_date": "2010-08-02",
+   "kind": "pro_rata_spin",
+   "value_pct": 50,
+   "verdict": "reject",
+   "used": false,
+   "why_excluded": "reject",
+   "sources": [
+    "https://wrds-www.wharton.upenn.edu/classroom/sp500-introduction/over-time/",
+    "https://www.sec.gov/Archives/edgar/data/0000708819/000095013403011832/d08465e8vk.txt",
+    "https://bwxt.com/news/2010/08/02/The-Babcock--Wilcox-Company-Begins-Trading-Today-on-the-New-York-Stock-Exchange"
+   ]
+  },
+  {
+   "parent": "CCE",
+   "parent_now": "N/A (old CCE acquired by KO in 2010; the CCE ticker passed to New CCE, later CCEP)",
+   "spun": "New Coca-Cola Enterprises Inc. (European bottling operations; reused the CCE ticker)",
+   "ex_date": "2010-10-04",
+   "kind": "other",
+   "value_pct": null,
+   "verdict": "reject",
+   "used": false,
+   "why_excluded": "unverified (tool limit)",
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/804055/000080405510000079/ex99oct1pr.htm",
+    "https://www.cahill.com/news/firm-news/100918",
+    "https://en.wikipedia.org/wiki/Coca-Cola_Enterprises"
+   ]
+  },
+  {
+   "parent": "MOT",
+   "parent_now": "MSI",
+   "spun": "Motorola Mobility Holdings, Inc.",
+   "ex_date": "2011-01-04",
+   "kind": "pro_rata_spin",
+   "value_pct": 38,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/68505/000110465911001040/a11-1944_1ex99d1.htm",
+    "https://www.sec.gov/Archives/edgar/data/0001495569/000119312511284248/d244717d10q.htm",
+    "https://www.engadget.com/2010-11-30-motorola-split-wraps-up-on-january-4th.html"
+   ]
+  },
+  {
+   "parent": "NOC",
+   "parent_now": "NOC",
+   "spun": "Huntington Ingalls Industries, Inc.",
+   "ex_date": "2011-03-31",
+   "kind": "pro_rata_spin",
+   "value_pct": 10,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.prnewswire.com/news-releases/northrop-grumman-board-approves-spin-off-of-huntington-ingalls-industries-inc-117996504.html",
+    "https://www.sec.gov/Archives/edgar/data/1133421/000095012311025415/v58998exv99w1.htm",
+    "https://investor.northropgrumman.com/news-releases/news-release-details/northrop-grumman-board-approves-spin-huntington-ingalls"
+   ]
+  },
+  {
+   "parent": "CVC",
+   "parent_now": "CVC",
+   "spun": "AMC Networks Inc. (Rainbow Media)",
+   "ex_date": "2011-07-01",
+   "kind": "pro_rata_spin",
+   "value_pct": 25,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/0001514991/000095012311060204/y91761exv99w1.htm",
+    "https://www.cablefax.com/wp-content/uploads/2014/02/cfax060711.pdf",
+    "https://nexttv.com/news/amc-networks-stock-born-327558"
+   ]
+  },
+  {
+   "parent": "MRO",
+   "parent_now": "MRO",
+   "spun": "Marathon Petroleum Corp",
+   "ex_date": "2011-07-01",
+   "kind": "pro_rata_spin",
+   "value_pct": 40,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://sec.gov/Archives/edgar/data/101778/000119312511151791/dex991.htm",
+    "https://www.sec.gov/Archives/edgar/data/0001510295/000151029514000004/mpc-20131231x10k.htm",
+    "https://ir.marathonoil.com/2011-07-01-Marathon-Oil-Corporation-Becomes-Independent-Upstream-Company"
+   ]
+  },
+  {
+   "parent": "FO",
+   "parent_now": "BEAM",
+   "spun": "Fortune Brands Home & Security, Inc.",
+   "ex_date": "2011-10-04",
+   "kind": "pro_rata_spin",
+   "value_pct": 21,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/0001519751/000119312511240720/dex991.htm",
+    "https://www.sec.gov/Archives/edgar/data/0001519751/000119312512072886/d289278d10k.htm",
+    "https://ir.fbin.com/node/7446"
+   ]
+  },
+  {
+   "parent": "ITT",
+   "parent_now": "ITT",
+   "spun": "ITT Exelis, Inc. and Xylem Inc. (two simultaneous spin-offs)",
+   "ex_date": "2011-11-01",
+   "kind": "pro_rata_spin",
+   "value_pct": 75,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/0000216228/000095012311089326/y93000exv99w1.htm",
+    "https://www.sec.gov/Archives/edgar/data/0001524472/000152447213000003/xyl1231201210k.htm",
+    "https://www.sec.gov/Archives/edgar/data/0000216228/000119312512089618/d261204d10k.htm"
+   ]
+  },
+  {
+   "parent": "MAR",
+   "parent_now": "MAR",
+   "spun": "Marriott Vacations Worldwide Corp",
+   "ex_date": "2011-11-22",
+   "kind": "pro_rata_spin",
+   "value_pct": 5,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://ir.marriottvacationsworldwide.com/node/7266",
+    "https://www.sec.gov/Archives/edgar/data/0001524358/000119312512125188/d268132d10k.htm",
+    "https://www.sec.gov/Archives/edgar/data/0001524358/000119312511320045/d256766dex991.htm"
+   ]
+  },
+  {
+   "parent": "EXPE",
+   "parent_now": "EXPE",
+   "spun": "TripAdvisor, Inc.",
+   "ex_date": "2011-12-21",
+   "kind": "pro_rata_spin",
+   "value_pct": 48,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://ir.tripadvisor.com/node/5941",
+    "https://www.sec.gov/Archives/edgar/data/1526520/000119312511352247/d270719d8k.htm",
+    "https://www.sec.gov/Archives/edgar/data/0001324424/000132442417000006/a2016-10k.htm"
+   ]
+  },
+  {
+   "parent": "WMB",
+   "parent_now": "WMB",
+   "spun": "WPX Energy, Inc.",
+   "ex_date": "2012-01-03",
+   "kind": "pro_rata_spin",
+   "value_pct": 18,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://benzinga.com/z/2226194",
+    "https://www.sec.gov/Archives/edgar/data/0001518832/000119312512004256/d275540d8k.htm",
+    "https://www.sec.gov/Archives/edgar/data/0000107263/000119312512200819/d341899d10ka.htm"
+   ]
+  },
+  {
+   "parent": "SUN",
+   "parent_now": "SUN",
+   "spun": "SunCoke Energy, Inc.",
+   "ex_date": "2012-01-18",
+   "kind": "pro_rata_spin",
+   "value_pct": 16,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/95304/000119312511330496/d264154dex992.htm",
+    "https://www.sec.gov/Archives/edgar/data/0001514705/000119312512015609/d283974d8k.htm",
+    "https://www.suncoke.com/en/investors/press-releases/2012/01-17-2012"
+   ]
+  },
+  {
+   "parent": "COP",
+   "parent_now": "COP",
+   "spun": "Phillips 66",
+   "ex_date": "2012-05-01",
+   "kind": "pro_rata_spin",
+   "value_pct": 22,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/0001163165/000119312512149905/d327268dex991.htm",
+    "https://www.sec.gov/Archives/edgar/data/0001163165/000119312512200896/d341683d8k.htm",
+    "https://www.sec.gov/Archives/edgar/data/1163165/000119312512204210/d343063d8k.htm"
+   ]
+  },
+  {
+   "parent": "MWV",
+   "parent_now": "MWV",
+   "spun": "Monaco SpinCo Inc. (Consumer & Office Products business), merged into ACCO Brands",
+   "ex_date": "2012-05-01",
+   "kind": "reverse_morris_trust",
+   "value_pct": 11,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/0000712034/000119312512215421/d342387d8k.htm",
+    "https://www.sec.gov/Archives/edgar/data/0000712034/000071203413000009/acco-20121231x10k.htm",
+    "https://www.daytondailynews.com/business/date-for-meadwestavco-division-spinoff-set/jfrf7bsLfUrO7pY7HCSUpM"
+   ]
+  },
+  {
+   "parent": "SLE",
+   "parent_now": "HSH",
+   "spun": "D.E Master Blenders 1753 N.V. (international coffee & tea; via CoffeeCo distribution and merger)",
+   "ex_date": "2012-06-29",
+   "kind": "pro_rata_spin",
+   "value_pct": 55,
+   "verdict": "corrected",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/0000023666/000119312512295170/d377100dex991.htm",
+    "https://press.spglobal.com/2012-06-21-S-P-Indices-Announces-Changes-to-U-S-Indices",
+    "https://www.meatpoultry.com/articles/7404-hillshire-brands-spin-off-complete"
+   ]
+  },
+  {
+   "parent": "LLL",
+   "parent_now": "LLL",
+   "spun": "Engility Holdings, Inc.",
+   "ex_date": "2012-07-18",
+   "kind": "pro_rata_spin",
+   "value_pct": 4,
+   "verdict": "confirmed",
+   "used": false,
+   "why_excluded": "<5% of parent value",
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/0001544229/000119312513119552/d450160d10k.htm",
+    "https://www.sec.gov/Archives/edgar/data/0001544229/000119312512467606/d406499d10q.htm",
+    "https://press.spglobal.com/2012-07-10-S-P-Dow-Jones-Indices-Announces-Change-to-U-S-Index"
+   ]
+  },
+  {
+   "parent": "TYC",
+   "parent_now": "JCI",
+   "spun": "The ADT Corp and Tyco Flow Control (renamed Pentair Ltd., merged with Pentair Inc.)",
+   "ex_date": "2012-10-01",
+   "kind": "pro_rata_spin",
+   "value_pct": 52,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/0000833444/000119312512383453/d405721dex991.htm",
+    "https://www.sec.gov/Archives/edgar/data/0000833444/000104746913000517/a2212532z10-q.htm",
+    "https://investors.johnsoncontrols.com/~/media/Files/J/Johnson-Controls-IR-V2/tax-notification/tyc-cost-basis-allocation-information-september-28-2012-stock-distribution.pdf"
+   ]
+  },
+  {
+   "parent": "KFT",
+   "parent_now": "MDLZ",
+   "spun": "Kraft Foods Group, Inc.",
+   "ex_date": "2012-10-02",
+   "kind": "pro_rata_spin",
+   "value_pct": 36,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://ir.mondelezinternational.com/news-releases/news-release-details/when-issued-trading-kraft-foods-group-and-mondelez-international",
+    "https://www.sec.gov/Archives/edgar/data/0001545158/000119312512391744/d412251dex991.htm",
+    "https://www.sec.gov/Archives/edgar/data/0001545158/000119312512463555/d409376d10q.htm"
+   ]
+  },
+  {
+   "parent": "ABT",
+   "parent_now": "ABT",
+   "spun": "AbbVie Inc.",
+   "ex_date": "2013-01-02",
+   "kind": "pro_rata_spin",
+   "value_pct": 52,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/0001551152/000104746914001154/a2217723z10-k.htm",
+    "https://www.sec.gov/Archives/edgar/data/0001551152/000110465913038917/a13-8735_110q.htm",
+    "https://www.sec.gov/Archives/edgar/data/0001551152/000104746913000017/a2212291zex-99_1.htm"
+   ]
+  },
+  {
+   "parent": "PPG",
+   "parent_now": "PPG",
+   "spun": "Eagle Spinco Inc. (commodity chemicals business), merged into Georgia Gulf, renamed Axiall Corporation",
+   "ex_date": "2013-01-28",
+   "kind": "exchange_offer",
+   "value_pct": 7,
+   "verdict": "reject",
+   "used": false,
+   "why_excluded": "unverified (tool limit)",
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/0000079879/000119312513025330/d473133dex991.htm",
+    "https://www.sec.gov/Archives/edgar/data/79879/000119312513033170/d474216dex991.htm",
+    "https://www.glassonline.com/ppg-announces-final-proration-factor-for-shares-tendered-in-exchange-offer/"
+   ]
+  },
+  {
+   "parent": "VLO",
+   "parent_now": "VLO",
+   "spun": "CST Brands, Inc.",
+   "ex_date": "2013-05-02",
+   "kind": "pro_rata_spin",
+   "value_pct": 8,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/0001562039/000119312513192119/d529556dex992.htm",
+    "https://miaxglobal.com/sites/default/files/alert-files/VLO_Distribution_Memo.pdf",
+    "https://www.newswire.ca/news-releases/cst-brands-inc-spins-off-from-valero-energy-corporation-512350451.html"
+   ]
+  },
+  {
+   "parent": "DF",
+   "parent_now": "DF",
+   "spun": "The WhiteWave Foods Company (Class A and Class B)",
+   "ex_date": "2013-05-24",
+   "kind": "pro_rata_spin",
+   "value_pct": 50,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/0000931336/000119312513192348/d530275dex991.htm",
+    "https://www.sec.gov/Archives/edgar/data/0000931336/000119312513227874/d540905dex992.htm",
+    "https://press.spglobal.com/2013-05-16-Kansas-City-Southern-Set-to-Join-the-S-P-500-Dean-Foods-WhiteWave-Foods-to-Join-the-S-P-MidCap-400"
+   ]
+  },
+  {
+   "parent": "PFE",
+   "parent_now": "PFE",
+   "spun": "Zoetis Inc. (remaining ~80% stake)",
+   "ex_date": "2013-06-24",
+   "kind": "exchange_offer",
+   "value_pct": 6,
+   "verdict": "confirmed",
+   "used": false,
+   "why_excluded": "exchange offer (split-off)",
+   "sources": [
+    "https://www.pfizer.com/news/press-release/press-release-detail/pfizer_announces_final_results_of_zoetis_exchange_offer",
+    "https://www.sec.gov/Archives/edgar/data/0000078003/000119312513268436/d558864d425.htm",
+    "https://www.sec.gov/Archives/edgar/data/78003/000119312513274637/d556202dsctoia.htm"
+   ]
+  },
+  {
+   "parent": "COV",
+   "parent_now": "COV",
+   "spun": "Mallinckrodt plc",
+   "ex_date": "2013-07-01",
+   "kind": "pro_rata_spin",
+   "value_pct": 8,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/0001385187/000119312513279776/d561570dex991.htm",
+    "https://www.sec.gov/Archives/edgar/data/0001385187/000138518713000053/cov-2013092713x10k.htm",
+    "https://press.spglobal.com/2013-06-20-News-Corp-Set-to-Join-S-P-500-Mallinckrodt-Apollo-to-Join-S-P-MidCap-400-Forest-Oil-Tesco-to-Join-S-P-SmallCap-600"
+   ]
+  },
+  {
+   "parent": "NWSA",
+   "parent_now": "none (21CF acquired by DIS 2019; today's FOXA is Fox Corp)",
+   "spun": "News Corp (new; publishing)",
+   "ex_date": "2013-07-01",
+   "kind": "pro_rata_spin",
+   "value_pct": 12,
+   "verdict": "corrected",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.aol.com/news/2013-06-28-21st-century-fox-announces-completion-of-separatio.html",
+    "https://www.afaqs.com/news/media/37975_21st-century-fox-announces-completion-of-separation",
+    "https://digitaltveurope.com/2013/07/01/news-corp-completes-split"
+   ]
+  },
+  {
+   "parent": "MUR",
+   "parent_now": "MUR",
+   "spun": "Murphy USA Inc.",
+   "ex_date": "2013-09-03",
+   "kind": "pro_rata_spin",
+   "value_pct": 14,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/717423/000095010313005335/dp40428_ex9901.htm",
+    "https://ir.corporate.murphyusa.com/investor-relations/news-releases/press-release-details/2013/Murphy-Oil-Corporation-Completes-Spin-off-of-Murphy-USA-Inc/default.aspx",
+    "https://www.ogj.com/general-interest/companies/article/17257828/murphy-oil-completes-spinoff-of-downstream-unit"
+   ]
+  },
+  {
+   "parent": "SAI",
+   "parent_now": "LDOS",
+   "spun": "Science Applications International Corp (new SAIC, formerly SAIC Gemini)",
+   "ex_date": "2013-09-30",
+   "kind": "pro_rata_spin",
+   "value_pct": 30,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/353394/000119312513398889/d611547dex991.htm",
+    "https://www.sec.gov/Archives/edgar/data/0001571123/000119312513399793/d582052d10q.htm",
+    "https://washingtonexec.com/2013/09/saic-inc-and-leidos-holdings-inc-split-official-by-sept-27-2013/"
+   ]
+  },
+  {
+   "parent": "IR",
+   "parent_now": "TT",
+   "spun": "Allegion plc",
+   "ex_date": "2013-12-02",
+   "kind": "pro_rata_spin",
+   "value_pct": 19,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://investors.tranetechnologies.com/news-and-events/news-releases/news-release-details/2013/Ingersoll-Rand-Announces-Record-and-Distribution-Dates-for-Spin-Off-of-Allegion/default.aspx",
+    "https://www.allegion.com/corp/en/news/year/2013/record-distribution-dates-allegion.html",
+    "https://boxoptions.com/assets/BOXOnnMemo203219.pdf"
+   ]
+  },
+  {
+   "parent": "OKE",
+   "parent_now": "OKE",
+   "spun": "ONE Gas, Inc.",
+   "ex_date": "2014-02-03",
+   "kind": "pro_rata_spin",
+   "value_pct": 13,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://ir.oneok.com/news-and-events/press-releases/archive/01-08-2014",
+    "https://www.sec.gov/Archives/edgar/data/0001587732/000119312514018661/d660522dex991.htm",
+    "https://www.sec.gov/Archives/edgar/data/0001587732/000119312514033274/d668917dex991.htm"
+   ]
+  },
+  {
+   "parent": "DOV",
+   "parent_now": "DOV",
+   "spun": "Knowles Corp",
+   "ex_date": "2014-03-03",
+   "kind": "pro_rata_spin",
+   "value_pct": 16,
+   "verdict": "reject",
+   "used": false,
+   "why_excluded": "duplicate (same event confirmed in another entry)",
+   "sources": [
+    "https://dovercorporation.gcs-web.com/node/12661",
+    "https://press.spglobal.com/2014-02-24-Knowles-Set-to-Join-the-S-P-MidCap-400-8x8-Universal-Insurance-to-Join-S-P-SmallCap-600"
+   ]
+  },
+  {
+   "parent": "DOV",
+   "parent_now": "DOV",
+   "spun": "Knowles Corporation",
+   "ex_date": "2014-03-03",
+   "kind": "pro_rata_spin",
+   "value_pct": 16,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/0000029905/000119312514079068/d680759dex991.htm",
+    "https://dovercorporation.gcs-web.com/node/12661",
+    "https://www.sec.gov/Archives/edgar/data/1587523/000119312514079043/d680656dex991.htm"
+   ]
+  },
+  {
+   "parent": "SWY",
+   "parent_now": "none (Safeway acquired by Albertsons Jan 2015, delisted)",
+   "spun": "Blackhawk Network Holdings, Inc. (Class B, Safeway's ~72% stake)",
+   "ex_date": "2014-04-15",
+   "kind": "pro_rata_spin",
+   "value_pct": 11,
+   "verdict": "reject",
+   "used": false,
+   "why_excluded": "duplicate (same event confirmed in another entry)",
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/0001411488/000119312514144911/d711870dex991.htm",
+    "https://www.sec.gov/Archives/edgar/data/0000086144/000008614414000040/swy-9614x10q.htm"
+   ]
+  },
+  {
+   "parent": "SWY",
+   "parent_now": "SWY",
+   "spun": "Blackhawk Network Holdings, Inc. (Class B shares; Safeway's entire ~71.9% stake)",
+   "ex_date": "2014-04-15",
+   "kind": "pro_rata_spin",
+   "value_pct": 10,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://boxoptions.com/assets/BOXOnnMemo203324.pdf",
+    "https://miaxglobal.com/sites/default/files/alert-files/SWY_Distribution_34438.pdf",
+    "https://www.sec.gov/Archives/edgar/data/0001411488/000119312514144911/d711870dex991.htm"
+   ]
+  },
+  {
+   "parent": "SLM",
+   "parent_now": "SLM",
+   "spun": "Navient Corp",
+   "ex_date": "2014-05-01",
+   "kind": "pro_rata_spin",
+   "value_pct": 65,
+   "verdict": "reject",
+   "used": false,
+   "why_excluded": "duplicate (same event confirmed in another entry)",
+   "sources": [
+    "https://press.spglobal.com/2014-04-24-Navient-Under-Armour-Set-to-Join-the-S-P-500-SLM-PolyOne-to-Join-S-P-MidCap-400-Aceto-to-Join-S-P-SmallCap-600"
+   ]
+  },
+  {
+   "parent": "SLM",
+   "parent_now": "SLM",
+   "spun": "Navient Corporation",
+   "ex_date": "2014-05-01",
+   "kind": "pro_rata_spin",
+   "value_pct": 65,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://miaxglobal.com/sites/default/files/alert-files/SLM_Distribution_34510.pdf",
+    "https://news.navient.com/node/8146",
+    "https://press.spglobal.com/2014-04-24-Navient-Under-Armour-Set-to-Join-the-S-P-500-SLM-PolyOne-to-Join-S-P-MidCap-400-Aceto-to-Join-S-P-SmallCap-600"
+   ]
+  },
+  {
+   "parent": "SPG",
+   "parent_now": "SPG",
+   "spun": "Washington Prime Group Inc.",
+   "ex_date": "2014-05-29",
+   "kind": "pro_rata_spin",
+   "value_pct": 6,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/0001063761/000110465914035590/a14-12175_1ex99d1.htm",
+    "https://investors.simon.com/news-releases/news-release-details/simon-property-group-announces-completion-spin-washington-prime",
+    "https://boxoptions.com/assets/BOXOnnMemo203345.pdf"
+   ]
+  },
+  {
+   "parent": "NOV",
+   "parent_now": "NOV",
+   "spun": "NOW Inc. (DistributionNOW)",
+   "ex_date": "2014-06-02",
+   "kind": "pro_rata_spin",
+   "value_pct": 9.5,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://nationaloilva.gcs-web.com/news-releases/news-release-details/national-oilwell-varco-board-directors-approves-spin-now-inc",
+    "https://www.sec.gov/Archives/edgar/data/0001021860/000119312514177372/d718934dex991.htm",
+    "https://www.sec.gov/Archives/edgar/data/0001021860/000119312514227089/d738339d8k.htm"
+   ]
+  },
+  {
+   "parent": "TWX",
+   "parent_now": "none (Time Warner acquired by AT&T June 2018, delisted)",
+   "spun": "Time Inc.",
+   "ex_date": "2014-06-09",
+   "kind": "pro_rata_spin",
+   "value_pct": 4,
+   "verdict": "reject",
+   "used": false,
+   "why_excluded": "unverified (tool limit)",
+   "sources": [
+    "https://press.spglobal.com/2014-06-02-Time-Set-to-Join-S-P-MidCap-400-Bob-Evans-Farms-to-Join-S-P-SmallCap-600"
+   ]
+  },
+  {
+   "parent": "RYN",
+   "parent_now": "RYN",
+   "spun": "Rayonier Advanced Materials Inc.",
+   "ex_date": "2014-06-30",
+   "kind": "pro_rata_spin",
+   "value_pct": 25,
+   "verdict": "reject",
+   "used": false,
+   "why_excluded": "reject",
+   "sources": [
+    "https://press.spglobal.com/2014-06-24-Affiliated-Managers-Group-Set-to-Join-S-P-500-LaSalle-Hotel-Properties-Rayonier-Advanced-Materials-TimkenSteel-Belden-to-Join-the-S-P-MidCap-400-Others-to-Join-S-P-SmallCap-600",
+    "https://www.sec.gov/Archives/edgar/data/0001597672/000119312514217351/d656767dex991.htm",
+    "https://www.sec.gov/Archives/edgar/data/52827/000005282714000041/a2014separationclosingprof.htm"
+   ]
+  },
+  {
+   "parent": "CHK",
+   "parent_now": "EXE",
+   "spun": "Seventy Seven Energy Inc.",
+   "ex_date": "2014-07-01",
+   "kind": "pro_rata_spin",
+   "value_pct": 5.5,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/0000895126/000119312514257877/d752833dex991.htm",
+    "https://www.sec.gov/Archives/edgar/data/895126/000089512614000161/a06-09x2014prxbodapprovalo.htm",
+    "https://www.sec.gov/Archives/edgar/data/0001532930/000153293014000028/sse-2014063010q.htm"
+   ]
+  },
+  {
+   "parent": "WY",
+   "parent_now": "WY",
+   "spun": "Weyerhaeuser Real Estate Co (WRECO), merged into TRI Pointe Homes",
+   "ex_date": "2014-07-07",
+   "kind": "exchange_offer",
+   "value_pct": 10.5,
+   "verdict": "confirmed",
+   "used": false,
+   "why_excluded": "exchange offer (split-off)",
+   "sources": [
+    "https://investor.weyerhaeuser.com/2014-07-07-Weyerhaeuser-Closes-Transaction-to-Separate-its-Homebuilding-Business",
+    "https://s27.q4cdn.com/951488432/files/doc_news/TRI-Pointe-Homes-Completes-Exchange-Offers.pdf",
+    "https://www.sec.gov/Archives/edgar/data/106535/000119312514264252/d756311dsctoia.htm"
+   ]
+  },
+  {
+   "parent": "CBS",
+   "parent_now": "PSKY",
+   "spun": "CBS Outdoor Americas Inc. (later OUTFRONT Media, OUT)",
+   "ex_date": "2014-07-16",
+   "kind": "exchange_offer",
+   "value_pct": 9,
+   "verdict": "corrected",
+   "used": false,
+   "why_excluded": "exchange offer (split-off)",
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/0001579877/000119312514270475/d754744d8k.htm",
+    "https://www.sec.gov/Archives/edgar/data/0001579877/000119312514270475/d754744dex991.htm",
+    "https://www.sec.gov/Archives/edgar/data/0001579877/000157987714000113/a20140630-10xqxcbsoutdoor.htm"
+   ]
+  },
+  {
+   "parent": "NE",
+   "parent_now": "NE",
+   "spun": "Paragon Offshore plc",
+   "ex_date": "2014-08-04",
+   "kind": "pro_rata_spin",
+   "value_pct": 11,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://press.spglobal.com/2014-07-25-Paragon-Offshore-Set-to-Join-S-P-SmallCap-600?asPDF=1"
+   ]
+  },
+  {
+   "parent": "ADP",
+   "parent_now": "ADP",
+   "spun": "CDK Global, Inc. (Dealer Services)",
+   "ex_date": "2014-10-01",
+   "kind": "pro_rata_spin",
+   "value_pct": 12,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://press.spglobal.com/2014-09-23-CDK-Global-Set-to-Join-the-S-P-MidCap-400-and-Bill-Barrett-to-Join-the-S-P-SmallCap-600"
+   ]
+  },
+  {
+   "parent": "A",
+   "parent_now": "A",
+   "spun": "Keysight Technologies, Inc.",
+   "ex_date": "2014-11-03",
+   "kind": "pro_rata_spin",
+   "value_pct": 28,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://press.spglobal.com/2014-10-27-Keysight-Technologies-and-Halyard-Health-Set-to-Join-the-S-P-MidCap-400-Universal-and-ADTRAN-to-Join-the-S-P-SmallCap-600",
+    "https://www.rcrwireless.com/?p=127580"
+   ]
+  },
+  {
+   "parent": "KMB",
+   "parent_now": "KMB",
+   "spun": "Halyard Health, Inc. (now Avanos Medical, AVNS)",
+   "ex_date": "2014-11-03",
+   "kind": "pro_rata_spin",
+   "value_pct": 4,
+   "verdict": "confirmed",
+   "used": false,
+   "why_excluded": "<5% of parent value",
+   "sources": [
+    "https://press.spglobal.com/2014-10-27-Keysight-Technologies-and-Halyard-Health-Set-to-Join-the-S-P-MidCap-400-Universal-and-ADTRAN-to-Join-the-S-P-SmallCap-600",
+    "https://www.sec.gov/Archives/edgar/data/0001606498/000160649815000009/halyardhealth_10k2014.htm"
+   ]
+  },
+  {
+   "parent": "OXY",
+   "parent_now": "OXY",
+   "spun": "California Resources Corp",
+   "ex_date": "2014-12-01",
+   "kind": "pro_rata_spin",
+   "value_pct": 4.5,
+   "verdict": "confirmed",
+   "used": false,
+   "why_excluded": "<5% of parent value",
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/797468/000079746814000082/exhibit991.htm",
+    "https://www.shaleexperts.com/articles/Oxy-Finalizes-Spin-Off-of-California-Resources-Corp_999957684",
+    "https://drillingcontractor.org/?p=31847"
+   ]
+  },
+  {
+   "parent": "VNO",
+   "parent_now": "VNO",
+   "spun": "Urban Edge Properties",
+   "ex_date": "2015-01-16",
+   "kind": "pro_rata_spin",
+   "value_pct": 10,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/0001611547/000110465915002648/a14-23769_8ex99d1.htm",
+    "https://www.globest.com/2015/01/16/vornado-spinoff-trades-on-nyse",
+    "https://www.sec.gov/Archives/edgar/data/0001611547/000161154716000035/ue-12312015x10k.htm"
+   ]
+  },
+  {
+   "parent": "PPL",
+   "parent_now": "PPL",
+   "spun": "PPL Energy Supply (competitive generation), combined with Riverstone's RJS Power to form Talen Energy",
+   "ex_date": "2015-06-02",
+   "kind": "reverse_morris_trust",
+   "value_pct": 7,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/0000922224/000119312515208124/d937301dex991.htm",
+    "https://www.stblaw.com/about-us/news/view/2015/06/02/ppl-corporation-completes-reverse-morris-trust-transaction-to-form-talen-energy-corporation",
+    "https://inquirer.com/philly/business/20150602_Utility_PPL_completes_deal_to_sell_its_competitive_energy_business.html"
+   ]
+  },
+  {
+   "parent": "GCI",
+   "parent_now": "TGNA",
+   "spun": "Gannett Co., Inc. (new; publishing)",
+   "ex_date": "2015-06-29",
+   "kind": "pro_rata_spin",
+   "value_pct": 20,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://investors.tegna.com/node/21331",
+    "https://investors.tegna.com/node/21296",
+    "https://www.tegna.com/gannett-board-approves-completion-of-spin-off-transaction"
+   ]
+  },
+  {
+   "parent": "BAX",
+   "parent_now": "BAX",
+   "spun": "Baxalta Inc.",
+   "ex_date": "2015-07-01",
+   "kind": "pro_rata_spin",
+   "value_pct": 45,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/0001620546/000119312515290022/d913318d10q.htm",
+    "https://press.spglobal.com/2015-06-19-The-Priceline-Group-Set-to-Join-the-S-P-100-Baxalta-to-Join-the-500-Other-Changes-to-S-P-MidCap-400-S-P-SmallCap-600"
+   ]
+  },
+  {
+   "parent": "DD",
+   "parent_now": "DD",
+   "spun": "The Chemours Company",
+   "ex_date": "2015-07-01",
+   "kind": "pro_rata_spin",
+   "value_pct": 6,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.chemours.com/en/news-media-center/all-news/press-releases/2015/duponts-board-of-directors-declares-spin-off-dividend-of-the-chemours-company-shares",
+    "https://www.sec.gov/Archives/edgar/data/0001627223/000162722315000023/cc-2015630x10q.htm",
+    "https://raw.githubusercontent.com/fja05680/sp500/master/sp500_ticker_start_end.csv"
+   ]
+  },
+  {
+   "parent": "GHC",
+   "parent_now": "GHC",
+   "spun": "Cable One, Inc.",
+   "ex_date": "2015-07-01",
+   "kind": "pro_rata_spin",
+   "value_pct": null,
+   "verdict": "reject",
+   "used": false,
+   "why_excluded": "reject",
+   "sources": [
+    "https://raw.githubusercontent.com/fja05680/sp500/master/sp500_ticker_start_end.csv",
+    "https://www.ghco.com/news-releases/news-release-details/graham-holdings-company-declares-spin-dividend-cable-one-shares/"
+   ]
+  },
+  {
+   "parent": "MAS",
+   "parent_now": "MAS",
+   "spun": "TopBuild Corp",
+   "ex_date": "2015-07-01",
+   "kind": "pro_rata_spin",
+   "value_pct": 12,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://investor.masco.com/news-stream/news-details/2015/Masco-Corporation-Completes-Tax-Free-Spin-off-of-TopBuild-Corp/default.aspx",
+    "https://investor.masco.com/news-stream/news-details/2015/TopBuild-Spin-Off-from-Masco-Corporation-Completed-and-Trading-as-Independent-Company-Begins/default.aspx",
+    "https://www.sec.gov/Archives/edgar/data/0001633931/000110465915049826/a15-15044_1ex99d1.htm"
+   ]
+  },
+  {
+   "parent": "NI",
+   "parent_now": "NI",
+   "spun": "Columbia Pipeline Group, Inc.",
+   "ex_date": "2015-07-02",
+   "kind": "pro_rata_spin",
+   "value_pct": 60,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/0001629995/000119312515243669/d42242dex991.htm",
+    "https://press.spglobal.com/2015-06-24-Columbia-Pipeline-to-Join-the-S-P-500-Other-Changes-to-S-P-MidCap-400-S-P-SmallCap-600",
+    "https://wvmetronews.com/2015/07/02/columbia-pipeline-group-separates-from-nisource/"
+   ]
+  },
+  {
+   "parent": "DHR",
+   "parent_now": "DHR",
+   "spun": "Danaher Communications business (Potomac Holding LLC units), merged into NetScout Systems",
+   "ex_date": "2015-07-14",
+   "kind": "exchange_offer",
+   "value_pct": 4,
+   "verdict": "confirmed",
+   "used": false,
+   "why_excluded": "exchange offer (split-off)",
+   "sources": [
+    "https://investors.danaher.com/2015-07-14-Danaher-Announces-Preliminary-Results-of-Split-Off-Exchange-Offer-in-Connection-with-NetScout-Transaction-Completes-Merger",
+    "https://www.sec.gov/Archives/edgar/data/0001078075/000119312515253647/d36264dex991.htm"
+   ]
+  },
+  {
+   "parent": "EBAY",
+   "parent_now": "EBAY",
+   "spun": "PayPal Holdings, Inc.",
+   "ex_date": "2015-07-20",
+   "kind": "pro_rata_spin",
+   "value_pct": 62,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.ebayinc.com/stories/news/ebay-inc-board-approves-completion-of-ebay-and-paypal-separation/",
+    "https://www.sec.gov/Archives/edgar/data/0001065088/000119312515240245/d944939dex992.htm"
+   ]
+  },
+  {
+   "parent": "VTR",
+   "parent_now": "VTR",
+   "spun": "Care Capital Properties, Inc.",
+   "ex_date": "2015-08-18",
+   "kind": "pro_rata_spin",
+   "value_pct": 13,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/0000740260/000104746915006934/a2225758zex-99_1.htm",
+    "https://s203.q4cdn.com/581756553/files/doc_downloads/Form8937/Form-8937-Ventas-Inc-2015-Tax-Free-Spin-Off-of-Care-Capital-Properties.pdf"
+   ]
+  },
+  {
+   "parent": "DOW",
+   "parent_now": "DOW",
+   "spun": "Blue Cube Spinco (chlor-alkali business), merged into Olin Corp",
+   "ex_date": "2015-10-05",
+   "kind": "exchange_offer",
+   "value_pct": 3,
+   "verdict": "confirmed",
+   "used": false,
+   "why_excluded": "exchange offer (split-off)",
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/29915/000094787115000731/ss456175_ex9901.htm",
+    "https://www.sec.gov/Archives/edgar/data/29915/000094787115000718/ss455221_8k.htm"
+   ]
+  },
+  {
+   "parent": "HPQ",
+   "parent_now": "HPQ",
+   "spun": "Hewlett Packard Enterprise Co",
+   "ex_date": "2015-11-02",
+   "kind": "pro_rata_spin",
+   "value_pct": 55,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/0001645590/000119312515368376/d98001dex991.htm",
+    "https://channelfutures.com/unified-communications/hp-board-gives-business-split-a-green-light"
+   ]
+  },
+  {
+   "parent": "DRI",
+   "parent_now": "DRI",
+   "spun": "Four Corners Property Trust, Inc.",
+   "ex_date": "2015-11-10",
+   "kind": "pro_rata_spin",
+   "value_pct": 10,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://investors.fcpt.com/news/news-details/2015/Four-Corners-Property-Trust-Inc-Becomes-Independent-Publicly-Traded-Company-Through-Completion-of-Its-Spin-off-from-Darden-Restaurants-Inc/default.aspx",
+    "https://www.globest.com/2015/11/10/darden-spin-off-begins-trading-on-nyse"
+   ]
+  },
+  {
+   "parent": "GE",
+   "parent_now": "GE",
+   "spun": "Synchrony Financial (remaining ~85% stake)",
+   "ex_date": "2015-11-17",
+   "kind": "exchange_offer",
+   "value_pct": 7,
+   "verdict": "confirmed",
+   "used": false,
+   "why_excluded": "exchange offer (split-off)",
+   "sources": [
+    "https://www.ge.com/news/press-releases/ge-announces-final-synchrony-financial-exchange-offer-results",
+    "https://www.ge.com/news/press-releases/ge-announces-final-exchange-ratio-10505-synchrony-exchange-offer"
+   ]
+  },
+  {
+   "parent": "CSC",
+   "parent_now": "DXC",
+   "spun": "CSRA Inc.",
+   "ex_date": "2015-11-30",
+   "kind": "pro_rata_spin",
+   "value_pct": 45,
+   "verdict": "corrected",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://miaxglobal.com/sites/default/files/alert-files/CSC_Distribution_Div___37838.pdf",
+    "https://www.sec.gov/Archives/edgar/data/0000023082/000002308215000078/csc8-k113015item801ex991.htm",
+    "https://raw.githubusercontent.com/fja05680/sp500/master/sp500_ticker_start_end.csv"
+   ]
+  },
+  {
+   "parent": "HOT",
+   "parent_now": "HOT",
+   "spun": "Vistana Signature Experiences (merged into Interval Leisure Group)",
+   "ex_date": "2016-05-13",
+   "kind": "reverse_morris_trust",
+   "value_pct": 7,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://miaxglobal.com/sites/default/files/alert-files/HOT_Distribution_38863.pdf",
+    "https://www.sec.gov/Archives/edgar/data/0000316206/000110465916121436/a16-11366_18k.htm",
+    "https://www.sec.gov/Archives/edgar/data/0000316206/000156459016021718/hot-10q_20160630.htm"
+   ]
+  },
+  {
+   "parent": "WRK",
+   "parent_now": "WRK",
+   "spun": "Ingevity Corporation",
+   "ex_date": "2016-05-16",
+   "kind": "pro_rata_spin",
+   "value_pct": 10,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/0001653477/000165347717000029/a201610-kdoc.htm",
+    "https://www.sec.gov/Archives/edgar/data/0001653477/000165347716000079/q2201610-qdoc.htm",
+    "https://www.miaxglobal.com/sites/default/files/alert-files/WRK_Distribution_38916.pdf"
+   ]
+  },
+  {
+   "parent": "BAX",
+   "parent_now": "BAX",
+   "spun": "Baxalta (retained ~19.5% stake, split-off)",
+   "ex_date": "2016-05-18",
+   "kind": "exchange_offer",
+   "value_pct": 2.1,
+   "verdict": "reject",
+   "used": false,
+   "why_excluded": "reject",
+   "sources": [
+    "https://www.benzinga.com/node/8025923",
+    "https://www.sec.gov/Archives/edgar/data/0000010456/000156459017002240/bax-10k_20161231.htm",
+    "https://www.sec.gov/Archives/edgar/data/0000010456/000119312516596144/d145161dsctoia.htm"
+   ]
+  },
+  {
+   "parent": "DHR",
+   "parent_now": "DHR",
+   "spun": "Fortive Corporation",
+   "ex_date": "2016-07-05",
+   "kind": "pro_rata_spin",
+   "value_pct": 25,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/0001659166/000119312516622499/d204180dex991.htm",
+    "https://www.sec.gov/Archives/edgar/data/0001659166/000165916617000091/a20161231-10k.htm",
+    "https://miaxglobal.com/sites/default/files/alert-files/DHR_Distribution_39207.pdf"
+   ]
+  },
+  {
+   "parent": "LMT",
+   "parent_now": "LMT",
+   "spun": "Abacus Innovations (IS&GS business, merged into Leidos)",
+   "ex_date": "2016-08-16",
+   "kind": "exchange_offer",
+   "value_pct": 3,
+   "verdict": "confirmed",
+   "used": false,
+   "why_excluded": "exchange offer (split-off)",
+   "sources": [
+    "https://news.lockheedmartin.com/2016-08-16-Lockheed-Martin-Successfully-Closes-Transaction-to-Separate-and-Combine-IT-and-Technical-Services-Businesses-with-Leidos?asPDF=1",
+    "https://news.lockheedmartin.com/2016-08-22-Lockheed-Martin-Announces-Final-Proration-Factor-of-Approximately-8-05-Percent-for-Shares-Tendered-in-Exchange-Offer-for-IT-and-Technical-Services-Businesses",
+    "https://www.sec.gov/Archives/edgar/data/0000936468/000119312516687632/d243631d8k.htm"
+   ]
+  },
+  {
+   "parent": "PG",
+   "parent_now": "PG",
+   "spun": "Galleria Co. (beauty brands, merged into Coty)",
+   "ex_date": "2016-09-29",
+   "kind": "exchange_offer",
+   "value_pct": 4,
+   "verdict": "confirmed",
+   "used": false,
+   "why_excluded": "exchange offer (split-off)",
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/0000080424/000119312516731510/d252660d425.htm",
+    "https://www.sec.gov/Archives/edgar/data/80424/000119312516731520/d244490dex991.htm"
+   ]
+  },
+  {
+   "parent": "APD",
+   "parent_now": "APD",
+   "spun": "Versum Materials",
+   "ex_date": "2016-10-03",
+   "kind": "pro_rata_spin",
+   "value_pct": 8,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/0001660690/000119312516713371/d252377dex991.htm",
+    "https://www.sec.gov/Archives/edgar/data/0001660690/000166069017000007/versum2017proxy.htm",
+    "https://www.sec.gov/Archives/edgar/data/0001660690/000166069016000108/vsm10k9302016.htm"
+   ]
+  },
+  {
+   "parent": "HON",
+   "parent_now": "HON",
+   "spun": "AdvanSix Inc.",
+   "ex_date": "2016-10-03",
+   "kind": "pro_rata_spin",
+   "value_pct": 0.6,
+   "verdict": "reject",
+   "used": false,
+   "why_excluded": "reject",
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/0001673985/000093041317000896/c87482_10k.htm"
+   ]
+  },
+  {
+   "parent": "JCI",
+   "parent_now": "JCI",
+   "spun": "Adient plc",
+   "ex_date": "2016-10-31",
+   "kind": "pro_rata_spin",
+   "value_pct": 10,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/0000833444/000104746916015901/a2229903zex-99_1.htm",
+    "https://investors.adient.com/news-releases/2016/10-31-2016",
+    "https://www.garantum.se/globalassets/nyheter/jci.pdf"
+   ]
+  },
+  {
+   "parent": "AA",
+   "parent_now": "HWM",
+   "spun": "Alcoa Corporation",
+   "ex_date": "2016-11-01",
+   "kind": "pro_rata_spin",
+   "value_pct": 26,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/0000004281/000119312516748717/d278490dex991.htm",
+    "https://www.sec.gov/Archives/edgar/data/0000004281/000119312517062657/d293282d10k.htm",
+    "https://www.miaxglobal.com/alert/2016/10/31/miax-corporate-action-alert-alcoa-inc-aa"
+   ]
+  },
+  {
+   "parent": "HCP",
+   "parent_now": "DOC",
+   "spun": "Quality Care Properties",
+   "ex_date": "2016-11-01",
+   "kind": "pro_rata_spin",
+   "value_pct": 18,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://ir.healthpeak.com/news/news-details/2016/HCP-Inc.-Completes-Spin-Off-of-Quality-Care-Properties-Inc.-10-31-2016/default.aspx",
+    "https://s202.q4cdn.com/584270836/files/doc_news/2016/10/News-Release-10-31-2016-1691696136681631.pdf",
+    "https://s202.q4cdn.com/584270836/files/doc_news/2016/11/News-Release-11-28-2016-1691696106194659.pdf"
+   ]
+  },
+  {
+   "parent": "YUM",
+   "parent_now": "YUM",
+   "spun": "Yum China Holdings",
+   "ex_date": "2016-11-01",
+   "kind": "pro_rata_spin",
+   "value_pct": 30,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/0001673358/000156459017003681/yumc-10k_20161231.htm",
+    "https://boxoptions.com/assets/BOXOnnMemo203943.pdf"
+   ]
+  },
+  {
+   "parent": "CAG",
+   "parent_now": "CAG",
+   "spun": "Lamb Weston Holdings",
+   "ex_date": "2016-11-10",
+   "kind": "pro_rata_spin",
+   "value_pct": 25,
+   "verdict": "reject",
+   "used": false,
+   "why_excluded": "duplicate (same event confirmed in another entry)",
+   "sources": [
+    "https://conagrabrands.com/investor-relations/stock-information/spin-off-information",
+    "https://www.miaxglobal.com/sites/default/files/alert-files/CAG_Distribution_40015.pdf"
+   ]
+  },
+  {
+   "parent": "CAG",
+   "parent_now": "CAG",
+   "spun": "Lamb Weston Holdings, Inc.",
+   "ex_date": "2016-11-10",
+   "kind": "pro_rata_spin",
+   "value_pct": 25,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://conagrabrands.com/investor-relations/stock-information/spin-off-information",
+    "https://www.sec.gov/Archives/edgar/data/0001679273/000155837017000080/lw-20161127x10q.htm",
+    "https://www.miaxglobal.com/sites/default/files/alert-files/CAG_Distribution_40015.pdf"
+   ]
+  },
+  {
+   "parent": "XRX",
+   "parent_now": "XRX",
+   "spun": "Conduent Inc.",
+   "ex_date": "2017-01-03",
+   "kind": "pro_rata_spin",
+   "value_pct": 33,
+   "verdict": "reject",
+   "used": false,
+   "why_excluded": "duplicate (same event confirmed in another entry)",
+   "sources": [
+    "https://miaxglobal.com/sites/default/files/alert-files/XRX_Distribution_40346.pdf",
+    "https://www.streetinsider.com/Press+Releases/Xerox+Board+Approves+Terms+of+Separation/12219188.html"
+   ]
+  },
+  {
+   "parent": "XRX",
+   "parent_now": "XRX",
+   "spun": "Conduent Incorporated",
+   "ex_date": "2017-01-03",
+   "kind": "pro_rata_spin",
+   "value_pct": 35,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://miaxglobal.com/sites/default/files/alert-files/XRX_Distribution_40346.pdf",
+    "https://investors.xerox.com/node/18016/html",
+    "https://www.printedelectronicsnow.com/contents/view_breaking-news/2017-01-03/xerox-completes-separation-of-conduent/"
+   ]
+  },
+  {
+   "parent": "VAR",
+   "parent_now": "VAR",
+   "spun": "Varex Imaging",
+   "ex_date": "2017-01-30",
+   "kind": "pro_rata_spin",
+   "value_pct": 10,
+   "verdict": "reject",
+   "used": false,
+   "why_excluded": "duplicate (same event confirmed in another entry)",
+   "sources": [
+    "https://miaxglobal.com/sites/default/files/alert-files/VAR_Distribution_40553.pdf",
+    "https://www.sec.gov/Archives/edgar/data/0001681622/000119312517022649/d146912dex992.htm"
+   ]
+  },
+  {
+   "parent": "VAR",
+   "parent_now": "VAR",
+   "spun": "Varex Imaging Corporation",
+   "ex_date": "2017-01-30",
+   "kind": "pro_rata_spin",
+   "value_pct": 10,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/0001681622/000119312517022649/d146912dex992.htm",
+    "https://miaxglobal.com/sites/default/files/alert-files/VAR_Distribution_40553.pdf",
+    "https://www.biospace.com/varex-imaging-completes-separation-from-varian-medical-systems-lists-on-the-b-nasdaq-b-stock-market"
+   ]
+  },
+  {
+   "parent": "CTXS",
+   "parent_now": "CTXS",
+   "spun": "GetGo, Inc. (GoTo business, merged into LogMeIn)",
+   "ex_date": "2017-02-01",
+   "kind": "reverse_morris_trust",
+   "value_pct": 18,
+   "verdict": "reject",
+   "used": false,
+   "why_excluded": "duplicate (same event confirmed in another entry)",
+   "sources": [
+    "https://www.miaxglobal.com/sites/default/files/alert-files/CTXS_Distribution_40570.pdf",
+    "https://www.sec.gov/Archives/edgar/data/0000877890/000087789017000106/ctxs06-30x201710xq.htm"
+   ]
+  },
+  {
+   "parent": "CTXS",
+   "parent_now": "CTXS",
+   "spun": "GetGo, Inc. (GoTo business), merged into LogMeIn",
+   "ex_date": "2017-02-01",
+   "kind": "reverse_morris_trust",
+   "value_pct": 20,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.miaxglobal.com/sites/default/files/alert-files/CTXS_Distribution_40570.pdf",
+    "https://www.sec.gov/Archives/edgar/data/0001420302/000119312517027557/d339688d8k.htm",
+    "https://www.sec.gov/Archives/edgar/data/0000877890/000087789017000106/ctxs06-30x201710xq.htm"
+   ]
+  },
+  {
+   "parent": "BIIB",
+   "parent_now": "BIIB",
+   "spun": "Bioverativ Inc.",
+   "ex_date": "2017-02-02",
+   "kind": "pro_rata_spin",
+   "value_pct": 8,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/875045/000087504517000007/ex991pressrelease2-1x17.htm",
+    "https://investors.biogen.com/node/17831",
+    "https://miaxglobal.com/sites/default/files/alert-files/BIIB_Distribution_40469.pdf"
+   ]
+  },
+  {
+   "parent": "HPE",
+   "parent_now": "HPE",
+   "spun": "Everett SpinCo (Enterprise Services, merged with CSC to form DXC Technology)",
+   "ex_date": "2017-04-03",
+   "kind": "reverse_morris_trust",
+   "value_pct": 25,
+   "verdict": "reject",
+   "used": false,
+   "why_excluded": "duplicate (same event confirmed in another entry)",
+   "sources": [
+    "https://www.miaxglobal.com/sites/default/files/alert-files/HPE_distribution_40929.pdf",
+    "https://www.miaxglobal.com/alerts/2017/04/03/miax-options-and-miax-pearl-corporate-action-alert-hewlett-packard-enterprise"
+   ]
+  },
+  {
+   "parent": "HPE",
+   "parent_now": "HPE",
+   "spun": "Everett SpinCo (Enterprise Services), merged with CSC to form DXC Technology",
+   "ex_date": "2017-04-03",
+   "kind": "reverse_morris_trust",
+   "value_pct": 25,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.miaxglobal.com/sites/default/files/alert-files/HPE_distribution_40929.pdf",
+    "https://www.sec.gov/Archives/edgar/data/1645590/000162828017003399/hpe-everettclosing8xk.htm",
+    "https://www.sec.gov/Archives/edgar/data/0001688568/000119312517113595/d371552dex991.htm"
+   ]
+  },
+  {
+   "parent": "TGNA",
+   "parent_now": "TGNA",
+   "spun": "Cars.com Inc.",
+   "ex_date": "2017-06-01",
+   "kind": "pro_rata_spin",
+   "value_pct": 34,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/0000039899/000119312517164289/d392339dex992.htm",
+    "https://www.sec.gov/Archives/edgar/data/0000039899/000003989918000011/tgna-20171231x10k.htm",
+    "https://press.spglobal.com/2017-05-24-IHS-Markit-Set-to-Join-S-P-500-TEGNA-and-Cars-com-to-Join-S-P-MidCap-400-J-C-Penney-Time-and-Independence-Realty-Trust-to-Join-S-P-SmallCap-600"
+   ]
+  },
+  {
+   "parent": "VNO",
+   "parent_now": "VNO",
+   "spun": "JBG SMITH Properties",
+   "ex_date": "2017-07-18",
+   "kind": "pro_rata_spin",
+   "value_pct": 19,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://press.spglobal.com/2017-07-11-JBG-SMITH-Properties-Set-to-Join-S-P-MidCap-400-Chicos-FAS-to-Join-S-P-SmallCap-600",
+    "https://investors.vno.com/news-releases/news-release-details/vornado-announces-completion-spin-jbg-smith-properties-and",
+    "https://www.benzinga.com/node/9787264"
+   ]
+  },
+  {
+   "parent": "MET",
+   "parent_now": "MET",
+   "spun": "Brighthouse Financial",
+   "ex_date": "2017-08-07",
+   "kind": "pro_rata_spin",
+   "value_pct": 10,
+   "verdict": "reject",
+   "used": false,
+   "why_excluded": "duplicate (same event confirmed in another entry)",
+   "sources": [
+    "https://investor.metlife.com/news/news-details/2017/MetLife-Completes-Spin-Off-of-Brighthouse-Financial/default.aspx",
+    "https://www.miaxglobal.com/sites/default/files/alert-files/MET_distribution_41617.pdf",
+    "https://boxoptions.com/assets/BOXOnnMemo204150.pdf"
+   ]
+  },
+  {
+   "parent": "MET",
+   "parent_now": "MET",
+   "spun": "Brighthouse Financial, Inc. (80.8% distributed)",
+   "ex_date": "2017-08-07",
+   "kind": "pro_rata_spin",
+   "value_pct": 10,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://boxoptions.com/assets/BOXOnnMemo204150.pdf",
+    "https://investor.metlife.com/news/news-details/2017/MetLife-Completes-Spin-Off-of-Brighthouse-Financial/default.aspx",
+    "https://www.sec.gov/Archives/edgar/data/0001099219/000119312517249328/d420457dex991.htm"
+   ]
+  },
+  {
+   "parent": "HPE",
+   "parent_now": "HPE",
+   "spun": "Seattle SpinCo (software business, merged into Micro Focus)",
+   "ex_date": "2017-09-01",
+   "kind": "reverse_morris_trust",
+   "value_pct": 23,
+   "verdict": "reject",
+   "used": false,
+   "why_excluded": "duplicate (same event confirmed in another entry)",
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/0001645590/000156761917001826/s001851x1_8k.htm",
+    "https://miaxglobal.com/sites/default/files/alert-files/HPE_distribution_41713.pdf"
+   ]
+  },
+  {
+   "parent": "HPE",
+   "parent_now": "HPE",
+   "spun": "Seattle SpinCo (software business), merged into Micro Focus International",
+   "ex_date": "2017-09-01",
+   "kind": "reverse_morris_trust",
+   "value_pct": 21,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://hpe.com/us/en/newsroom/press-release/2017/09/hewlett-packard-enterprise-completes-spin-off-and-merger-of-software-business-with-micro-focus.html",
+    "https://www.sec.gov/Archives/edgar/data/0001645590/000156761917001826/s001851x1_8k.htm",
+    "https://miaxglobal.com/sites/default/files/alert-files/HPE_distribution_41713.pdf"
+   ]
+  },
+  {
+   "parent": "CBS",
+   "parent_now": "PARA",
+   "spun": "CBS Radio Inc. (merged into Entercom)",
+   "ex_date": "2017-11-16",
+   "kind": "exchange_offer",
+   "value_pct": 4.4,
+   "verdict": "reject",
+   "used": false,
+   "why_excluded": "duplicate (same event confirmed in another entry)",
+   "sources": [
+    "https://www.insideradio.com/done-deal-entercom-completes-merger-with-cbs-radio/article_c037a7f8-cb9e-11e7-94ad-c74d098a71ed.html",
+    "https://www.sec.gov/Archives/edgar/data/0001275272/000119312517313791/d369476ds4a.htm"
+   ]
+  },
+  {
+   "parent": "CBS",
+   "parent_now": "CBS",
+   "spun": "CBS Radio Inc. (split-off, merged into Entercom)",
+   "ex_date": "2017-11-17",
+   "kind": "exchange_offer",
+   "value_pct": 4.4,
+   "verdict": "confirmed",
+   "used": false,
+   "why_excluded": "exchange offer (split-off)",
+   "sources": [
+    "https://www.insideradio.com/done-deal-entercom-completes-merger-with-cbs-radio/article_c037a7f8-cb9e-11e7-94ad-c74d098a71ed.html",
+    "https://rbr.com/?p=237940",
+    "https://www.sec.gov/Archives/edgar/data/0001275272/000119312517313903/d466435d424b3.htm"
+   ]
+  },
+  {
+   "parent": "DLPH",
+   "parent_now": "APTV",
+   "spun": "Delphi Technologies PLC",
+   "ex_date": "2017-12-05",
+   "kind": "pro_rata_spin",
+   "value_pct": 17,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://ir.aptiv.com/news/news-details/2017/Delphi-Board-of-Directors-Approves-Delphi-Technologies-Spin-off/default.aspx",
+    "https://www.sec.gov/Archives/edgar/data/0001521332/000119312517344144/d498099dex994.htm",
+    "https://www.sec.gov/Archives/edgar/data/1521332/000119312517363912/d453817d8k.htm"
+   ]
+  },
+  {
+   "parent": "PNR",
+   "parent_now": "PNR",
+   "spun": "nVent Electric plc",
+   "ex_date": "2018-05-01",
+   "kind": "pro_rata_spin",
+   "value_pct": 36,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/0000077360/000119312518114219/d562954d8k.htm",
+    "https://www.sec.gov/Archives/edgar/data/0000077360/000007736018000016/pnr-2018033110q.htm",
+    "https://press.spglobal.com/2018-04-24-nVent-Electric-Set-to-Join-S-P-MidCap-400-Knowles-to-Join-S-P-SmallCap-600"
+   ]
+  },
+  {
+   "parent": "DOV",
+   "parent_now": "DOV",
+   "spun": "Apergy Corporation (later ChampionX)",
+   "ex_date": "2018-05-09",
+   "kind": "pro_rata_spin",
+   "value_pct": 20,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://boxoptions.com/assets/BOXOnnMemo204292.pdf",
+    "https://www.sec.gov/Archives/edgar/data/0000029905/000002990518000026/a2018033110-q.htm",
+    "https://investors.dovercorporation.com/node/21001"
+   ]
+  },
+  {
+   "parent": "DXC",
+   "parent_now": "DXC",
+   "spun": "Perspecta Inc. (US Public Sector business, combined with Vencore and KeyPoint)",
+   "ex_date": "2018-06-01",
+   "kind": "reverse_morris_trust",
+   "value_pct": 11,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://investors.dxc.com/investor-news/news-details/2018/DXC-Technology-Completes-Separation-Of-U.S.-Public-Sector-Business-Combining-With-Vencore-And-KeyPoint-To-Form-Perspecta/default.aspx",
+    "https://www.sec.gov/Archives/edgar/data/1724670/000172467019000059/prsp331201910-k.htm",
+    "https://press.spglobal.com/2018-05-25-ABIOMED-Set-to-Join-S-P-500-Others-to-Join-S-P-MidCap-400-and-S-P-SmallCap-600"
+   ]
+  },
+  {
+   "parent": "WYN",
+   "parent_now": "TNL",
+   "spun": "Wyndham Hotels & Resorts",
+   "ex_date": "2018-06-01",
+   "kind": "pro_rata_spin",
+   "value_pct": 55,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/0001722684/000104746918003866/a2235743zex-99_1.htm",
+    "https://www.sec.gov/Archives/edgar/data/0001722684/000172268418000005/wh-2018331x10q.htm",
+    "https://press.spglobal.com/2018-05-25-ABIOMED-Set-to-Join-S-P-500-Others-to-Join-S-P-MidCap-400-and-S-P-SmallCap-600"
+   ]
+  },
+  {
+   "parent": "FTV",
+   "parent_now": "FTV",
+   "spun": "Stevens Holding Company (Automation & Specialty business, merged into Altra Industrial Motion)",
+   "ex_date": "2018-09-26",
+   "kind": "exchange_offer",
+   "value_pct": 5,
+   "verdict": "confirmed",
+   "used": false,
+   "why_excluded": "exchange offer (split-off)",
+   "sources": [
+    "https://investors.fortive.com/news-events/press-releases/detail/164/fortive-announces-final-proration-factor-of-11-6114-percent-for-shares-tendered-in-split-off-exchange-offer-in-connection-with-altra-transaction-completes-merger",
+    "https://www.sec.gov/Archives/edgar/data/1659166/000119312518289247/d628663d425.htm",
+    "https://press.spglobal.com/2016-06-23-Albemarle-and-Fortive-Set-to-Join-the-S-P-500-EMCOR-to-Join-S-P-MidCap-400-Inteliquent-to-Join-S-P-SmallCap-600"
+   ]
+  },
+  {
+   "parent": "HON",
+   "parent_now": "HON",
+   "spun": "Garrett Motion Inc.",
+   "ex_date": "2018-10-01",
+   "kind": "pro_rata_spin",
+   "value_pct": 1.1,
+   "verdict": "confirmed",
+   "used": false,
+   "why_excluded": "<5% of parent value",
+   "sources": [
+    "https://www.honeywell.com/us/en/news/press-releases/2018/09/honeywell-board-of-directors-declares-spin-off-dividend-of-garrett-shares",
+    "https://boxoptions.com/assets/BOXOnnMemo204378.pdf",
+    "https://www.miaxglobal.com/sites/default/files/alert-files/HON_Distribution_43730.pdf"
+   ]
+  },
+  {
+   "parent": "HON",
+   "parent_now": "HON",
+   "spun": "Resideo Technologies",
+   "ex_date": "2018-10-29",
+   "kind": "pro_rata_spin",
+   "value_pct": 3,
+   "verdict": "confirmed",
+   "used": false,
+   "why_excluded": "<5% of parent value",
+   "sources": [
+    "https://www.miaxglobal.com/sites/default/files/alert-files/HON_Distribution_43861.pdf",
+    "https://boxoptions.com/assets/BOXOnnMemo204385.pdf",
+    "https://www.sec.gov/Archives/edgar/data/1740332/000156459019008280/rezi-10k_20181231.htm"
+   ]
+  },
+  {
+   "parent": "EQT",
+   "parent_now": "EQT",
+   "spun": "Equitrans Midstream Corporation",
+   "ex_date": "2018-11-13",
+   "kind": "pro_rata_spin",
+   "value_pct": 45,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://ir.eqt.com/investor-relations/news/news-release-details/2018/EQT-Board-of-Directors-Approves-Spin-off-of-Equitrans-Midstream-Corporation/default.aspx",
+    "https://boxoptions.com/assets/BOXOnnMemo204392.pdf",
+    "https://www.sec.gov/Archives/edgar/data/33213/000110465918063732/a18-37090_2ex99d2.htm"
+   ]
+  },
+  {
+   "parent": "HSIC",
+   "parent_now": "HSIC",
+   "spun": "HS Spinco / Covetrus (animal health business, merged with Vets First Choice)",
+   "ex_date": "2019-02-08",
+   "kind": "reverse_morris_trust",
+   "value_pct": 20,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.miaxglobal.com/sites/default/files/alert-files/HSIC_Distribution_44532.pdf",
+    "https://henryschein.gcs-web.com/node/20411",
+    "https://www.biospace.com/henry-schein-announces-new-distribution-date-and-anticipated-when-issued-trading-market-for-spin-off-of-animal-health-business"
+   ]
+  },
+  {
+   "parent": "GE",
+   "parent_now": "GE",
+   "spun": "Transportation Systems Holdings (GE Transportation, merged into Wabtec)",
+   "ex_date": "2019-02-26",
+   "kind": "reverse_morris_trust",
+   "value_pct": 3.7,
+   "verdict": "confirmed",
+   "used": false,
+   "why_excluded": "<5% of parent value",
+   "sources": [
+    "https://www.ge.com/news/press-releases/ge-announces-completion-ge-transportation-and-wabtec-merger",
+    "https://www.sec.gov/Archives/edgar/data/1754668/000114036119001549/s002638x1_s1.htm",
+    "https://www.miaxglobal.com/sites/default/files/alert-files/GE_Distribution_44559.pdf"
+   ]
+  },
+  {
+   "parent": "FMC",
+   "parent_now": "FMC",
+   "spun": "Livent Corporation (remaining ~84% stake after Oct 2018 IPO)",
+   "ex_date": "2019-03-04",
+   "kind": "pro_rata_spin",
+   "value_pct": 12,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://investors.fmc.com/news/news-details/2019/FMC-Corporation-Announces-Completion-of-Final-Separation-of-Livent-Corporation/default.aspx",
+    "https://www.sec.gov/Archives/edgar/data/37785/000003778519000045/fmcex991liventclose.htm",
+    "https://www.sec.gov/Archives/edgar/data/37785/000003778519000016/fmcex992liventspinoffandre.htm"
+   ]
+  },
+  {
+   "parent": "LLY",
+   "parent_now": "LLY",
+   "spun": "Elanco Animal Health (remaining ~80.2% stake)",
+   "ex_date": "2019-03-08",
+   "kind": "exchange_offer",
+   "value_pct": 6.7,
+   "verdict": "confirmed",
+   "used": false,
+   "why_excluded": "exchange offer (split-off)",
+   "sources": [
+    "https://investor.lilly.com/node/40986",
+    "https://www.biospace.com/lilly-announces-final-results-of-elanco-exchange-offer",
+    "https://www.biospace.com/lilly-announces-preliminary-results-of-elanco-exchange-offer"
+   ]
+  },
+  {
+   "parent": "FOXA",
+   "parent_now": "TFCFA",
+   "spun": "Fox Corporation",
+   "ex_date": "2019-03-19",
+   "kind": "pro_rata_spin",
+   "value_pct": 23,
+   "verdict": "corrected",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/1754301/000156459019031285/fox-10k_20190630.htm",
+    "https://press.spglobal.com/2019-03-14-Fox-Set-to-Join-S-P-500-Adobe-to-Join-S-P-100",
+    "https://www.fool.com/investing/2019/03/19/why-twenty-first-century-fox-stock-was-slipping-to.aspx"
+   ]
+  },
+  {
+   "parent": "DWDP",
+   "parent_now": "DD",
+   "spun": "Dow Inc.",
+   "ex_date": "2019-04-02",
+   "kind": "pro_rata_spin",
+   "value_pct": 30,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/1751788/000175178819000009/dowinc-q1x3312019.htm",
+    "https://www.sec.gov/Archives/edgar/data/0001751788/000175178820000007/dowinc201910k.htm",
+    "https://www.dupont.com/news/dowdupont-completes-spin-off-of-dowinc.html"
+   ]
+  },
+  {
+   "parent": "VFC",
+   "parent_now": "VFC",
+   "spun": "Kontoor Brands",
+   "ex_date": "2019-05-23",
+   "kind": "pro_rata_spin",
+   "value_pct": 6,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.vfc.com/news/press-release/1682/vf-corporation-approves-separation-of-kontoor-brands-inc",
+    "https://www.sec.gov/Archives/edgar/data/1760965/000119312519093535/d618285dex991.htm",
+    "https://www.snowindustrynews.com/articles/vf-completes-separation-of-kontoor-brands-inc"
+   ]
+  },
+  {
+   "parent": "DWDP",
+   "parent_now": "DD",
+   "spun": "Corteva, Inc.",
+   "ex_date": "2019-06-03",
+   "kind": "pro_rata_spin",
+   "value_pct": 29,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/0001755672/000175567220000006/ctva-12x31x201910xk.htm",
+    "https://www.sec.gov/Archives/edgar/data/1755672/000119312519163314/d753864dex991.htm",
+    "https://www.investors.dupont.com/news-and-media/press-release-details/2019/DuPont-Becomes-Independent-Company-Uniquely-Positioned-to-Drive-Innovation-Led-Growth-and-Shareholder-Value/default.aspx"
+   ]
+  },
+  {
+   "parent": "DHR",
+   "parent_now": "DHR",
+   "spun": "Envista Holdings (remaining ~80.6% stake)",
+   "ex_date": "2019-12-13",
+   "kind": "exchange_offer",
+   "value_pct": 3.3,
+   "verdict": "confirmed",
+   "used": false,
+   "why_excluded": "exchange offer (split-off)",
+   "sources": [
+    "https://www.biospace.com/danaher-announces-final-results-of-envista-exchange-offer",
+    "https://www.sec.gov/Archives/edgar/data/313616/000119312519316794/d844153d425.htm",
+    "https://www.sec.gov/Archives/edgar/data/313616/000119312519316822/d844056dsctoia.htm"
+   ]
+  },
+  {
+   "parent": "IR",
+   "parent_now": "TT",
+   "spun": "Ingersoll-Rand Industrial (merged with Gardner Denver, renamed Ingersoll Rand Inc.)",
+   "ex_date": "2020-03-02",
+   "kind": "reverse_morris_trust",
+   "value_pct": 21,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.miaxglobal.com/sites/default/files/alert-files/IRGDI_Symbol_Name_Distribution__46534.pdf",
+    "https://www.businesswire.com/news/home/20200302005208/en/Trane-Technologies-Completes-Reverse-Morris-Trust-Transaction-and-Begins-Trading-Today-on-NYSE",
+    "https://www.businesswire.com/news/home/20200214005118/en/Ingersoll-Rand-Announces-Details-for-Anticipated-Completion-of-Spin-Off-and-Subsequent-Merger-of-its-Industrial-Segment"
+   ]
+  },
+  {
+   "parent": "MCK",
+   "parent_now": "MCK",
+   "spun": "PF2 SpinCo (McKesson's interest in Change Healthcare, merged into Change Healthcare Inc.)",
+   "ex_date": "2020-03-09",
+   "kind": "exchange_offer",
+   "value_pct": 8.5,
+   "verdict": "confirmed",
+   "used": false,
+   "why_excluded": "exchange offer (split-off)",
+   "sources": [
+    "https://www.businesswire.com/news/home/20200312005351/en/McKesson-Announces-Final-Results-Exchange-Offer",
+    "https://www.1stoncology.com/blog/?p=43387",
+    "https://www.sec.gov/Archives/edgar/data/1756497/000119312520056520/d826474d424b3.htm"
+   ]
+  },
+  {
+   "parent": "ARNC",
+   "parent_now": "HWM",
+   "spun": "Arconic Corporation",
+   "ex_date": "2020-04-01",
+   "kind": "pro_rata_spin",
+   "value_pct": 13,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/1790982/000179098221000007/arnc-20201231.htm",
+    "https://www.sec.gov/Archives/edgar/data/4281/000000428121000049/arnc-20201231.htm",
+    "https://www.businesswire.com/news/home/20200206005485/en"
+   ]
+  },
+  {
+   "parent": "UTX",
+   "parent_now": "RTX",
+   "spun": "Carrier Global Corporation",
+   "ex_date": "2020-04-03",
+   "kind": "pro_rata_spin",
+   "value_pct": 14,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.miaxglobal.com/sites/default/files/alert-files/UTX_Distribution_46673.pdf",
+    "https://www.miaxglobal.com/sites/default/files/alert-files/UTX_Symbol_Name___46727.pdf",
+    "https://www.sec.gov/Archives/edgar/data/101829/000114036120005675/nc10009877x1_ex99-1.htm"
+   ]
+  },
+  {
+   "parent": "UTX",
+   "parent_now": "RTX",
+   "spun": "Otis Worldwide Corporation",
+   "ex_date": "2020-04-03",
+   "kind": "pro_rata_spin",
+   "value_pct": 25,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.miaxglobal.com/sites/default/files/alert-files/UTX_Distribution_46673.pdf",
+    "https://www.miaxglobal.com/sites/default/files/alert-files/UTX_Symbol_Name___46727.pdf",
+    "https://www.sec.gov/Archives/edgar/data/101829/000114036120005677/nc10009877x2_ex99-1.htm"
+   ]
+  },
+  {
+   "parent": "ECL",
+   "parent_now": "ECL",
+   "spun": "ChampionX Holding (Upstream Energy business, merged into Apergy, renamed ChampionX)",
+   "ex_date": "2020-06-03",
+   "kind": "exchange_offer",
+   "value_pct": 1.7,
+   "verdict": "reject",
+   "used": false,
+   "why_excluded": "reject",
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/31462/000155837020007391/ecl-20200609x8k.htm",
+    "https://www.sec.gov/Archives/edgar/data/31462/000119312520159745/d914784dsctoia.htm",
+    "https://www.businesswire.com/news/home/20200603005881/en/Ecolab-Finalizes-Separation-of-Its-Upstream-Energy-Business-and-Merger-of-ChampionX-With-Apergy-Accepts-Shares-Tendered-in-Exchange-Offer"
+   ]
+  },
+  {
+   "parent": "FTV",
+   "parent_now": "FTV",
+   "spun": "Vontier Corporation (80.1%)",
+   "ex_date": "2020-10-09",
+   "kind": "pro_rata_spin",
+   "value_pct": 15,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://investors.fortive.com/news-events/press-releases/detail/109/fortive-announces-expected-completion-date-of-october-9-2020-for-spin-off-of-vontier",
+    "https://www.businesswire.com/news/home/20201009005111/en/Vontier-Completes-Separation-from-Fortive-and-Launches-as-an-Independent-Publicly-Traded-Company",
+    "https://www.sec.gov/Archives/edgar/data/1786842/000119312520236631/d49928dex991.htm"
+   ]
+  },
+  {
+   "parent": "PFE",
+   "parent_now": "PFE",
+   "spun": "Upjohn Inc. (merged with Mylan to form Viatris)",
+   "ex_date": "2020-11-17",
+   "kind": "reverse_morris_trust",
+   "value_pct": 5.5,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.pfizer.com/news/press-release/press-release-detail/pfizer-announces-details-when-issued-and-ex-distribution",
+    "https://www.pfizer.com/news/press-release/press-release-detail/pfizer-completes-transaction-combine-its-upjohn-business",
+    "https://www.nasdaq.com/articles/pfizer-completes-combination-of-upjohn-and-mylan-viatris-to-begin-trading-on-nov.-17-2020"
+   ]
+  },
+  {
+   "parent": "AIV",
+   "parent_now": "AIV",
+   "spun": "Apartment Income REIT Corp. (AIR Communities)",
+   "ex_date": "2020-12-15",
+   "kind": "pro_rata_spin",
+   "value_pct": 85,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/922864/000119312520317477/d772672dex991.htm",
+    "https://www.businesswire.com/news/home/20201215005265/en/Apartment-Income-REIT-Corp.-Completes-Separation-from-Aimco",
+    "https://press.spglobal.com/2020-12-11-Tesla-Set-to-Join-S-P-500-100-Apartment-Income-REIT-to-Join-S-P-MidCap-400"
+   ]
+  },
+  {
+   "parent": "DD",
+   "parent_now": "DD",
+   "spun": "Nutrition & Biosciences, Inc. (merged into International Flavors & Fragrances)",
+   "ex_date": "2021-02-01",
+   "kind": "exchange_offer",
+   "value_pct": 27,
+   "verdict": "confirmed",
+   "used": false,
+   "why_excluded": "exchange offer (split-off)",
+   "sources": [
+    "https://www.dupont.com/news/dupont-announces-final-results-exchange-offer-iff.html",
+    "https://www.dupont.com/news/dupont-exchange-offer-to-expire-january-29-2021.html",
+    "https://www.sec.gov/Archives/edgar/data/1666700/000119312521027962/d11627d8k.htm"
+   ]
+  },
+  {
+   "parent": "FTI",
+   "parent_now": "FTI",
+   "spun": "Technip Energies N.V.",
+   "ex_date": "2021-02-16",
+   "kind": "pro_rata_spin",
+   "value_pct": 20,
+   "verdict": "reject",
+   "used": false,
+   "why_excluded": "reject",
+   "sources": [
+    "https://www.businesswire.com/news/home/20210203006026/en/TechnipFMC-Announces-Record-and-Distribution-Dates-for-Separation-into-Two-Industry-leading-Independent-Publicly-Traded-Companies",
+    "https://technipenergies.gcs-web.com/faq",
+    "https://press.spglobal.com/2021-02-08-Monolithic-Power-Systems-Set-to-Join-S-P-500-Iridium-Communications-to-Join-S-P-MidCap-400-Collegium-Pharmaceutical-to-Join-S-P-SmallCap-600"
+   ]
+  },
+  {
+   "parent": "MRK",
+   "parent_now": "MRK",
+   "spun": "Organon & Co.",
+   "ex_date": "2021-06-03",
+   "kind": "pro_rata_spin",
+   "value_pct": 4,
+   "verdict": "confirmed",
+   "used": false,
+   "why_excluded": "<5% of parent value",
+   "sources": [
+    "https://www.merck.com/news/merck-declares-record-date-and-dividend-for-the-organon-co-spinoff/",
+    "https://miaxglobal.com/sites/default/files/alert-files/MRK_Distribution_48722.pdf",
+    "https://www.miaxglobal.com/alerts/2021/06/02/miax-exchange-group-options-markets-corporate-action-alert-merck-co-inc-mrk"
+   ]
+  },
+  {
+   "parent": "DTE",
+   "parent_now": "DTE",
+   "spun": "DT Midstream, Inc.",
+   "ex_date": "2021-07-01",
+   "kind": "pro_rata_spin",
+   "value_pct": 17,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.globenewswire.com/news-release/2021/07/01/2256595/0/en/dt-midstream-spin-off-from-dte-energy-is-complete.html",
+    "https://miaxglobal.com/sites/default/files/alert-files/DTE_Distribution_48915.pdf",
+    "https://aem-prod.newlook.dteenergy.com/us/en/newsroom/2021/DTE-Energy-Board-of-Directors-Declares-Spin-Off-Dividend-of-DT-Midstream-Shares.html"
+   ]
+  },
+  {
+   "parent": "LB",
+   "parent_now": "BBWI",
+   "spun": "Victoria's Secret & Co.",
+   "ex_date": "2021-08-03",
+   "kind": "pro_rata_spin",
+   "value_pct": 20,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://press.spglobal.com/2021-07-27-GXO-Logistics,-Victorias-Secret-GameStop-Set-to-Join-S-P-MidCap-400-Strategic-Education,-World-Fuel-Services-Lakeland-Financial-to-Join-S-P-SmallCap-600",
+    "https://investors.bbwinc.com/news-releases/news-release-details/bath-body-works-inc-completes-separation-victorias-secret",
+    "https://bbwinc.gcs-web.com/news-releases/news-release-details/l-brands-inc-board-approves-separation-victorias-secret-co-and"
+   ]
+  },
+  {
+   "parent": "IP",
+   "parent_now": "IP",
+   "spun": "Sylvamo Corporation",
+   "ex_date": "2021-10-01",
+   "kind": "pro_rata_spin",
+   "value_pct": 4.8,
+   "verdict": "confirmed",
+   "used": false,
+   "why_excluded": "<5% of parent value",
+   "sources": [
+    "https://internationalpaper2022rd.q4web.com/news/news-details/2021/International-Paper-Company-Announces-Completion-of-Sylvamo-Corporation-Spin-Off/default.aspx",
+    "https://miaxglobal.com/sites/default/files/alert-files/IP_distribution_49282.pdf",
+    "https://www.sec.gov/Archives/edgar/data/51434/000119312521288895/d222775d8k.htm"
+   ]
+  },
+  {
+   "parent": "IBM",
+   "parent_now": "IBM",
+   "spun": "Kyndryl Holdings, Inc.",
+   "ex_date": "2021-11-04",
+   "kind": "pro_rata_spin",
+   "value_pct": 4.4,
+   "verdict": "confirmed",
+   "used": false,
+   "why_excluded": "<5% of parent value",
+   "sources": [
+    "https://newsroom.ibm.com/2021-11-03-IBM-Completes-the-Separation-of-Kyndryl",
+    "https://miaxglobal.com/sites/default/files/alert-files/IBM_Distribution_49461.pdf",
+    "https://www.sec.gov/Archives/edgar/data/51143/000110465921125064/tm2128856d3_8k.htm"
+   ]
+  },
+  {
+   "parent": "O",
+   "parent_now": "O",
+   "spun": "Orion Office REIT Inc.",
+   "ex_date": "2021-11-15",
+   "kind": "pro_rata_spin",
+   "value_pct": 3,
+   "verdict": "confirmed",
+   "used": false,
+   "why_excluded": "<5% of parent value",
+   "sources": [
+    "https://www.realtyincome.com/investors/press-releases/realty-income-completes-spin-orion-office-reit",
+    "https://www.miaxglobal.com/sites/default/files/alert-files/O_Distribution_49557.pdf",
+    "https://boxoptions.com/assets/BOXOnnMemo205278.pdf"
+   ]
+  },
+  {
+   "parent": "EXC",
+   "parent_now": "EXC",
+   "spun": "Constellation Energy Corporation",
+   "ex_date": "2022-02-02",
+   "kind": "pro_rata_spin",
+   "value_pct": 26,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/1109357/000110465922010604/tm224978d1_ex99-1.htm",
+    "https://www.sec.gov/Archives/edgar/data/1109357/000110465922010604/tm224978d1_8k.htm",
+    "https://www.exeloncorp.com/newsroom/exelon-completes-separation-of-constellation"
+   ]
+  },
+  {
+   "parent": "ZBH",
+   "parent_now": "ZBH",
+   "spun": "ZimVie Inc.",
+   "ex_date": "2022-03-01",
+   "kind": "pro_rata_spin",
+   "value_pct": 2,
+   "verdict": "reject",
+   "used": false,
+   "why_excluded": "reject",
+   "sources": [
+    "https://investor.zimmerbiomet.com/news-and-events/news/2022/02-07-2022-113120666",
+    "https://investor.zimmerbiomet.com/news-and-events/news/2022/03-01-2022-120035502",
+    "https://www.sec.gov/Archives/edgar/data/1136869/000119312522029001/d295430dex992.htm"
+   ]
+  },
+  {
+   "parent": "BDX",
+   "parent_now": "BDX",
+   "spun": "Embecta Corp.",
+   "ex_date": "2022-04-01",
+   "kind": "pro_rata_spin",
+   "value_pct": 2.4,
+   "verdict": "confirmed",
+   "used": false,
+   "why_excluded": "<5% of parent value",
+   "sources": [
+    "https://miaxglobal.com/sites/default/files/alert-files/BDX_Distribution_50194.pdf",
+    "https://news.bd.com/2022-03-21-BD-Provides-Update-Regarding-the-Planned-Spinoff-of-Embecta-Corp",
+    "https://investors.bd.com/sec-filings/all-sec-filings/content/0001193125-22-080554/d293484dex991.htm"
+   ]
+  },
+  {
+   "parent": "T",
+   "parent_now": "T",
+   "spun": "WarnerMedia (Magallanes, Inc.), combined with Discovery as Warner Bros. Discovery",
+   "ex_date": "2022-04-11",
+   "kind": "reverse_morris_trust",
+   "value_pct": 25,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.miaxglobal.com/sites/default/files/alert-files/T_Distribution_50289.pdf",
+    "https://www.miaxglobal.com/alert/2022/04/08/miax-exchange-group-options-markets-corporate-action-alert-att-inc-t",
+    "https://www.telecomtv.com/content/digital-platforms-services/at-t-announces-details-for-completion-of-wm-spin-off-44033/"
+   ]
+  },
+  {
+   "parent": "MMM",
+   "parent_now": "MMM",
+   "spun": "3M Food Safety business (Garden SpinCo), merged into Neogen Corporation",
+   "ex_date": "2022-09-01",
+   "kind": "exchange_offer",
+   "value_pct": 3,
+   "verdict": "confirmed",
+   "used": false,
+   "why_excluded": "exchange offer (split-off)",
+   "sources": [
+    "https://news.3m.com/2022-09-01-3M-Finalizes-Separation-of-its-Food-Safety-Business-and-Merger-of-the-Business-with-Neogen-Accepts-Shares-Tendered-in-Exchange-Offer?asPDF=1",
+    "https://www.sec.gov/Archives/edgar/data/66740/000114036122031356/ny20004937x28_ex99-1.htm",
+    "https://www.sec.gov/Archives/edgar/data/66740/000114036122032322/ny20004937x36_8k.htm"
+   ]
+  },
+  {
+   "parent": "FBHS",
+   "parent_now": "FBIN",
+   "spun": "MasterBrand, Inc.",
+   "ex_date": "2022-12-15",
+   "kind": "pro_rata_spin",
+   "value_pct": 12,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://miaxglobal.com/sites/default/files/alert-files/FBHS_Distribution_Symbol_Change_51468.pdf",
+    "https://www.sec.gov/Archives/edgar/data/1519751/000119312522296542/d422339dex991.htm",
+    "https://www.sec.gov/Archives/edgar/data/1519751/000119312522306146/d420098dex991.htm"
+   ]
+  },
+  {
+   "parent": "GE",
+   "parent_now": "GE",
+   "spun": "GE HealthCare Technologies Inc.",
+   "ex_date": "2023-01-04",
+   "kind": "pro_rata_spin",
+   "value_pct": 24,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://miaxglobal.com/sites/default/files/alert-files/GE_Distribution_51622.pdf",
+    "https://boxoptions.com/assets/BOXOnnMemo205780.pdf",
+    "https://www.businesswire.com/news/home/20230103005852/en"
+   ]
+  },
+  {
+   "parent": "LH",
+   "parent_now": "LH",
+   "spun": "Fortrea Holdings Inc.",
+   "ex_date": "2023-07-03",
+   "kind": "pro_rata_spin",
+   "value_pct": 14,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://boxexchange.com/assets/BOXOnnMemo206038.pdf",
+    "https://www.sec.gov/Archives/edgar/data/920148/000092014823000046/formpr61223ex991spininform.htm",
+    "https://ir.labcorp.com/node/34911"
+   ]
+  },
+  {
+   "parent": "BWA",
+   "parent_now": "BWA",
+   "spun": "PHINIA Inc.",
+   "ex_date": "2023-07-05",
+   "kind": "pro_rata_spin",
+   "value_pct": 11,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://boxexchange.com/assets/BOXOnnMemo206040.pdf",
+    "https://miaxglobal.com/sites/default/files/alert-files/BWA_Distribution_52772.pdf",
+    "https://www.sec.gov/Archives/edgar/data/908255/000162828023021988/bwa-20230613.htm"
+   ]
+  },
+  {
+   "parent": "JNJ",
+   "parent_now": "JNJ",
+   "spun": "Kenvue Inc.",
+   "ex_date": "2023-08-21",
+   "kind": "exchange_offer",
+   "value_pct": 8,
+   "verdict": "confirmed",
+   "used": false,
+   "why_excluded": "exchange offer (split-off)",
+   "sources": [
+    "https://www.jnj.com/media-center/press-releases/johnson-johnson-announces-final-results-of-exchange-offer-and-finalizes-separation-of-kenvue-inc",
+    "https://www.sec.gov/Archives/edgar/data/200406/000162828023030298/a425-pressrelease08232023.htm",
+    "https://www.sec.gov/Archives/edgar/data/200406/000162828023030300/jjscto-ia4.htm"
+   ]
+  },
+  {
+   "parent": "DHR",
+   "parent_now": "DHR",
+   "spun": "Veralto Corporation",
+   "ex_date": "2023-10-02",
+   "kind": "pro_rata_spin",
+   "value_pct": 11,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://miaxglobal.com/sites/default/files/alert-files/DHR_Distribution_53275.pdf",
+    "https://boxexchange.com/assets/BOXOnnMemo206176.pdf",
+    "https://investors.danaher.com/2023-08-25-Danaher-Declares-pro-Rata-Dividend-of-Veralto-Common-Stock-and-Announces-Expected-When-issued-Trading-of-Veralto-Common-Stock"
+   ]
+  },
+  {
+   "parent": "K",
+   "parent_now": "K",
+   "spun": "WK Kellogg Co",
+   "ex_date": "2023-10-02",
+   "kind": "pro_rata_spin",
+   "value_pct": 5,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://boxexchange.com/assets/BOXOnnMemo206175.pdf",
+    "https://www.sec.gov/Archives/edgar/data/1959348/000162828024009949/klg-20231230.htm",
+    "https://press.spglobal.com/2023-09-28-Veralto-Set-to-Join-S-P-500-Vestis-to-Join-S-P-MidCap-400-Others-to-Join-S-P-SmallCap-600"
+   ]
+  },
+  {
+   "parent": "CMI",
+   "parent_now": "CMI",
+   "spun": "Atmus Filtration Technologies Inc.",
+   "ex_date": "2024-03-14",
+   "kind": "exchange_offer",
+   "value_pct": 4.5,
+   "verdict": "confirmed",
+   "used": false,
+   "why_excluded": "exchange offer (split-off)",
+   "sources": [
+    "https://investor.cummins.com/news/detail/644/cummins-announces-final-results-of-exchange-offer-and",
+    "https://www.sec.gov/Archives/edgar/data/26172/000110465924035466/tm245336d60_425.htm",
+    "https://www.businesswire.com/news/home/20240318925736/en"
+   ]
+  },
+  {
+   "parent": "MMM",
+   "parent_now": "MMM",
+   "spun": "Solventum Corporation",
+   "ex_date": "2024-04-01",
+   "kind": "pro_rata_spin",
+   "value_pct": 17,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://boxexchange.com/assets/BOXOnnMemo206469.pdf",
+    "https://news.3m.com/2024-03-08-3M-Board-of-Directors-Approves-Spin-off-of-Solventum",
+    "https://press.spglobal.com/2024-03-27-GE-Vernova-and-Solventum-Set-to-Join-S-P-500-Dentsply-Sirona-to-Join-S-P-MidCap-400-Others-to-Join-S-P-SmallCap-600"
+   ]
+  },
+  {
+   "parent": "GE",
+   "parent_now": "GE",
+   "spun": "GE Vernova Inc.",
+   "ex_date": "2024-04-02",
+   "kind": "pro_rata_spin",
+   "value_pct": 20,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.miaxglobal.com/sites/default/files/alert-files/GE_Dist_Symbol_NameChange_54398.pdf",
+    "https://boxexchange.com/assets/BOXOnnMemo206472.pdf",
+    "https://www.sec.gov/Archives/edgar/data/1996810/000119312524063739/d808872d8k.htm"
+   ]
+  },
+  {
+   "parent": "ILMN",
+   "parent_now": "ILMN",
+   "spun": "GRAIL, Inc.",
+   "ex_date": "2024-06-25",
+   "kind": "pro_rata_spin",
+   "value_pct": 2.4,
+   "verdict": "reject",
+   "used": false,
+   "why_excluded": "reject",
+   "sources": [
+    "https://boxexchange.com/assets/BOXOnnMemo206604.pdf",
+    "https://www.sec.gov/Archives/edgar/data/0001110803/000119312524155272/d811905d8ka.htm",
+    "https://wealth-lab.com/Discussion/S-amp-P-500-KKR-CRWD-GDDY-replaced-RHI-CMA-ILMN-11390"
+   ]
+  },
+  {
+   "parent": "J",
+   "parent_now": "J",
+   "spun": "Critical Mission Solutions + Cyber & Intelligence businesses, combined with Amentum as Amentum Holdings",
+   "ex_date": "2024-09-30",
+   "kind": "reverse_morris_trust",
+   "value_pct": 17,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://boxexchange.com/assets/BOXOnnMemo206720.pdf",
+    "https://s205.q4cdn.com/384284279/files/doc_news/Jacobs-Solutions-Announces-Record-Date-and-Distribution-Date-for-the-Spin-Off-of-Its-Critical-Mission-Solutions-and-Cyber--Intelligen-MO5ZL.pdf",
+    "https://www.sec.gov/Archives/edgar/data/52988/000119312524219294/d876828dex991.htm"
+   ]
+  },
+  {
+   "parent": "LEN",
+   "parent_now": "LEN",
+   "spun": "Millrose Properties, Inc.",
+   "ex_date": "2025-01-21",
+   "kind": "pro_rata_spin",
+   "value_pct": 10,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://boxexchange.com/assets/BOXOnnMemo206942.pdf",
+    "https://www.solactive.com/announcements/43362",
+    "https://investors.lennar.com/press-releases/2025/01-10-2025-230022870"
+   ]
+  },
+  {
+   "parent": "WDC",
+   "parent_now": "WDC",
+   "spun": "Sandisk Corporation",
+   "ex_date": "2025-02-24",
+   "kind": "pro_rata_spin",
+   "value_pct": 26,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://miaxglobal.com/sites/default/files/alert-files/WDC_Distribution__56090.pdf",
+    "https://www.miaxglobal.com/alert/2025/02/21/miax-exchange-group-options-markets-corporate-action-alert-western-digital",
+    "https://www.sec.gov/Archives/edgar/data/106040/000010604025000012/wdc-20250220.htm"
+   ]
+  },
+  {
+   "parent": "FTV",
+   "parent_now": "FTV",
+   "spun": "Ralliant Corporation",
+   "ex_date": "2025-06-30",
+   "kind": "pro_rata_spin",
+   "value_pct": 24,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://boxexchange.com/assets/BOXOnnMemo207156.pdf",
+    "https://www.miaxglobal.com/alert/2025/06/27/miax-exchange-group-options-markets-corporate-action-alert-fortive",
+    "https://www.sec.gov/Archives/edgar/data/1659166/000165916625000131/ftv-20250926.htm"
+   ]
+  },
+  {
+   "parent": "HON",
+   "parent_now": "HON",
+   "spun": "Solstice Advanced Materials Inc.",
+   "ex_date": "2025-10-30",
+   "kind": "pro_rata_spin",
+   "value_pct": 5.6,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://boxexchange.com/assets/BOXOnnMemo207325.pdf",
+    "https://jpmorgan-zertifikate.de/globalassets/library/legal-documents/items/fp-fp/251031_honeywell_spin-off-vanilla-warrants.pdf",
+    "https://www.honeywell.com/us/en/news/press-releases/2025/10/honeywell-board-of-directors-sets-record-date-and-announces-expected-timing-for-spin-off-of-solstice-advanced-materials"
+   ]
+  },
+  {
+   "parent": "DD",
+   "parent_now": "DD",
+   "spun": "Qnity Electronics, Inc.",
+   "ex_date": "2025-11-03",
+   "kind": "pro_rata_spin",
+   "value_pct": 60,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.miaxglobal.com/sites/default/files/alert-files/DD_Distribution_57534.pdf",
+    "https://boxexchange.com/assets/BOXOnnMemo207331.pdf",
+    "https://www.dupont.com/news/dupont-completes-separation-of-qnity-electronics.html"
+   ]
+  },
+  {
+   "parent": "LEN",
+   "parent_now": "LEN",
+   "spun": "Millrose Properties, Inc. (remaining ~20% stake)",
+   "ex_date": "2025-11-24",
+   "kind": "exchange_offer",
+   "value_pct": 3.3,
+   "verdict": "confirmed",
+   "used": false,
+   "why_excluded": "exchange offer (split-off)",
+   "sources": [
+    "https://investors.lennar.com/press-releases/2025/11-26-2025-130116812",
+    "https://investors.lennar.com/press-releases/2025/11-20-2025-130126522",
+    "https://www.sec.gov/Archives/edgar/data/920760/000119312525293645/d91511d425.htm"
+   ]
+  },
+  {
+   "parent": "CMCSA",
+   "parent_now": "CMCSA",
+   "spun": "Versant Media Group, Inc.",
+   "ex_date": "2026-01-05",
+   "kind": "pro_rata_spin",
+   "value_pct": 5,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://boxexchange.com/assets/BOXOnnMemo207490.pdf",
+    "https://www.miaxglobal.com/sites/default/files/alert-files/CMCSA__Distribution_58015.pdf",
+    "https://www.sec.gov/Archives/edgar/data/1166691/000162828026004994/cmcsa-20251231.htm"
+   ]
+  },
+  {
+   "parent": "BDX",
+   "parent_now": "BDX",
+   "spun": "BD Biosciences & Diagnostic Solutions (Augusta SpinCo), merged into Waters Corporation",
+   "ex_date": "2026-02-10",
+   "kind": "reverse_morris_trust",
+   "value_pct": 25,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.miaxglobal.com/sites/default/files/alert-files/BDX_Distribution_58327.pdf",
+    "https://boxexchange.com/assets/BOXOnnMemo207543.pdf",
+    "https://news.bd.com/2026-01-27-BD-Announces-Record-Date-for-the-Spin-Off-of-its-Biosciences-Diagnostic-Solutions-Business"
+   ]
+  },
+  {
+   "parent": "APTV",
+   "parent_now": "APTV",
+   "spun": "Versigent (Electrical Distribution Systems business)",
+   "ex_date": "2026-04-01",
+   "kind": "pro_rata_spin",
+   "value_pct": 15,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.miaxglobal.com/sites/default/files/alert-files/APTV_Distribution_58682.pdf",
+    "https://boxexchange.com/assets/BOXOnnMemo207623.pdf",
+    "https://www.sec.gov/Archives/edgar/data/1521332/000152133226000037/aptv-20260401.htm"
+   ]
+  },
+  {
+   "parent": "FDX",
+   "parent_now": "FDX",
+   "spun": "FedEx Freight Holding Company, Inc.",
+   "ex_date": "2026-06-01",
+   "kind": "pro_rata_spin",
+   "value_pct": 19,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://investors.fedex.com/news-and-events/investor-news/investor-news-details/2026/FedEx-Completes-Spin-Off-of-FedEx-Freight/default.aspx",
+    "https://investors.fedex.com/news-and-events/investor-news/investor-news-details/2026/FedEx-Board-of-Directors-Approves-Spin-off-of-FedEx-Freight/default.aspx",
+    "https://www.solactive.com/announcements/64195"
+   ]
+  },
+  {
+   "parent": "HON",
+   "parent_now": "HON",
+   "spun": "Honeywell Aerospace Inc.",
+   "ex_date": "2026-06-29",
+   "kind": "pro_rata_spin",
+   "value_pct": 48,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/0002089271/000162828026045874/hona-20260625.htm",
+    "https://www.honeywell.com/us/en/news/press-releases/2026/06/honeywell-board-of-directors-sets-record-date-and-announces-expected-timing-for-spin-off-of-honeywell-aerospace-and-honeywell-reverse-stock-split",
+    "https://press.spglobal.com/2026-06-23-Honeywell-Aerospace-Set-to-Join-S-P-500-S-P-100-Others-to-Join-S-P-MidCap-400-and-S-P-SmallCap-600"
+   ]
+  },
+  {
+   "parent": "SPGI",
+   "parent_now": "SPGI",
+   "spun": "Mobility Global Inc.",
+   "ex_date": "2026-07-01",
+   "kind": "pro_rata_spin",
+   "value_pct": 5,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://press.spglobal.com/2026-07-01-S-P-GLOBAL-INC-COMPLETES-SEPARATION-OF-MOBILITY-GLOBAL-INC",
+    "https://www.sec.gov/Archives/edgar/data/0000064040/000110465926064848/tm2614786d3_ex99-1.htm",
+    "https://jpmorgan-zertifikate.de/globalassets/library/product-notification/items/260702_sp-global-inc_spin-off-vanilla-warrants-german.pdf"
+   ]
+  },
+  {
+   "parent": "CTVA",
+   "parent_now": "CTVA",
+   "spun": "Vylor Inc. (seed business)",
+   "ex_date": "2026-10-01",
+   "kind": "pro_rata_spin",
+   "value_pct": 84,
+   "verdict": "confirmed",
+   "used": true,
+   "why_excluded": null,
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/0001755672/000119312526414490/ck0001755672-20260929.htm",
+    "https://www.corteva.com/news/corteva-announces-effectiveness-of-vylors-form-10-registration-statement.html",
+    "https://finviz.com/news/395479/corteva-announces-effectiveness-of-vylors-form-10-registration-statement"
+   ]
+  },
+  {
+   "parent": "MDT",
+   "parent_now": "MDT",
+   "spun": "MiniMed Group, Inc.",
+   "ex_date": "2026-10-12",
+   "kind": "exchange_offer",
+   "value_pct": 4,
+   "verdict": "confirmed",
+   "used": false,
+   "why_excluded": "exchange offer (split-off)",
+   "sources": [
+    "https://www.sec.gov/Archives/edgar/data/0001613103/000162828026065596/a425-preliminaryresultsofe.htm",
+    "https://www.prnewswire.com/news-releases/medtronic-announces-preliminary-results-of-minimed-group-inc-exchange-offer-302905650.html",
+    "https://www.sec.gov/Archives/edgar/data/0001613103/000162828026065402/a425-finalexchangeratio108.htm"
+   ]
+  }
+ ]
+}

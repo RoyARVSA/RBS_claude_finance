@@ -346,6 +346,24 @@
   引擎新增讀取的 scored 欄位時，同步核對 `engine_backtest.precompute`/`replay` 的 scored rows。
 - 另：部位分母要用**實際停損距離**（`stop_mult × rps`，#73），否則「停損倍數」網格比的是不同風險量。
 
+### D22. 隨機 nonce 的加密區塊每次 commit 都是全新內容 → repo 跟著區塊大小線性長大（#88）
+- **症狀**：閒置輪建模擴到選股池前 50 檔後，估算加密 `val_hist` 滿載約 1.1 MB／次 × 一天約 30 次 commit。
+- **原因**：每次存檔換 nonce（刻意：公開 diff 看不出「沒變」）→ git 無法差異壓縮；只增不減的歷史列沒有上限。
+- **修法**：`state_crypto.encrypt_block` 先 zlib 壓縮（`"z":1`、tag 用 `b"ztag"`——與 `b"tag"` 互不為前綴、nonce 固定
+  16 bytes，否則挪一個 byte 就能偽造通過）；`val_report.prune_val_hist` 觀察清單外 ≤60 列、400 天沒更新刪除
+  （/clear、/remove 後下一輪就剪）；數字 5 位有效數字。加任何加密 state 鍵時先估「每次 commit 多大 × 一天幾次」。
+- **升級過渡**：舊版程式讀到壓縮區塊＝解密失敗→當鎖定、密文原樣保留（不毀資料）→ **合併後 Reboot Streamlit**、
+  VPS 的 bot_daemon 與 Actions 一起更新。這段期間的「key 錯誤」告警／「請設 STATE_ENC_KEY」頁面是**版本不一致、別換 key**；
+  舊版 alpaca_trader 會丟掉重疊期間的 journal 新增。
+
+### E6. 逐科目合併的財報：股數可能來自較舊的申報 → 拆股換算要用「那個科目」的申報日（#89）
+- **症狀**：拆股後只改一個科目的 10-K/A → 回測 MoS +0.10 變 +1.26、E/P／B/M 翻倍，直到下一份 10-K。
+- **原因**：`pit_periods` 逐科目取最新版本；股數沒重報就沿用拆股前那份，但拆股因子 F 取在最新申報日。
+- **修法**：`pit_periods` 附 `_filed`（每科目申報日），`value_research.to_basis` 依各自申報日換基準。
+  同類：分拆／代碼重複使用的「斷點」用**期末**判斷（分拆後才申報、期末在前的年報仍含被分拆事業）；
+  判定（accumulate）要每期用當期價格重算，不能凍結在模型日；新年報建模失敗要記「無模型」，
+  不能 `continue` 讓上一份（較舊、通常較樂觀）的模型繼續撐 3 個月。
+
 ---
 
 ## 維護規則
