@@ -690,7 +690,7 @@ def qv_text(res: dict, meta: dict, prereg: dict = QV_PREREG) -> str:
                  f"贏的年份 {fr._p(vs.get('win_years'), 0, False)}）｜vs 成分等權 {fr._p(ew.get('cagr_diff'))}｜"
                  f"回撤 {fr._p(tp.get('max_dd'), 0, False)}｜月換手 {res.get('turnover', 0):.0%}｜後 {q:.0%} 年化 "
                  f"{fr._p((res.get('bot') or {}).get('cagr'))}")
-        L.append(f"・DSR {fr._f(ds.get('dsr'))}（主動報酬月 Sharpe {fr._f(res.get('sr_m'), 3)}；零技巧假設下 {prereg['n_trials']} 次嘗試"
+        L.append(f"・DSR {fr._f(ds.get('dsr'), 3)}（主動報酬月 Sharpe {fr._f(res.get('sr_m'), 3)}；零技巧假設下 {prereg['n_trials']} 次嘗試"
                  f"「運氣最好那次」的期望 {fr._f(ds.get('sr_star'), 3)}" + (f"；{ds['note']}" if ds.get("note") else "") + "）")
         L.append(f"・持有期中資料中斷（多半是下市）的持股占 {res.get('missing', 0):.1%}：這些報酬沒算進去（偏樂觀）")
         if res.get("sub"):
@@ -724,7 +724,7 @@ def qv_text(res: dict, meta: dict, prereg: dict = QV_PREREG) -> str:
             elif ds.get("dsr") is None:
                 why.append(f"① 沒過（DSR 算不出來：{ds.get('note') or '未知'}）")
             else:
-                why.append(f"① 沒過（DSR {fr._f(ds.get('dsr'))} ≤ {prereg['dsr_bar']}）")
+                why.append(f"① 沒過（DSR {fr._f(ds.get('dsr'), 3)} ≤ {prereg['dsr_bar']}）")
         if not res.get("c2"):
             why.append(f"② 沒過（IC t {fr._f(ic1.get('t_nw'), 1)} < {prereg['ic_t_bar']:.0f}）")
         L.append("*判定：❌ 沒通過*——" + "；".join(why) + "。依約定結束「S&P 500 選股贏大盤」這條研究線")
