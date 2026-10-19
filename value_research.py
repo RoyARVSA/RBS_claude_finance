@@ -518,8 +518,10 @@ def merge_renames(periods: dict) -> dict:
     return {t: sorted(ps) for t, ps in out.items()}
 
 
-def run_value(start: str = "2011-01-01", end: str | None = None, q: float = 0.2, store: dict | None = None,
-              periods: dict | None = None, price_fn=None, sectors: dict | None = None, sec_l1: dict | None = None) -> dict:
+def build_panel(start: str = "2011-01-01", end: str | None = None, store: dict | None = None, periods: dict | None = None,
+                price_fn=None, sectors: dict | None = None, with_models: bool = True) -> dict:
+    """抓價、成分遮罩（代碼重複使用、雙股權）、模型（with_models）與經典因子 → 研究面板；失敗回 {"text": "❌…"}。
+    run_value 與預先登記的 run_qv 共用同一套資料處理（#93：QV 不另寫一份，避免兩邊漂移）。"""
     import edgar_pit as ep
     store = store if store is not None else ep.load()
     if not store or not store.get("companies"):
@@ -541,12 +543,14 @@ def run_value(start: str = "2011-01-01", end: str | None = None, q: float = 0.2,
     cal = prices["SPY"].index
     cal = cal[cal <= pd.Timestamp(end)]
     spy_close = prices["SPY"]["Close"]
-    spy_wk = weekly_returns(spy_close)
     rf = prices["^TNX"]["Close"] if "^TNX" in prices else None
     sectors = sectors if sectors is not None else sector_map()
     have = [t for t in tickers if t in prices]
     breaks = {t: ep.break_dates(t) for t in have}
-    models = {t: build_models(t2c[t], prices[t], spy_close, rf, sectors.get(t), t, start, spy_wk=spy_wk) for t in have}
+    models = {}
+    if with_models:
+        spy_wk = weekly_returns(spy_close)
+        models = {t: build_models(t2c[t], prices[t], spy_close, rf, sectors.get(t), t, start, spy_wk=spy_wk) for t in have}
     dates = fr.month_ends(cal)
     dates = dates[dates >= pd.Timestamp(start)]
     close_adj = pd.DataFrame({t: prices[t]["Close"] for t in have}).reindex(cal)
@@ -569,15 +573,28 @@ def run_value(start: str = "2011-01-01", end: str | None = None, q: float = 0.2,
             for t in ts:
                 if t != keep:
                     M.loc[M[keep], t] = False
-    MOS, ACC = mos_frame(models, close_adj, R.index, breaks)
-    F = {"mos": MOS}
+    F, ACC = {}, None
+    if with_models:
+        MOS, ACC = mos_frame(models, close_adj, R.index, breaks)
+        F["mos"] = MOS
     F.update(classic_factors({t: t2c[t] for t in have}, prices, R.index, close_adj, breaks))
     spy_r = fr.period_returns(total_return_open(prices["SPY"]).reindex(cal).to_frame("SPY"), dates)["SPY"]
     ew_r = R.where(M).mean(axis=1)
-    study = fr.factor_study({k: v.reindex(R.index) for k, v in F.items()}, R, M, spy_r, ew_r, q)
     allM = fr.membership_matrix(periods, R.index, members)
-    cov = pd.DataFrame({"members": allM.sum(axis=1), "modeled": (M & MOS.reindex_like(M).notna()).sum(axis=1)})
-    acc_res = accumulate_portfolio(ACC, R, M, spy_r)
+    return {"F": F, "ACC": ACC, "R": R, "M": M, "allM": allM, "spy_r": spy_r, "ew_r": ew_r, "models": models,
+            "breaks": breaks, "have": have}
+
+
+def run_value(start: str = "2011-01-01", end: str | None = None, q: float = 0.2, store: dict | None = None,
+              periods: dict | None = None, price_fn=None, sectors: dict | None = None, sec_l1: dict | None = None) -> dict:
+    P = build_panel(start, end, store, periods, price_fn, sectors, with_models=True)
+    if "text" in P:
+        return P
+    F, R, M, spy_r, ew_r, models, breaks, have = (P[k] for k in ("F", "R", "M", "spy_r", "ew_r", "models", "breaks", "have"))
+    MOS = F["mos"]
+    study = fr.factor_study({k: v.reindex(R.index) for k, v in F.items()}, R, M, spy_r, ew_r, q)
+    cov = pd.DataFrame({"members": P["allM"].sum(axis=1), "modeled": (M & MOS.reindex_like(M).notna()).sum(axis=1)})
+    acc_res = accumulate_portfolio(P["ACC"], R, M, spy_r)
     rb = robustness(F, R, M, spy_r, q, sec_l1)
     meta = {"start": str(R.index[0].date()), "end": str(R.index[-1].date()), "q": q, "spy": fr.perf(spy_r), "ew": fr.perf(ew_r)}
     n_models = sum(1 for v in models.values() for r in v if r.get("base") is not None)
@@ -590,6 +607,126 @@ def run_value(start: str = "2011-01-01", end: str | None = None, q: float = 0.2,
             + (f"；{n_brk} 檔有分拆／代碼重複使用斷點" if n_brk else "") + "）") + robustness_text(rb)
     return {"study": study, "coverage": cov, "acc": acc_res, "meta": meta, "models": models, "members": M, "robust": rb,
             "factors": F, "text": text}
+
+
+# ── 5b. 預先登記：品質價值分數 QV（#93）——規則在看到結果前寫定，不接受參數 ─────────────
+
+QV_PREREG = {"issue": 93, "start": "2011-01-01", "q": 0.2, "n_trials": 33, "dsr_bar": 0.95, "ic_t_bar": 2.0,
+             "parts": ("fcfy", "roic")}
+# n_trials＝這條研究線已試過的次數：價格因子 7、價值／品質因子 8、產業 ETF 輪動網格 15、accumulate 1、產業中性 MoS 1、QV 1
+
+
+def qv_score(F: dict, M: pd.DataFrame, parts: tuple = QV_PREREG["parts"]) -> pd.DataFrame:
+    """QV ＝ 各成分百分位的平均。只在「當期成分且全部成分都有值」的股票之間排名，百分位＝(名次 − 0.5)／檔數。"""
+    ok = M.reindex_like(F[parts[0]]).fillna(False).astype(bool)
+    for k in parts:
+        ok &= F[k].notna()
+    n = ok.sum(axis=1).replace(0, np.nan)
+    ranks = [(F[k].where(ok).rank(axis=1) - 0.5).div(n, axis=0) for k in parts]
+    return (sum(ranks) / len(ranks)).where(ok)
+
+
+def _active_sr(F: pd.DataFrame, R: pd.DataFrame, M: pd.DataFrame, spy_r: pd.Series, q: float) -> tuple:
+    top = fr.quantile_portfolio(F, R, M, q, top=True)
+    if not len(top):
+        return None, top
+    act = (top["net"] - spy_r.reindex(top.index)).dropna()
+    sd = float(act.std(ddof=1)) if len(act) > 2 else 0.0
+    return (float(act.mean()) / sd if sd > 0 else None), top
+
+
+def qv_test(F: dict, R: pd.DataFrame, M: pd.DataFrame, spy_r: pd.Series, ew_r: pd.Series, sec: dict | None = None,
+            prereg: dict = QV_PREREG) -> dict:
+    import falsifier as fz
+    q = prereg["q"]
+    QV = qv_score(F, M, prereg["parts"]).reindex(R.index)
+    ic1, ic12 = horizon_ic(QV, R, M, 1), horizon_ic(QV, R, M, 12)
+    sr, top = _active_sr(QV, R, M, spy_r, q)
+    bot = fr.quantile_portfolio(QV, R, M, q, top=False)
+    res = {"ic1": ic1, "ic12": ic12, "n_scored": float((QV.notna() & M.reindex_like(QV).fillna(False)).sum(axis=1).mean()),
+           "n_members": float(M.reindex(R.index).sum(axis=1).mean())}
+    if len(top):
+        net = top["net"]
+        act = (net - spy_r.reindex(net.index)).dropna()
+        trial_srs = [s_ for s_ in (_active_sr(Fk.reindex(R.index), R, M, spy_r, q)[0] for Fk in F.values()) if s_ is not None]
+        if sr is not None:
+            trial_srs.append(sr)
+        res.update({"top": fr.perf(net), "vs_spy": fr._excess(net, spy_r), "vs_ew": fr._excess(net, ew_r),
+                    "turnover": float(top["turnover"].mean()), "sr_m": sr,
+                    "sub": {lab: fr._excess(fr._sub(net, a, b), spy_r) for a, b, lab in fr.SUBPERIODS
+                            if len(fr._sub(net, a, b)) >= 12}})
+        try:
+            res["dsr"] = fz.deflated_sharpe(sr if sr is not None else 0.0, len(act), prereg["n_trials"], trial_srs,
+                                            skew=float(act.skew()), kurt=float(act.kurt()) + 3.0)
+        except Exception as e:
+            res["dsr"] = {"dsr": None, "note": type(e).__name__}
+    if len(bot):
+        res["bot"] = fr.perf(bot["net"])
+    sec = sec if sec is not None else gics_l1_map()
+    if sec and any(c in sec for c in QV.columns):
+        Fn = sector_neutral(QV, M, sec)
+        _, topn = _active_sr(Fn, R, M, spy_r, q)
+        res["neutral"] = {"ic1": horizon_ic(Fn, R, M, 1), "vs_spy": fr._excess(topn["net"], spy_r) if len(topn) else {}}
+    d_ = (res.get("dsr") or {}).get("dsr")
+    c1 = bool(res.get("vs_spy") and (res["vs_spy"].get("cagr_diff") or -1) > 0 and d_ is not None and d_ > prereg["dsr_bar"])
+    c2 = bool(ic1.get("t_nw") is not None and ic1["t_nw"] >= prereg["ic_t_bar"])
+    res.update({"c1": c1, "c2": c2, "passed": c1 and c2})
+    return res
+
+
+def qv_text(res: dict, meta: dict, prereg: dict = QV_PREREG) -> str:
+    q = prereg["q"]
+    vs, ew, tp = res.get("vs_spy") or {}, res.get("vs_ew") or {}, res.get("top") or {}
+    ds = res.get("dsr") or {}
+    ic1, ic12 = res.get("ic1") or {}, res.get("ic12") or {}
+    L = [f"🧪 *預先登記測試：品質價值分數 QV（自由現金流殖利率 ＋ ROIC）*（#{prereg['issue']}；當時 S&P 500 成分、"
+         f"{meta.get('start')}→{meta.get('end')}、每月底訊號、次日開盤成交、前 {q:.0%} 等權、單邊成本 0.05%）",
+         f"規則（跑之前寫定）：① 前 {q:.0%} 扣成本贏 SPY 且 DSR > {prereg['dsr_bar']}（扣掉這條研究線 {prereg['n_trials']} 次嘗試的運氣）"
+         f" ② 1 個月 IC 的 t ≥ {prereg['ic_t_bar']:.0f}——兩項都過才算通過",
+         "", "*結果*"]
+    if tp:
+        L.append(f"・前 {q:.0%}：年化 {fr._p(tp.get('cagr'))}｜vs SPY {fr._p(vs.get('cagr_diff'))}（IR {fr._f(vs.get('ir'))}、"
+                 f"贏的年份 {fr._p(vs.get('win_years'), 0, False)}）｜vs 成分等權 {fr._p(ew.get('cagr_diff'))}｜"
+                 f"回撤 {fr._p(tp.get('max_dd'), 0, False)}｜月換手 {res.get('turnover', 0):.0%}｜後 {q:.0%} 年化 "
+                 f"{fr._p((res.get('bot') or {}).get('cagr'))}")
+        L.append(f"・DSR {fr._f(ds.get('dsr'))}（主動報酬月 Sharpe {fr._f(res.get('sr_m'), 3)}；{prereg['n_trials']} 次嘗試下運氣好的上限 "
+                 f"{fr._f(ds.get('sr_star'), 3)}）")
+        if res.get("sub"):
+            L.append("・分時段 vs SPY：" + "｜".join(f"{lab} {fr._p(v.get('cagr_diff'))}" for lab, v in res["sub"].items()))
+    else:
+        L.append("・前 20% 組合建不起來（樣本不足）")
+    no12 = ic12.get("t_nonoverlap")
+    L.append(f"・1 個月 IC {fr._f(ic1.get('mean'), 3)}（t {fr._f(ic1.get('t_nw'), 1)}，{ic1.get('n', 0)} 期）｜12 個月 IC "
+             f"{fr._f(ic12.get('mean'), 3)}（不重疊 t {fr._f(no12, 1)}）")
+    nt = res.get("neutral")
+    if nt:
+        L.append(f"・產業中性 QV（只報告）：1 個月 IC {fr._f((nt.get('ic1') or {}).get('mean'), 3)}"
+                 f"（t {fr._f((nt.get('ic1') or {}).get('t_nw'), 1)}）｜前 {q:.0%} vs SPY {fr._p((nt.get('vs_spy') or {}).get('cagr_diff'))}")
+    L.append(f"・覆蓋：每期平均 {res.get('n_scored', 0):.0f} 檔有分數（當期成分 {res.get('n_members', 0):.0f} 檔）")
+    L.append("")
+    if res.get("passed"):
+        L.append("*判定：✅ 通過*——依約定進入「虛擬帳前瞻驗證」，不是直接上線（這是樣本內通過）")
+    else:
+        why = []
+        if not res.get("c1"):
+            why.append("① 沒過（" + ("沒贏 SPY" if not ((vs.get("cagr_diff") or -1) > 0) else f"DSR {fr._f(ds.get('dsr'))} ≤ {prereg['dsr_bar']}") + "）")
+        if not res.get("c2"):
+            why.append(f"② 沒過（IC t {fr._f(ic1.get('t_nw'), 1)} < {prereg['ic_t_bar']:.0f}）")
+        L.append("*判定：❌ 沒通過*——" + "；".join(why) + "。依約定結束「S&P 500 選股贏大盤」這條研究線")
+    L.append("⚠️ 樣本內測試：兩個成分是看過同一段資料才挑的；DSR 扣得掉「試了幾次」，扣不掉「同一段歷史」。"
+             "已下市公司多半缺價格與 CIK（偏倖存者）。非投資建議")
+    return "\n".join(L)
+
+
+def run_qv(end: str | None = None, store: dict | None = None, periods: dict | None = None, price_fn=None,
+           sec_l1: dict | None = None, prereg: dict = QV_PREREG) -> dict:
+    """預先登記的 QV 測試（#93）：起點、分位、門檻都寫死在 QV_PREREG；不建 MoS 模型（QV 用不到）。"""
+    P = build_panel(prereg["start"], end, store, periods, price_fn, sectors={}, with_models=False)
+    if "text" in P:
+        return P
+    res = qv_test(P["F"], P["R"], P["M"], P["spy_r"], P["ew_r"], sec_l1, prereg)
+    meta = {"start": str(P["R"].index[0].date()), "end": str(P["R"].index[-1].date())}
+    return {"res": res, "meta": meta, "text": qv_text(res, meta, prereg)}
 
 
 # ── 6. 自我測試（合成 EDGAR＋價格；離線）────────────────────────────────────────
@@ -899,6 +1036,28 @@ if __name__ == "__main__":
     assert "穩健性檢查" in t10 and "產業中性" in t10 and t10.count("*") % 2 == 0 and "_" not in t10, t10[-600:]
     print(f"✅ 10 穩健性：前瞻報酬、產業中性、偏重加總 0、有訊號 12 個月 IC {h10[12].get('mean', float('nan')):+.3f}、"
           f"無訊號各期 |t| < 2.5")
+
+    # 11) 預先登記 QV（#93）：只在「成分且兩項都有值」之間排名；有訊號時 IC 門檻過、無訊號時不通過；規則寫死
+    d11 = pd.DatetimeIndex(["2020-01-31"])
+    Fa = pd.DataFrame([[1.0, 2.0, 3.0, 4.0, np.nan]], index=d11, columns=list("ABCDE"))
+    Fb = pd.DataFrame([[4.0, 3.0, 2.0, 1.0, 9.0]], index=d11, columns=list("ABCDE"))
+    M11 = pd.DataFrame([[True, True, True, False, True]], index=d11, columns=list("ABCDE"))
+    qs = qv_score({"fcfy": Fa, "roic": Fb}, M11).iloc[0]
+    # 可排名者＝A、B、C（D 非成分、E 缺 fcfy）：fcfy 百分位 1/6、3/6、5/6；roic 5/6、3/6、1/6 → 平均都是 0.5
+    assert np.allclose(qs[["A", "B", "C"]].values, 0.5) and qs[["D", "E"]].isna().all(), qs
+    Fb2 = Fb.copy()
+    Fb2.loc[:, "A"] = 10.0                                             # A 的 roic 變最高 → A 最高分
+    assert qv_score({"fcfy": Fa, "roic": Fb2}, M11).iloc[0].idxmax() == "A"
+    assert QV_PREREG == {"issue": 93, "start": "2011-01-01", "q": 0.2, "n_trials": 33, "dsr_bar": 0.95, "ic_t_bar": 2.0,
+                         "parts": ("fcfy", "roic")}                       # 規則不准偷改（改了要另開預先登記）
+    o11 = run_qv("2019-06-30", store=store, periods=per, price_fn=pf, sec_l1=sec_syn)
+    r11 = o11["res"]
+    assert r11["ic1"]["t_nw"] >= 2 and r11["c2"] and r11["dsr"].get("dsr") is not None, (r11["ic1"], r11.get("dsr"))
+    t11 = o11["text"]
+    assert "預先登記" in t11 and "判定" in t11 and t11.count("*") % 2 == 0 and "_" not in t11, t11
+    o11b = run_qv("2019-06-30", store=store7, periods=per7, price_fn=pf7, sec_l1=sec_syn)
+    assert not o11b["res"]["passed"] and "沒通過" in o11b["text"], o11b["text"]
+    print(f"✅ 11 預先登記 QV：排名只在成分且兩項都有值之間、規則寫死、有訊號 IC t {r11['ic1']['t_nw']:+.1f}、無訊號判沒通過")
 
     print("✅ 9 改名代碼併入現行代碼、離開指數後改名仍建模、雙股權只留一檔、斷點表鍵正規化")
     print("\nvalue_research selftest OK ✅")

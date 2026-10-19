@@ -10,6 +10,7 @@ engine_research.py – 引擎回測研究執行器（GitHub Actions `engine_rese
 
 子指令與 Bot 的 /engtest 相同（解析共用 engine_backtest.parse_engtest_args）：
   run [期間]、opt [期間] [entry|loose]、pit [檔數] [組數] [期間]、try 參數=值 … [期間] [pit …]；多個用「;」分隔。
+長歷史研究：factors／sectors（factor_research）、value（value_research）、qv（預先登記 #93，不接受參數）。
 
 隱私（公開 repo、公開日誌）：只用公開資料——觀察清單（watchlist_state.json 明文欄位）、當時 S&P 500 成分、
 **程式預設參數**。不讀加密的個人設定（thresholds／calibration／engine／eng_opt），所以「現行」＝程式預設，
@@ -63,11 +64,11 @@ def run_one(cmd: str, watchlist: list[str], fetch_fn=None, periods: dict | None 
     toks = cmd.split()
     if toks and toks[0].lower() in ("/engtest", "engtest"):
         toks = toks[1:]                                  # 容忍貼上時帶了指令前綴
-    if toks and toks[0].lower() in ("factors", "sectors", "value"):
+    if toks and toks[0].lower() in ("factors", "sectors", "value", "qv"):
         return run_factor_research(toks, fetch_fn=fetch_fn, periods=periods)
     if toks and toks[0].lower() not in ("run", "opt", "pit", "try", "clear") \
             and toks[0].lower() not in eb.PERIOD_DAYS and "=" not in toks[0]:
-        return f"⚠️ 未知子指令 `{toks[0]}`（可用：run／opt／pit／try／factors／sectors／value）"
+        return f"⚠️ 未知子指令 `{toks[0]}`（可用：run／opt／pit／try／factors／sectors／value／qv）"
     if toks and toks[0].lower() == "run":
         toks = toks[1:]
     a = eb.parse_engtest_args(toks)
@@ -133,9 +134,16 @@ def parse_kv(toks: list[str]) -> tuple[dict, list[str]]:
 
 
 def run_factor_research(toks: list[str], fetch_fn=None, periods: dict | None = None) -> str:
-    """factors [start=2004] [end=…] [q=0.2] [composite=on|off] [sample=N seed=1]／sectors [start=1999]。"""
+    """factors [start=2004] [end=…] [q=0.2] [composite=on|off] [sample=N seed=1]／sectors [start=1999]／
+    value [start=2011 end= q=]／qv（預先登記 #93，不接受參數）。"""
     import factor_research as fr
     kind = toks[0].lower()
+    if kind == "qv":                                      # 預先登記測試（#93）：規則寫死，任何參數都拒絕
+        if len(toks) > 1:
+            return "⚠️ qv 是預先登記測試（#93），規則寫死、不接受任何參數"
+        import value_research as vr
+        f3 = (lambda syms, start: fetch_fn(syms, "")) if fetch_fn else None
+        return vr.run_qv(periods=periods, price_fn=f3)["text"]
     kv, errs = parse_kv(toks[1:])
     if errs:
         return "⚠️ " + "；".join(errs)
@@ -236,10 +244,17 @@ def _selftest() -> int:
     finally:
         _ep.load = _orig
     assert "VRT 方法" in vt and "MoS" in vt, vt[:300]
+    _ep.load = lambda path=None: vstore
+    try:
+        qt = run_one("qv", wl, fetch_fn=lambda s, p: {k: vprices[k] for k in s if k in vprices}, periods=vper)
+    finally:
+        _ep.load = _orig
+    assert "預先登記測試" in qt and "判定" in qt, qt[:300]
 
     def _boom(*a, **k):
         raise AssertionError("不該抓價格")
     assert "早於" in run_one("value end=2010", wl, fetch_fn=_boom) and "早於" in run_one("factors end=2003", wl, fetch_fn=_boom)
+    assert "不接受任何參數" in run_one("qv start=2004", wl, fetch_fn=_boom)       # 預先登記：不准事後調參
     # 邊界：各自的預設起點（value 2011、factors 2004）之後的 end 不能被誤擋
     _ep.load = lambda path=None: vstore
     try:

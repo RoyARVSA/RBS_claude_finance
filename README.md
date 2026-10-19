@@ -211,7 +211,7 @@ gics_template.html      GICS 輪動 Dashboard 畫面（使用者原模板 + 完�
 gics_verify.py          GICS 數字對帳（vs State Street SPY 與 S&P 官方產業指數）
 gics_weekly.py          GICS 每週工作流：成分對照、公司資料、神經網路分類、對帳（gics_weekly.yml）
 edgar_pit.py            SEC EDGAR 年報「當時可得」資料層（Colab Cell 4 一次性抽取 → data/edgar/annual_pit.json.gz；pit_periods 轉 fin_data 格式給 company_model 長歷史回測）
-value_research.py       VRT 方法（company_model）長歷史回測：每份 10-K 公布後重建機械化模型 → 月底 MoS 與經典價值／品質因子的 IC、前 20% vs SPY、accumulate 組合（研究用）
+value_research.py       VRT 方法（company_model）長歷史回測：每份 10-K 公布後重建機械化模型 → 月底 MoS 與經典價值／品質因子的 IC、前 20% vs SPY、accumulate 組合、穩健性檢查；`qv`＝預先登記的品質價值分數測試（#93）（研究用）
 factor_research.py      長歷史選股因子研究（當時 S&P 500 成分、月頻 Rank IC、分時段、前 20% vs SPY）＋產業 ETF 輪動（walk-forward、PBO、DSR）
 engine_research.py      引擎回測研究執行器（engine_research.yml 手動觸發；公開資料＋預設參數，結果推 research-results 分支）
 scripts/check_dispatch.py CI：Bot 指令分派不得有重複的無條件分支
