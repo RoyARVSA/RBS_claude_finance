@@ -11,7 +11,7 @@ market_weather.py – 市場氣象台（regime v2：多因子市場體質綜合�
   5. 銅金比（.10）：HG=F/GC=F 的 20 日變化——景氣預期溫度計
 
 穩健性設計：
-  • 任一成分抓不到就缺席（權重重新歸一化）；有效成分 < 3 → 回 None，
+  • 任一成分抓不到就缺席（補 50 中性值、不重新配權——審查團 F8）；有效成分 < 3 → 回 None，
     呼叫端退回舊 MA50 邏輯——代碼失效/來源改版都只是降級、不會癱瘓
   • regime 邊界帶遲滯（±5 分）：避免 15 分鐘 cron 在門檻附近翻來覆去
   • 快取 TTL 1 小時（state["weather"]），體質不需要分鐘級新鮮度
@@ -97,7 +97,7 @@ def composite(components: dict, weights: dict | None = None,
               min_components: int = 3) -> dict | None:
     """
     components: {name: score|None}。有效成分 < min_components → None。
-    回 {"score", "components", "missing"}；權重按有效成分重新歸一化。
+    回 {"score", "components", "missing"}；缺席成分補 50 中性值（不是重新配權，見下方 F8 註解）。
     """
     w = weights or WEATHER_WEIGHTS
     valid = {k: v for k, v in components.items() if not _bad(v) and k in w}
