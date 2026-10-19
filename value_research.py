@@ -582,7 +582,7 @@ def build_panel(start: str = "2011-01-01", end: str | None = None, store: dict |
     ew_r = R.where(M).mean(axis=1)
     allM = fr.membership_matrix(periods, R.index, members)
     return {"F": F, "ACC": ACC, "R": R, "M": M, "allM": allM, "spy_r": spy_r, "ew_r": ew_r, "models": models,
-            "breaks": breaks, "have": have}
+            "breaks": breaks, "have": have, "mapped": tickers}
 
 
 def run_value(start: str = "2011-01-01", end: str | None = None, q: float = 0.2, store: dict | None = None,
@@ -612,8 +612,11 @@ def run_value(start: str = "2011-01-01", end: str | None = None, q: float = 0.2,
 # ── 5b. 預先登記：品質價值分數 QV（#93）——規則在看到結果前寫定，不接受參數 ─────────────
 
 QV_PREREG = {"issue": 93, "start": "2011-01-01", "q": 0.2, "n_trials": 33, "dsr_bar": 0.95, "ic_t_bar": 2.0,
-             "parts": ("fcfy", "roic")}
+             "parts": ("fcfy", "roic"), "v_rule": "null", "min_price_cov": 0.9}
 # n_trials＝這條研究線已試過的次數：價格因子 7、價值／品質因子 8、產業 ETF 輪動網格 15、accumulate 1、產業中性 MoS 1、QV 1
+# v_rule＝"null"：DSR 的 V[SR] 用零技巧虛無假設 (1 + ½SR²)/T，不拿任何嘗試的實際結果、也不含 QV 自己
+#   （#93 補充登記：原本用「7 個同批因子＋QV 自己」的分散，QV 越強門檻越高，真贏的也會被判沒過——執行前驗證 High）
+# min_price_cov＝對得到 CIK 的代碼中抓得到價格的比例下限；不到 → 判定無效、需重跑
 
 
 def qv_score(F: dict, M: pd.DataFrame, parts: tuple = QV_PREREG["parts"]) -> pd.DataFrame:
@@ -648,15 +651,13 @@ def qv_test(F: dict, R: pd.DataFrame, M: pd.DataFrame, spy_r: pd.Series, ew_r: p
     if len(top):
         net = top["net"]
         act = (net - spy_r.reindex(net.index)).dropna()
-        trial_srs = [s_ for s_ in (_active_sr(Fk.reindex(R.index), R, M, spy_r, q)[0] for Fk in F.values()) if s_ is not None]
-        if sr is not None:
-            trial_srs.append(sr)
         res.update({"top": fr.perf(net), "vs_spy": fr._excess(net, spy_r), "vs_ew": fr._excess(net, ew_r),
                     "turnover": float(top["turnover"].mean()), "sr_m": sr,
+                    "missing": float(top["missing"].sum() / max(1, top["n"].sum())),
                     "sub": {lab: fr._excess(fr._sub(net, a, b), spy_r) for a, b, lab in fr.SUBPERIODS
                             if len(fr._sub(net, a, b)) >= 12}})
-        try:
-            res["dsr"] = fz.deflated_sharpe(sr if sr is not None else 0.0, len(act), prereg["n_trials"], trial_srs,
+        try:                                               # V[SR]：零技巧虛無假設（trial_srs=None），見 QV_PREREG 註解
+            res["dsr"] = fz.deflated_sharpe(sr if sr is not None else 0.0, len(act), prereg["n_trials"], None,
                                             skew=float(act.skew()), kurt=float(act.kurt()) + 3.0)
         except Exception as e:
             res["dsr"] = {"dsr": None, "note": type(e).__name__}
@@ -682,19 +683,20 @@ def qv_text(res: dict, meta: dict, prereg: dict = QV_PREREG) -> str:
     L = [f"🧪 *預先登記測試：品質價值分數 QV（自由現金流殖利率 ＋ ROIC）*（#{prereg['issue']}；當時 S&P 500 成分、"
          f"{meta.get('start')}→{meta.get('end')}、每月底訊號、次日開盤成交、前 {q:.0%} 等權、單邊成本 0.05%）",
          f"規則（跑之前寫定）：① 前 {q:.0%} 扣成本贏 SPY 且 DSR > {prereg['dsr_bar']}（扣掉這條研究線 {prereg['n_trials']} 次嘗試的運氣）"
-         f" ② 1 個月 IC 的 t ≥ {prereg['ic_t_bar']:.0f}——兩項都過才算通過",
+         f" ② 1 個月 IC 的 t ≥ {prereg['ic_t_bar']:.0f}——兩項都過才算通過；對得到 CIK 者抓得到價格 < {prereg['min_price_cov']:.0%} → 判定無效",
          "", "*結果*"]
     if tp:
         L.append(f"・前 {q:.0%}：年化 {fr._p(tp.get('cagr'))}｜vs SPY {fr._p(vs.get('cagr_diff'))}（IR {fr._f(vs.get('ir'))}、"
                  f"贏的年份 {fr._p(vs.get('win_years'), 0, False)}）｜vs 成分等權 {fr._p(ew.get('cagr_diff'))}｜"
                  f"回撤 {fr._p(tp.get('max_dd'), 0, False)}｜月換手 {res.get('turnover', 0):.0%}｜後 {q:.0%} 年化 "
                  f"{fr._p((res.get('bot') or {}).get('cagr'))}")
-        L.append(f"・DSR {fr._f(ds.get('dsr'))}（主動報酬月 Sharpe {fr._f(res.get('sr_m'), 3)}；{prereg['n_trials']} 次嘗試下運氣好的上限 "
-                 f"{fr._f(ds.get('sr_star'), 3)}）")
+        L.append(f"・DSR {fr._f(ds.get('dsr'))}（主動報酬月 Sharpe {fr._f(res.get('sr_m'), 3)}；零技巧假設下 {prereg['n_trials']} 次嘗試"
+                 f"「運氣最好那次」的期望 {fr._f(ds.get('sr_star'), 3)}" + (f"；{ds['note']}" if ds.get("note") else "") + "）")
+        L.append(f"・持有期中資料中斷（多半是下市）的持股占 {res.get('missing', 0):.1%}：這些報酬沒算進去（偏樂觀）")
         if res.get("sub"):
             L.append("・分時段 vs SPY：" + "｜".join(f"{lab} {fr._p(v.get('cagr_diff'))}" for lab, v in res["sub"].items()))
     else:
-        L.append("・前 20% 組合建不起來（樣本不足）")
+        L.append(f"・前 {q:.0%} 組合建不起來（樣本不足）")
     no12 = ic12.get("t_nonoverlap")
     L.append(f"・1 個月 IC {fr._f(ic1.get('mean'), 3)}（t {fr._f(ic1.get('t_nw'), 1)}，{ic1.get('n', 0)} 期）｜12 個月 IC "
              f"{fr._f(ic12.get('mean'), 3)}（不重疊 t {fr._f(no12, 1)}）")
@@ -702,14 +704,27 @@ def qv_text(res: dict, meta: dict, prereg: dict = QV_PREREG) -> str:
     if nt:
         L.append(f"・產業中性 QV（只報告）：1 個月 IC {fr._f((nt.get('ic1') or {}).get('mean'), 3)}"
                  f"（t {fr._f((nt.get('ic1') or {}).get('t_nw'), 1)}）｜前 {q:.0%} vs SPY {fr._p((nt.get('vs_spy') or {}).get('cagr_diff'))}")
-    L.append(f"・覆蓋：每期平均 {res.get('n_scored', 0):.0f} 檔有分數（當期成分 {res.get('n_members', 0):.0f} 檔）")
+    cv = res.get("coverage") or {}
+    L.append(f"・覆蓋：每期平均 {res.get('n_scored', 0):.0f} 檔有分數｜有價格的當期成分 {res.get('n_members', 0):.0f} 檔｜"
+             f"當時指數成分 {cv.get('index_members', 0):.0f} 檔｜對得到 CIK 的代碼中抓得到價格 {cv.get('price_cov', 0):.0%}"
+             f"（門檻 {prereg['min_price_cov']:.0%}）")
     L.append("")
-    if res.get("passed"):
+    if res.get("invalid"):
+        L.append(f"*判定：⚠️ 無效、需重跑*——抓得到價格的比例 {cv.get('price_cov', 0):.0%} 低於預先登記的 "
+                 f"{prereg['min_price_cov']:.0%}（多半是行情來源暫時出錯），這次不算數")
+    elif res.get("passed"):
         L.append("*判定：✅ 通過*——依約定進入「虛擬帳前瞻驗證」，不是直接上線（這是樣本內通過）")
     else:
         why = []
         if not res.get("c1"):
-            why.append("① 沒過（" + ("沒贏 SPY" if not ((vs.get("cagr_diff") or -1) > 0) else f"DSR {fr._f(ds.get('dsr'))} ≤ {prereg['dsr_bar']}") + "）")
+            if not tp:
+                why.append("① 沒過（組合建不起來）")
+            elif not ((vs.get("cagr_diff") or -1) > 0):
+                why.append(f"① 沒過（扣成本後沒贏 SPY：{fr._p(vs.get('cagr_diff'))}）")
+            elif ds.get("dsr") is None:
+                why.append(f"① 沒過（DSR 算不出來：{ds.get('note') or '未知'}）")
+            else:
+                why.append(f"① 沒過（DSR {fr._f(ds.get('dsr'))} ≤ {prereg['dsr_bar']}）")
         if not res.get("c2"):
             why.append(f"② 沒過（IC t {fr._f(ic1.get('t_nw'), 1)} < {prereg['ic_t_bar']:.0f}）")
         L.append("*判定：❌ 沒通過*——" + "；".join(why) + "。依約定結束「S&P 500 選股贏大盤」這條研究線")
@@ -725,6 +740,11 @@ def run_qv(end: str | None = None, store: dict | None = None, periods: dict | No
     if "text" in P:
         return P
     res = qv_test(P["F"], P["R"], P["M"], P["spy_r"], P["ew_r"], sec_l1, prereg)
+    cov = {"price_cov": len(P["have"]) / max(1, len(P["mapped"])),
+           "index_members": float(P["allM"].reindex(P["R"].index).sum(axis=1).mean())}
+    res["coverage"] = cov
+    if cov["price_cov"] < prereg["min_price_cov"]:                # 行情來源出錯時不給判定（#93 補充登記）
+        res.update({"invalid": True, "passed": False})
     meta = {"start": str(P["R"].index[0].date()), "end": str(P["R"].index[-1].date())}
     return {"res": res, "meta": meta, "text": qv_text(res, meta, prereg)}
 
@@ -1049,7 +1069,9 @@ if __name__ == "__main__":
     Fb2.loc[:, "A"] = 10.0                                             # A 的 roic 變最高 → A 最高分
     assert qv_score({"fcfy": Fa, "roic": Fb2}, M11).iloc[0].idxmax() == "A"
     assert QV_PREREG == {"issue": 93, "start": "2011-01-01", "q": 0.2, "n_trials": 33, "dsr_bar": 0.95, "ic_t_bar": 2.0,
-                         "parts": ("fcfy", "roic")}                       # 規則不准偷改（改了要另開預先登記）
+                         "parts": ("fcfy", "roic"), "v_rule": "null", "min_price_cov": 0.9}   # 規則不准偷改（改了要另開登記）
+    import falsifier as _fz                                            # 零技巧虛無假設下的門檻：月 SR 0.3（IR≈1.04）過、0.2 不過
+    assert _fz.deflated_sharpe(0.3, 187, 33, None)["dsr"] > 0.95 > _fz.deflated_sharpe(0.2, 187, 33, None)["dsr"]
     o11 = run_qv("2019-06-30", store=store, periods=per, price_fn=pf, sec_l1=sec_syn)
     r11 = o11["res"]
     assert r11["ic1"]["t_nw"] >= 2 and r11["c2"] and r11["dsr"].get("dsr") is not None, (r11["ic1"], r11.get("dsr"))
@@ -1057,6 +1079,31 @@ if __name__ == "__main__":
     assert "預先登記" in t11 and "判定" in t11 and t11.count("*") % 2 == 0 and "_" not in t11, t11
     o11b = run_qv("2019-06-30", store=store7, periods=per7, price_fn=pf7, sec_l1=sec_syn)
     assert not o11b["res"]["passed"] and "沒通過" in o11b["text"], o11b["text"]
+    assert r11["coverage"]["price_cov"] == 1.0 and not r11.get("invalid")
+    # 覆蓋閘門：兩成代碼抓不到價格 → 判定無效（不給過／沒過）
+    drop = {f"C{i:03d}" for i in range(0, 60, 5)} | {f"C{i:03d}" for i in range(1, 60, 7)}
+    pf_bad = lambda syms, start: {s_: prices[s_] for s_ in syms if s_ in prices and s_ not in drop}   # noqa: E731
+    o11c = run_qv("2019-06-30", store=store, periods=per, price_fn=pf_bad, sec_l1=sec_syn)
+    assert o11c["res"]["invalid"] and not o11c["res"]["passed"] and "無效" in o11c["text"] and o11c["text"].count("*") % 2 == 0
+    # ROIC 真的進分數：營益率因公司而異時，QV 與「只看 FCF 殖利率」的排名不同
+    store11d, prices11d, per11d = _synthetic(n_co=40, seed=8)
+    oi_i = tpos["OperatingIncomeLoss"]
+    rng11 = np.random.default_rng(2)
+    for c_ in store11d["companies"].values():
+        f_ = rng11.uniform(0.3, 1.7)
+        for r in c_["rows"]:
+            if r[0] == oi_i:
+                r[3] *= f_
+    P11 = build_panel("2011-01-01", "2019-06-30", store11d, per11d,
+                      lambda syms, start: {s_: prices11d[s_] for s_ in syms if s_ in prices11d}, {}, with_models=False)
+    qv11 = qv_score(P11["F"], P11["M"]).iloc[-1].dropna()
+    fc11 = P11["F"]["fcfy"].iloc[-1].reindex(qv11.index).rank()
+    assert P11["F"]["roic"].iloc[-1].dropna().nunique() > 10 and abs(qv11.rank().corr(fc11)) < 0.99, qv11.rank().corr(fc11)
+    # 判定文字的各分支（DSR 算不出來、組合建不起來）都說得清楚原因
+    base_res = {"ic1": {"mean": 0.01, "t_nw": 1.0, "n": 100}, "ic12": {}, "c1": False, "c2": False, "passed": False}
+    t_a = qv_text(dict(base_res, top={"cagr": 0.1}, vs_spy={"cagr_diff": 0.01}, dsr={"dsr": None, "note": "樣本太短"}), {})
+    t_b = qv_text(dict(base_res), {})
+    assert "DSR 算不出來：樣本太短" in t_a and "組合建不起來" in t_b and all(x.count("*") % 2 == 0 and "_" not in x for x in (t_a, t_b))
     print(f"✅ 11 預先登記 QV：排名只在成分且兩項都有值之間、規則寫死、有訊號 IC t {r11['ic1']['t_nw']:+.1f}、無訊號判沒通過")
 
     print("✅ 9 改名代碼併入現行代碼、離開指數後改名仍建模、雙股權只留一檔、斷點表鍵正規化")
