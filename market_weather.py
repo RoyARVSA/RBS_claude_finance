@@ -184,33 +184,23 @@ def _hours_since(ts: str | None, now: str) -> float:
 
 # ── 抓取層（需網路；全 yfinance 免 key）──────────────────────────────────────
 
-def fetch_inputs() -> dict:
+def inputs_from_history(px_sector, px_cross) -> dict:
     """
-    一次抓齊所有原始輸入。個別失敗 → 該成分 None。
+    （純函式）收盤價寬表 → 原始輸入；線上 fetch_inputs 與歷史重放共用同一套組裝（研究計畫 §1：
+    重放另寫一份就保證不了「原封不動」）。px_*：欄＝代碼、只含「到當時為止」的資料（重放時由呼叫端截斷）。
     回 {breadth: (above, total)|None, credit: (ratio, ma50)|None,
         vix: (vix, vix3m)|None, curve: spread|None, cu_au: chg|None}
     """
-    import yfinance as yf
-
     out = {"breadth": None, "credit": None, "vix": None,
            "curve": None, "cu_au": None}
 
-    def _closes(tickers, period="6mo"):
-        raw = yf.download(tickers, period=period, auto_adjust=True,
-                          progress=False, group_by="column")
-        if raw is None or raw.empty:
-            return None
-        px = raw["Close"] if "Close" in raw else raw
-        return px
-
     # 1) 廣度：類股 ETF vs 各自 MA50
     try:
-        px = _closes(SECTOR_ETFS)
-        if px is not None:
+        if px_sector is not None:
             above = total = 0
             for t in SECTOR_ETFS:
                 try:
-                    s = px[t].dropna()
+                    s = px_sector[t].dropna()
                     if len(s) >= 50:
                         total += 1
                         if float(s.iloc[-1]) > float(s.rolling(50).mean().iloc[-1]):
@@ -220,12 +210,11 @@ def fetch_inputs() -> dict:
             if total >= 6:                       # 抓到過半才算數
                 out["breadth"] = (above, total)
     except Exception as e:
-        print(f"weather: 廣度抓取失敗 {e}")
+        print(f"weather: 廣度計算失敗 {e}")
 
-    # 2) 信用利差 + 3) VIX 期限 + 4) 曲線 + 5) 銅金（一批抓）
+    # 2) 信用利差 + 3) VIX 期限 + 4) 曲線 + 5) 銅金
     try:
-        px = _closes(["HYG", "LQD", "^VIX", "^VIX3M", "^TNX", "^IRX",
-                      "HG=F", "GC=F"])
+        px = px_cross
         if px is not None:
             def last(t):
                 try:
@@ -259,8 +248,92 @@ def fetch_inputs() -> dict:
             except Exception:
                 pass
     except Exception as e:
-        print(f"weather: 跨資產抓取失敗 {e}")
+        print(f"weather: 跨資產計算失敗 {e}")
     return out
+
+
+CROSS_TICKERS = ["HYG", "LQD", "^VIX", "^VIX3M", "^TNX", "^IRX", "HG=F", "GC=F"]
+
+
+def fetch_inputs() -> dict:
+    """
+    一次抓齊所有原始輸入（網路）→ inputs_from_history（純函式）。個別失敗 → 該成分 None。
+    """
+    import yfinance as yf
+
+    def _closes(tickers, period="6mo"):
+        raw = yf.download(tickers, period=period, auto_adjust=True,
+                          progress=False, group_by="column")
+        if raw is None or raw.empty:
+            return None
+        px = raw["Close"] if "Close" in raw else raw
+        return px
+
+    px_s = px_c = None
+    try:
+        px_s = _closes(SECTOR_ETFS)
+    except Exception as e:
+        print(f"weather: 廣度抓取失敗 {e}")
+    try:
+        px_c = _closes(CROSS_TICKERS)
+    except Exception as e:
+        print(f"weather: 跨資產抓取失敗 {e}")
+    return inputs_from_history(px_s, px_c)
+
+
+LIVE_LOOKBACK_MONTHS = 6       # 線上 fetch_inputs 用 yf.download(period="6mo")——重放每天也只看前 6 個月，才和線上同語意
+
+
+def replay_regimes(px_sector, px_cross, dates, ma50_fallback: dict | None = None,
+                   lookback_months: int = LIVE_LOOKBACK_MONTHS) -> dict:
+    """
+    （純函式）把現行氣象台逐日套回歷史：每個日期 d 只用「d 往前 6 個月到 d」的收盤（與線上抓 6 個月同語意）
+    → inputs_from_history → composite →
+    to_regime（遲滯的「前一狀態」＝上一個氣象台讀數，與線上快取同語意）。
+    成分不足（composite 回 None）→ 該日用 ma50_fallback[d]（線上 market_regime 的 MA50 退路），
+    而且**不更新**遲滯的前一狀態（線上此時不寫 weather 快取）。
+    回 {d: {"regime", "score", "missing", "source"}}，source ∈ weather / ma50 / none。
+    """
+    import pandas as _pd
+    out, prev = {}, None
+    for d in dates:
+        ts = _pd.Timestamp(d)
+        t0 = ts - _pd.DateOffset(months=int(lookback_months))
+        ps = px_sector.loc[t0:ts] if px_sector is not None else None
+        pc = px_cross.loc[t0:ts] if px_cross is not None else None
+        comp = composite(inputs_to_components(inputs_from_history(ps, pc)))
+        if comp is None:
+            fb = (ma50_fallback or {}).get(d)
+            out[d] = {"regime": fb, "score": None, "missing": None, "source": "ma50" if fb else "none"}
+            continue
+        rg = to_regime(comp["score"], prev, (comp.get("components") or {}).get("breadth"))
+        prev = rg["regime"]
+        out[d] = {"regime": rg["regime"], "score": comp["score"], "missing": comp["missing"], "source": "weather"}
+    return out
+
+
+def log_daily(result: dict, path=None, today: str | None = None) -> bool:
+    """線上讀數每日一筆存檔（公開市場資料；研究計畫 §1：以後核對「日收盤重放」與「線上每小時版」）。
+    同一天重複呼叫 → 覆寫當天那筆（保留當天最後一次讀數）。失敗回 False、不影響線上。"""
+    from pathlib import Path
+    try:
+        p = Path(path) if path else Path(__file__).resolve().parent / "data" / "weather" / "history.csv"
+        today = today or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        comps = result.get("components") or {}
+        keys = list(WEATHER_WEIGHTS)
+        row = [today, f"{float(result['score']):.1f}", str((result.get("regime") or {}).get("regime") or "")] + \
+              ["" if comps.get(k) is None or _bad(comps.get(k)) else f"{float(comps[k]):.1f}" for k in keys]
+        header = "date,score,regime," + ",".join(keys)
+        lines = p.read_text(encoding="utf-8").splitlines() if p.exists() else [header]
+        if not lines or lines[0] != header:
+            lines = [header] + [ln for ln in lines if ln and not ln.startswith("date,")]
+        lines = [ln for ln in lines[1:] if not ln.startswith(today + ",")]
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("\n".join([header] + lines + [",".join(row)]) + "\n", encoding="utf-8")
+        return True
+    except Exception as e:
+        print(f"weather: 每日存檔失敗 {type(e).__name__}")
+        return False
 
 
 def inputs_to_components(inputs: dict) -> dict:
@@ -301,6 +374,7 @@ def get_weather(state: dict | None = None, now: str | None = None) -> dict | Non
     result = {**comp, "regime": rg}
     if state is not None:
         state["weather"] = {"ts": now, **comp, "regime": rg}
+        log_daily(result, today=now[:10])            # 線上（有 state）才存檔；測試／重放不寫檔
     return result
 
 
@@ -381,6 +455,53 @@ if __name__ == "__main__":
     assert "vix_ts" not in txt, txt          # 缺席行必須用中文短名
     assert txt.count("_") % 2 == 0, txt      # 底線必須成對
     print("✅ 5 weather_text（Markdown 安全）")
+
+    # 6) inputs_from_history：線上與重放共用的組裝（純函式）；replay_regimes：缺成分退 MA50、退路日不更新遲滯
+    import numpy as _np
+    import pandas as _pd
+    _idx = _pd.bdate_range("2007-01-01", periods=160)
+    _up = _pd.Series(100 * _np.exp(_np.linspace(0, 0.2, 160)), index=_idx)
+    _ps = _pd.DataFrame({t: _up for t in SECTOR_ETFS}, index=_idx)          # 全部上升 → 廣度 11/11
+    _pc = _pd.DataFrame({"HYG": _up, "LQD": _up * 0 + 100.0, "^VIX": 12.0, "^VIX3M": 15.0,
+                         "^TNX": 4.5, "^IRX": 3.0, "HG=F": _up, "GC=F": 100.0}, index=_idx)
+    _pc.loc[_idx[:100], ["HYG", "^VIX3M"]] = _np.nan                       # 前 100 天沒有 HYG、VIX3M（像 2007 前）
+    i6 = inputs_from_history(_ps, _pc)
+    assert i6["breadth"] == (11, 11) and i6["credit"] is not None and i6["vix"] == (12.0, 15.0) and abs(i6["curve"] - 1.5) < 1e-12
+    i6b = inputs_from_history(_ps.loc[:_idx[80]], _pc.loc[:_idx[80]])        # 截斷到第 80 天：信用、VIX 期限缺席
+    assert i6b["credit"] is None and i6b["vix"] is None and i6b["breadth"] == (11, 11)
+    assert inputs_from_history(None, None) == {"breadth": None, "credit": None, "vix": None, "curve": None, "cu_au": None}
+    _days = [str(d.date()) for d in _idx[40:]]
+    fb = {d: "neutral" for d in _days}
+    rp = replay_regimes(_ps, _pc, _days, fb)
+    assert rp[_days[0]]["source"] == "ma50" and rp[_days[0]]["regime"] == "neutral"   # 第 40 天：廣度不到 50 根 → 成分不足
+    srcs = [rp[d]["source"] for d in _days]
+    assert "weather" in srcs and srcs.index("weather") > 0                   # 成分湊滿 3 個後才改用氣象台
+    last = rp[_days[-1]]
+    assert last["source"] == "weather" and last["regime"] == "risk_on" and last["missing"] == [], last
+    # 遲滯：前一狀態只來自氣象台讀數（退路日不更新）——同一分數序列下，退路插在中間不改變之後的判定
+    assert all(rp[d]["regime"] in ("risk_on", "neutral", "risk_off") for d in _days)
+    # 遲滯的前一狀態只來自氣象台讀數：分數 62（偏多）→ 退路日 → 57（已偏多，遲滯下 ≥55 仍偏多）
+    _orig_comp = composite
+    _script = iter([{"score": 62.0, "components": {}, "missing": []}, None,
+                    {"score": 57.0, "components": {}, "missing": []}])
+    globals()["composite"] = lambda comps: next(_script)
+    try:
+        rh = replay_regimes(_ps, _pc, _days[:3], {_days[1]: "risk_off"})
+    finally:
+        globals()["composite"] = _orig_comp
+    assert [rh[d]["regime"] for d in _days[:3]] == ["risk_on", "risk_off", "risk_on"], rh   # 若退路更新 prev，第三天會變中性
+    print("✅ 6 inputs_from_history／replay_regimes（截斷即 PIT、缺成分退 MA50、退路日不更新遲滯）")
+
+    # 7) log_daily：同一天覆寫、新的一天追加、格式固定
+    import tempfile
+    from pathlib import Path as _P
+    _tp = _P(tempfile.mkdtemp()) / "history.csv"
+    _res = {"score": 61.04, "regime": {"regime": "risk_on"}, "components": {"breadth": 80.0, "credit": None}}
+    assert log_daily(_res, _tp, "2026-10-01") and log_daily(dict(_res, score=59.0), _tp, "2026-10-01")
+    assert log_daily(_res, _tp, "2026-10-02")
+    _ln = _tp.read_text().splitlines()
+    assert _ln[0].startswith("date,score,regime,breadth") and len(_ln) == 3 and _ln[1].startswith("2026-10-01,59.0,risk_on,80.0,"), _ln
+    print("✅ 7 log_daily（同日覆寫、跨日追加）")
     print()
     print(txt)
     print("\nmarket_weather selftest OK ✅")

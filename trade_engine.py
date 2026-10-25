@@ -51,6 +51,8 @@ ENGINE_DEFAULTS = {
                                   # 不進場（對抗驗證 M3）；ret_5d 缺欄時只看 ext；≤0 關閉第二條件
     "neutral_risk_mult":  0.5,    # regime=neutral（含「偏多但廣度弱」）新倉風險預算倍數
     "neutral_pyramid":    False,  # regime=neutral 是否允許加碼
+    "regime_tighten":     True,   # risk_off（REDUCING 只因大盤偏空）時收緊追蹤停損；False＝只管進場閘門、不收緊
+                                  # （研究用：拆開 regime 的「進場閘門」與「抱多久」兩個作用；回撤保險絲／HALTED 照樣收緊）
     "pyramid_headroom":   1.3,    # 加碼可把單檔市值推到 max_position_pct × 此值
                                   # （2026-08 實案：ATR sizing 天然把進場開到 15% 滿格，
                                   #   加碼條件「市值+加碼 ≤ 15%」數學上恆 False——
@@ -251,7 +253,9 @@ def decide(scored: list[dict], positions: dict, equity: float, buying_power: flo
             _rs = (f"（空手 {flat_days}/{n_reset} 天後重置高點）" if not held_any
                    else f"（持倉出清後空手 {n_reset} 天重置高點）")
         notes.append(f"曝險狀態 {exp_state}：{exp_reason}{_rs}")
-    tighten = exp_state != "ACTIVE"
+    # REDUCING 只因大盤偏空（不是回撤保險絲）時，regime_tighten=False 可以只擋新倉、不收緊追蹤（預設 True＝現行）
+    regime_only = exp_state == "REDUCING" and not dd_lock
+    tighten = exp_state != "ACTIVE" and not (regime_only and not cfg.get("regime_tighten", True))
     neutral = (regime == "neutral")
     if neutral and exp_state == "ACTIVE" and (float(cfg["neutral_risk_mult"]) < 1.0 or not cfg["neutral_pyramid"]):
         notes.append(f"🟡 大盤中性：新倉風險 ×{float(cfg['neutral_risk_mult']):g}"
@@ -1078,6 +1082,25 @@ if __name__ == "__main__":
     assert o29a[0]["qty"] == 100 and o29b[0]["qty"] == 66 and o29c[0]["qty"] == 150, (o29a, o29b, o29c)
     assert abs(o29b[0]["qty"] * 1.5 * 10 - 1000) < 15                 # 虧損 ≈ 1% × 100k
     print("✅ 29 停損倍數納入部位計算（風險固定，#73）")
+
+    # 30) regime_tighten（研究計畫 v5 §1）：risk_off 收緊追蹤 8%→5% 可單獨關掉；預設＝現行；回撤保險絲照樣收緊
+    def _t30(regime, cfg=None, equity=100000, peak_eq=None):
+        e = mk_eng("TT", 100, 5, peak=108)                          # r_peak 1.6 → 追蹤已啟動；現價 102 自高點回落 5.6%
+        if peak_eq:
+            e["equity_peak"] = peak_eq
+        o, _, _ = decide([{"ticker": "TT", "score": 0.6, "price": 102.0}], {"TT": mk_pos(10, 100, 102)},
+                         equity, 50000, e, regime, cfg, T)
+        return any(x["side"] == "sell" for x in o)
+    assert not _t30("risk_on")                                        # ACTIVE：8% 才出 → 抱著
+    assert _t30("risk_off")                                           # 預設：risk_off 收緊到 5% → 出場（＝現行）
+    assert _t30("risk_off", {"regime_tighten": True})
+    assert not _t30("risk_off", {"regime_tighten": False})            # 只擋新倉、不收緊 → 抱著
+    assert _t30("risk_on", {"regime_tighten": False}, equity=88000, peak_eq=100000)   # 回撤保險絲 → 仍收緊
+    assert _t30("risk_off", {"regime_tighten": False}, equity=88000, peak_eq=100000)
+    o30, _, _ = decide([{"ticker": "NEW", "score": 0.9, "price": 50.0}], {}, 100000, 50000, new_engine_state(),
+                       "risk_off", {"regime_tighten": False}, T)
+    assert o30 == []                                                  # 進場閘門不受影響：risk_off 仍不開新倉
+    print("✅ 30 regime_tighten：預設＝現行、關掉只停收緊、回撤保險絲與進場閘門不受影響")
 
     print("\n─ engine_status_text ─")
     eng = mk_eng("AAPL", 100, 3)

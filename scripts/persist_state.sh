@@ -20,6 +20,7 @@ add_all() {
   git add estimates_ledger.json 2>/dev/null || true
   git add data/universe 2>/dev/null || true
   git add data/fin 2>/dev/null || true
+  git add data/weather 2>/dev/null || true   # 線上氣象台每日讀數（公開資料；研究計畫 §1）
 }
 
 add_all

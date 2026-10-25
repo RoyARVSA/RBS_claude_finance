@@ -33,7 +33,9 @@ LANE_DEFS = {                      # name → (用候選池, 用 meta 倍數, �
 }
 LANE_LABELS = {"base": "現行（watchlist）", "pool": "＋候選池", "pool_meta": "＋候選池＋meta 部位",
                "risk2": "風險 ×2／單檔 20%（研究候選）", "val": "估值層開（VRT 方法 MoS 調部位）"}
-LANE_ONLY_KEYS = ("val",)          # 車道層用的覆蓋鍵（不進引擎 config）
+LANE_ONLY_KEYS = ("val", "regime_source", "history_cap")   # 車道層用的覆蓋鍵（不進引擎 config）
+# regime_source：車道用哪一種大盤濾網（run_lanes 的 regimes 參數提供，例如 {"ma50": "neutral", "off": None}）；
+# history_cap：這條車道的淨值歷史上限（研究車道前瞻可能超過預設 400 天）。研究計畫 §1、§6。
 
 
 def lane_config(config: dict, overrides: dict) -> dict:
@@ -97,7 +99,7 @@ def _apply(book: dict, orders: list[dict], prices: dict) -> int:
 
 def run_lanes(state: dict, scored: list[dict], config: dict, regime: str | None, today: str,
               meta_usable: bool = False, pool_available: bool = False, real_equity: float | None = None,
-              val_ctx: dict | None = None) -> dict:
+              val_ctx: dict | None = None, regimes: dict | None = None) -> dict:
     """
     每輪呼叫。scored：完整列（含候選池列 pool=True、meta_mult/meta_p 已附）；config：與真帳同。
     就地更新 state["lanes"]；回 {name: n_filled}。任何車道炸掉不影響其他車道。
@@ -154,7 +156,11 @@ def run_lanes(state: dict, scored: list[dict], config: dict, regime: str | None,
             if overrides:                               # 實際生效的覆蓋值（/lanes 顯示：例如恐貪縮倉時 ×2 後不是 2%）
                 book["cfg_eff"] = {"risk_pct": float(cfg_l.get("risk_pct", te.ENGINE_DEFAULTS["risk_pct"])),
                                    "max_position_pct": float(cfg_l.get("max_position_pct", te.ENGINE_DEFAULTS["max_position_pct"]))}
-            orders, eng, _notes = te.decide(rows, pos_view, equity, book["cash"], book.get("engine"), regime, cfg_l, today)
+            rg_l = regime                               # 車道可指定別的大盤濾網來源（regimes 沒給該來源 → 用真帳同一個）
+            src_l = (overrides or {}).get("regime_source")
+            if src_l and regimes is not None and src_l in regimes:
+                rg_l = regimes[src_l]
+            orders, eng, _notes = te.decide(rows, pos_view, equity, book["cash"], book.get("engine"), rg_l, cfg_l, today)
             book["engine"] = eng
             n = _apply(book, [o for o in orders if prices.get(o["symbol"])], prices)
             book["n_trades"] = int(book.get("n_trades", 0)) + n
@@ -171,8 +177,9 @@ def run_lanes(state: dict, scored: list[dict], config: dict, regime: str | None,
                 hist[-1] = dict(book["last"])
             else:
                 hist.append(dict(book["last"]))
-            if len(hist) > HISTORY_CAP:
-                del hist[:-HISTORY_CAP]
+            cap_l = int((overrides or {}).get("history_cap") or HISTORY_CAP)
+            if len(hist) > cap_l:
+                del hist[:-cap_l]
             filled[name] = n
             book.pop("error", None)
         except Exception as e:            # 單一車道失敗不影響其他車道
@@ -321,5 +328,24 @@ if __name__ == "__main__":
     assert "估值覆蓋 1 檔" in lanes_text(st5) and "真帳已開估值層" not in lanes_text(st5)
     st5["thresholds"] = {"val_enabled": True}                                     # 真帳已開 → 車道標「＝現行」
     assert lanes_text(st5).count("真帳已開估值層＝現行") == 1                      # 只標在估值車道那一行
-    print("✅ 3 淨值歷史／殭屍倉／文字／reset／壞列／晚加入車道自帶起算基準／估值層車道只影響自己")
+    # 7) 車道自己的大盤濾網來源（regime_source）與歷史上限（history_cap）：真帳 risk_off 停新倉，
+    #    指定 ma50 來源且 regimes 給 risk_on 的車道照樣進場；沒給 regimes → 跟真帳同一個 regime
+    _defs0 = dict(LANE_DEFS)
+    LANE_DEFS["ma50x"] = (False, False, {"regime_source": "ma50", "history_cap": 2})
+    try:
+        st7: dict = {}
+        run_lanes(st7, scored, {"max_positions": 10}, "risk_off", T, regimes={"ma50": "risk_on"})
+        L7 = st7["lanes"]["lanes"]
+        assert L7["base"]["positions"] == {} and L7["ma50x"]["positions"], (L7["base"]["positions"], L7["ma50x"]["positions"])
+        assert "regime_source" not in lane_config({}, LANE_DEFS["ma50x"][2])
+        st7b: dict = {}
+        run_lanes(st7b, scored, {"max_positions": 10}, "risk_off", T)                 # 沒給 regimes → 同真帳
+        assert st7b["lanes"]["lanes"]["ma50x"]["positions"] == {}
+        for d7 in ("2026-09-22", "2026-09-23", "2026-09-24"):
+            run_lanes(st7, scored, {"max_positions": 10}, "risk_on", d7)
+        assert len(L7["ma50x"]["history"]) == 2 and len(L7["base"]["history"]) == 4
+    finally:
+        LANE_DEFS.clear()
+        LANE_DEFS.update(_defs0)
+    print("✅ 3 淨值歷史／殭屍倉／文字／reset／壞列／晚加入車道自帶起算基準／估值層車道只影響自己／車道 regime 來源與歷史上限")
     print("\nlanes selftest OK ✅")

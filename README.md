@@ -188,7 +188,7 @@ tw_flows.py             台股三大法人買賣超（TWSE T86 上市 + TPEX 上
 committee.py            機構決策委員會：角色提示/立場解析/硬風控閘門/量化交叉比較，支援多檔與深度模式（TradingAgents 式）
 trade_engine.py         分層自動交易引擎：追蹤停損/分批/保險絲/三態曝險（純邏輯）
 alpha_overlay.py        Alpha 資訊疊加層：內部人/選擇權/空單/財報 veto/恐貪縮倉
-market_weather.py       市場氣象台：廣度/信用/VIX期限/曲線/銅金五因子體質分
+market_weather.py       市場氣象台：廣度/信用/VIX期限/曲線/銅金五因子體質分（線上與歷史重放共用同一套計算、每日讀數存 data/weather/）
 behavior_check.py       交易行為體檢：追高/頻率/出場品質/持有期
 shadow_book.py          Shadow 對照帳本：舊決策邏輯平行記帳 vs 新引擎
 mirror_book.py          鏡像帳：引擎接管使用者實倉起點的虛擬帳戶(模式 A)
@@ -211,6 +211,7 @@ gics_template.html      GICS 輪動 Dashboard 畫面（使用者原模板 + 完�
 gics_verify.py          GICS 數字對帳（vs State Street SPY 與 S&P 官方產業指數）
 gics_weekly.py          GICS 每週工作流：成分對照、公司資料、神經網路分類、對帳（gics_weekly.yml）
 edgar_pit.py            SEC EDGAR 年報「當時可得」資料層（Colab Cell 4 一次性抽取 → data/edgar/annual_pit.json.gz；pit_periods 轉 fin_data 格式給 company_model 長歷史回測）
+timing_research.py      擇時研究第 1 步（預先登記 #95）：氣象台接引擎長窗重放（2008–2025）與當 SPY 持股比例，判準＝擇時多賺 vs 同曝險配置（研究用）
 value_research.py       VRT 方法（company_model）長歷史回測：每份 10-K 公布後重建機械化模型 → 月底 MoS 與經典價值／品質因子的 IC、前 20% vs SPY、accumulate 組合、穩健性檢查；`qv`＝預先登記的品質價值分數測試（#93）（研究用）
 factor_research.py      長歷史選股因子研究（當時 S&P 500 成分、月頻 Rank IC、分時段、前 20% vs SPY）＋產業 ETF 輪動（walk-forward、PBO、DSR）
 engine_research.py      引擎回測研究執行器（engine_research.yml 手動觸發；公開資料＋預設參數，結果推 research-results 分支）

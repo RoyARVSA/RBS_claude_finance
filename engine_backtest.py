@@ -90,14 +90,21 @@ PARAM_LABELS = {          # 顯示用（Telegram Markdown 不能有底線）
 
 # ── 1. 資料 ───────────────────────────────────────────────────────────────
 
-def fetch_history(tickers: list[str], period: str = "2y") -> dict[str, pd.DataFrame]:
-    """批次抓日線 OHLCV（含 SPY 作 regime/基準）。回 {sym: DataFrame}。"""
+def fetch_history(tickers: list[str], period: str = "2y", start: str | None = None,
+                  end: str | None = None) -> dict[str, pd.DataFrame]:
+    """批次抓日線 OHLCV（含 SPY 作 regime/基準）。回 {sym: DataFrame}。
+    start/end（YYYY-MM-DD，end 含當天）給了就改抓指定期間（長窗重放用，研究計畫 §1）；預設照舊用 period。"""
     import yfinance as yf
     syms = sorted(set(t.upper() for t in tickers) | {"SPY"})
     out: dict[str, pd.DataFrame] = {}
     try:
-        raw = yf.download(syms, period=period, auto_adjust=True, progress=False,
-                          group_by="column", threads=True)
+        if start:
+            end_x = (pd.Timestamp(end) + pd.Timedelta(days=1)).strftime("%Y-%m-%d") if end else None   # yfinance 的 end 不含當天
+            raw = yf.download(syms, start=start, end=end_x, auto_adjust=True, progress=False,
+                              group_by="column", threads=True)
+        else:
+            raw = yf.download(syms, period=period, auto_adjust=True, progress=False,
+                              group_by="column", threads=True)
     except Exception as e:
         print(f"engine_backtest: 抓價失敗 {e}")
         return out
@@ -456,7 +463,8 @@ def replay(pre: dict, params: dict | None = None, dates: list[str] | None = None
     m["hold_med"] = float(np.median(list(by_lot.values()))) if by_lot else None
     m["beta"] = _beta(eq, pre.get("spy"))
     return {"equity": eq, "trades": trades, "metrics": m, "journal": journal,
-            "book": book, "engine": engine}
+            "book": book, "engine": engine,
+            "exposure": pd.Series(expo, index=eq.index) if len(expo) == len(eq) else None}   # 每日曝險（擇時研究的曝險調整用）
 
 
 def _metrics(eq: pd.Series, trades: list[dict], equity0: float) -> dict:

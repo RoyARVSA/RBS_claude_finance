@@ -10,7 +10,8 @@ engine_research.py – 引擎回測研究執行器（GitHub Actions `engine_rese
 
 子指令與 Bot 的 /engtest 相同（解析共用 engine_backtest.parse_engtest_args）：
   run [期間]、opt [期間] [entry|loose]、pit [檔數] [組數] [期間]、try 參數=值 … [期間] [pit …]；多個用「;」分隔。
-長歷史研究：factors／sectors（factor_research）、value（value_research）、qv（預先登記 #93，不接受參數）。
+長歷史研究：factors／sectors（factor_research）、value（value_research）、qv（預先登記 #93，不接受參數）、
+timing（擇時第 1 步，預先登記 #95，不接受參數）。
 
 隱私（公開 repo、公開日誌）：只用公開資料——觀察清單（watchlist_state.json 明文欄位）、當時 S&P 500 成分、
 **程式預設參數**。不讀加密的個人設定（thresholds／calibration／engine／eng_opt），所以「現行」＝程式預設，
@@ -64,11 +65,16 @@ def run_one(cmd: str, watchlist: list[str], fetch_fn=None, periods: dict | None 
     toks = cmd.split()
     if toks and toks[0].lower() in ("/engtest", "engtest"):
         toks = toks[1:]                                  # 容忍貼上時帶了指令前綴
+    if toks and toks[0].lower() == "timing":           # 預先登記 #95（擇時第 1 步）：規則寫死、不接受參數
+        if len(toks) > 1:
+            return "⚠️ timing 是預先登記測試（#95），規則寫死、不接受任何參數"
+        import timing_research as tr
+        return tr.run_timing(periods=periods)["text"]
     if toks and toks[0].lower() in ("factors", "sectors", "value", "qv"):
         return run_factor_research(toks, fetch_fn=fetch_fn, periods=periods)
     if toks and toks[0].lower() not in ("run", "opt", "pit", "try", "clear") \
             and toks[0].lower() not in eb.PERIOD_DAYS and "=" not in toks[0]:
-        return f"⚠️ 未知子指令 `{toks[0]}`（可用：run／opt／pit／try／factors／sectors／value／qv）"
+        return f"⚠️ 未知子指令 `{toks[0]}`（可用：run／opt／pit／try／factors／sectors／value／qv／timing）"
     if toks and toks[0].lower() == "run":
         toks = toks[1:]
     a = eb.parse_engtest_args(toks)
@@ -255,6 +261,7 @@ def _selftest() -> int:
         raise AssertionError("不該抓價格")
     assert "早於" in run_one("value end=2010", wl, fetch_fn=_boom) and "早於" in run_one("factors end=2003", wl, fetch_fn=_boom)
     assert "不接受任何參數" in run_one("qv start=2004", wl, fetch_fn=_boom)       # 預先登記：不准事後調參
+    assert "不接受任何參數" in run_one("timing 2y", wl, fetch_fn=_boom)
     # 邊界：各自的預設起點（value 2011、factors 2004）之後的 end 不能被誤擋
     _ep.load = lambda path=None: vstore
     try:

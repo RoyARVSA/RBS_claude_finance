@@ -463,7 +463,9 @@ def _cmd_help() -> str:
         "`/protections` — 查看冷卻/大盤濾網/引擎保險絲與回撤鎖狀態\n"
         "`/set cooldown_hours 4` — 訊號冷卻時數\n"
         "`/set cooldown_enabled off` — 關閉冷卻\n"
-        "`/set regime_filter_enabled off` — 關閉大盤濾網\n\n"
+        "`/set regime_filter_enabled off` — 關閉大盤濾網\n"
+        "`/set regime_source weather|ma50` — 大盤濾網來源（預設 weather＝市場氣象台；ma50＝舊版 SPY vs MA50）\n"
+        "`/set eng_regime_tighten off` — 大盤偏空時只停新倉、不收緊追蹤停損（預設 on；回撤保險絲照樣收緊）\n\n"
         "💰 *部位風險*\n"
         "`/risk 100000 1` — 設定帳戶 $10萬、單筆風險 1%\n"
         "`/risk` — 查看目前部位設定\n\n"
@@ -1123,7 +1125,15 @@ def process_commands(token: str, chat_id: str, state: dict) -> tuple[dict, bool]
                     eng_bool = isinstance(_te_b.ENGINE_DEFAULTS.get(key[4:]), bool)   # 如 eng_neutral_pyramid on|off
                 except Exception:
                     eng_bool = False
-            if key in bool_keys or eng_bool:
+            if key == "regime_source":                    # 大盤濾網來源（研究計畫 §1；預設 weather＝現行）
+                if val in ("weather", "ma50"):
+                    th[key] = val
+                    changed = True
+                    reply = (f"✅ `regime_source` → {val}"
+                             f"（{'市場氣象台五因子' if val == 'weather' else '舊版 SPY vs MA50'}）")
+                else:
+                    reply = "❌ `regime_source` 只接受 weather 或 ma50"
+            elif key in bool_keys or eng_bool:
                 th[key] = val in ("on", "true", "1", "yes")
                 changed = True
                 reply = f"✅ `{key}` → {'開啟' if th[key] else '關閉'}"
@@ -2705,13 +2715,15 @@ def market_regime(state: dict | None = None) -> dict | None:
     成分不足或模組失效 → 退回原 SPY vs MA50 邏輯。
     回傳 {"regime","emoji","label"} 或 None（資料不足）。
     """
-    try:
-        import market_weather as mw
-        w = mw.get_weather(state)
-        if w and w.get("regime"):
-            return w["regime"]
-    except Exception as e:
-        print(f"market_weather 失敗，退回 MA50 濾網 {e}")
+    _src = str(((state or {}).get("thresholds") or {}).get("regime_source", "weather")).lower()
+    if _src != "ma50":                                 # /set regime_source ma50 → 直接用舊版 MA50（研究計畫 §1、§6）
+        try:
+            import market_weather as mw
+            w = mw.get_weather(state)
+            if w and w.get("regime"):
+                return w["regime"]
+        except Exception as e:
+            print(f"market_weather 失敗，退回 MA50 濾網 {e}")
     try:
         raw = yf.download("SPY", period="3mo", auto_adjust=True, progress=False)
         if raw.empty:
