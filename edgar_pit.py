@@ -19,13 +19,19 @@ available_at = filed + 1 天（與 fin_data.normalize_finnhub 同義）；
 且當時已申報的科目——不是「全期取第一個有資料的科目」。
 已知限制：已下市公司（現在代碼查不到 CIK）不在檔內——與價格資料的存活偏誤同向，報告會揭露覆蓋率；
 公司自訂科目與分部資料不在 companyfacts（SEC 只彙整標準科目）。教育用途，非投資建議。
+
+#91 負債科目擴充（2026-10）：rows 用「科目在 TAGS 的整數索引」存科目，舊檔用的順序凍結在 LEGACY_TAGS，
+新科目一律接在後面（舊檔解碼不變）。沒有長債總額科目時才走 DEBT_FALLBACK_TAGS 的「不重複計算下限」退路。
+重建由 Colab Cell 5（sec_bulk.colab_build_all）負責；大於 24 MB 的檔自動切成 *.partN.json.gz（save_parts／load_parts）。
 """
 
 from __future__ import annotations
 
 import gzip
+import hashlib
 import json
 import math
+import time
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -79,11 +85,29 @@ FIELD_TAGS = {
     "shares_out": ["CommonStockSharesOutstanding"],
     # 負債組成（合成 total_debt；科目語意：LongTermDebtAndCapitalLeaseObligations＝非流動部分、
     # DebtCurrent＝已含一年內到期長債、LongTermDebt＝含一年內到期的長債總額——驗證 High）
+    # #91 擴充（新科目接在各清單尾端＝優先序最低）：…AndCapitalLeaseObligationsCurrent＝長債＋租賃的一年內到期部分
+    # （同 LongTermDebtCurrent 語意、多含融資租賃）；…IncludingCurrentMaturities＝長債＋租賃總額、含一年內到期（同 LongTermDebt）
     "debt_nc": ["LongTermDebtNoncurrent", "LongTermDebtAndCapitalLeaseObligations"],
     "debt_cur_total": ["DebtCurrent"],
-    "debt_lt_cur": ["LongTermDebtCurrent"],
+    "debt_lt_cur": ["LongTermDebtCurrent", "LongTermDebtAndCapitalLeaseObligationsCurrent"],
     "debt_st": ["ShortTermBorrowings", "CommercialPaper"],
-    "debt_lt_total": ["LongTermDebt"],
+    "debt_lt_total": ["LongTermDebt", "LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities"],
+}
+# #91 退路：只在「沒有非流動長債（debt_nc）也沒有長債總額（debt_lt_total）」時使用——這些科目多半只是負債的一部分
+# （只有優先債、只有可轉債…），所以每一族只取一個值、各族取最大（max 不是加總）＝不重複計算的下限；
+# 語意不明的 LongTermNotesPayable 一律當「含一年內到期」處理（只加短借，不加流動長債 → 寧可少算、不重複算）。
+# 這些欄位只用來合成 total_debt，不出現在 pit_periods 的輸出（沒用到這些科目的公司，輸出與擴充前逐位相同）。
+DEBT_FALLBACK_TAGS = {
+    "debt_all_total": ["DebtLongtermAndShorttermCombinedAmount",              # 長債（含一年內到期）＋短債
+                       "DebtAndCapitalLeaseObligations"],                     # 全部借款＋租賃
+    "debt_lt_conv": ["ConvertibleNotesPayable", "ConvertibleDebt"],          # 可轉債（流動＋非流動）
+    "debt_lt_senior": ["SeniorNotes"],                                        # 優先債（流動＋非流動）
+    "debt_lt_notes": ["LongTermNotesPayable"],                                # 長期應付票據（語意不明 → 保守當總額）
+    "debt_nc_conv": ["ConvertibleDebtNoncurrent", "ConvertibleLongTermNotesPayable"],   # 可轉債非流動
+    "debt_nc_senior": ["SeniorLongTermNotes"],                                # 優先債非流動
+    "debt_nc_other": ["OtherLongTermDebtNoncurrent"],                         # 其他長債非流動
+    "debt_cur_conv": ["ConvertibleNotesPayableCurrent", "ConvertibleDebtCurrent"],      # 可轉債流動
+    "debt_cur_senior": ["SeniorNotesCurrent"],                                # 優先債流動
 }
 # 代碼改名（舊→新，同一個 CIK）：舊代碼期間的成分要接到新代碼的公司（現行代碼表查不到舊代碼）
 RENAMES = {"FB": "META", "UTX": "RTX", "ANTM": "ELV", "BBT": "TFC", "CTL": "LUMN", "HRS": "LHX", "ABC": "COR",
@@ -138,9 +162,37 @@ FLOW_FIELDS = {"revenue", "gross_profit", "operating_income", "pretax_income", "
 SHARE_FIELDS = {"diluted_shares", "shares_out", "cover_shares"}
 
 
+# 舊檔（2026-10-17 建置的 data/edgar/annual_pit.json.gz）的科目索引順序——**凍結：不可改順序、不可刪除**。
+# rows 的第一欄是這份清單的整數索引；新科目只能接在 TAGS 尾端（自測鎖住）
+LEGACY_TAGS = (
+    "Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax",
+    "RevenueFromContractWithCustomerIncludingAssessedTax", "SalesRevenueNet", "SalesRevenueGoodsNet",
+    "SalesRevenueServicesNet", "GrossProfit", "OperatingIncomeLoss",
+    "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+    "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments",
+    "IncomeTaxExpenseBenefit", "NetIncomeLoss", "ProfitLoss", "InterestExpense", "InterestExpenseNonoperating",
+    "InterestExpenseDebt", "InterestAndDebtExpense", "WeightedAverageNumberOfDilutedSharesOutstanding",
+    "SellingGeneralAndAdministrativeExpense", "ResearchAndDevelopmentExpense", "DepreciationDepletionAndAmortization",
+    "DepreciationAndAmortization", "DepreciationAmortizationAndAccretionNet", "Depreciation",
+    "PaymentsToAcquirePropertyPlantAndEquipment", "PaymentsToAcquireProductiveAssets", "PaymentsForCapitalImprovements",
+    "ShareBasedCompensation", "AllocatedShareBasedCompensationExpense", "NetCashProvidedByUsedInOperatingActivities",
+    "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations", "PaymentsForRepurchaseOfCommonStock",
+    "PaymentsOfDividendsCommonStock", "PaymentsOfDividends", "CashAndCashEquivalentsAtCarryingValue", "Cash",
+    "CashCashEquivalentsAndShortTermInvestments", "ShortTermInvestments", "MarketableSecuritiesCurrent",
+    "AvailableForSaleSecuritiesCurrent", "AccountsReceivableNetCurrent", "InventoryNet", "AccountsPayableCurrent",
+    "ContractWithCustomerLiabilityCurrent", "DeferredRevenueCurrent", "PropertyPlantAndEquipmentNet", "Goodwill",
+    "Assets", "AssetsCurrent", "LiabilitiesCurrent", "StockholdersEquity",
+    "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest", "RetainedEarningsAccumulatedDeficit",
+    "MinorityInterest", "CommonStockSharesOutstanding", "LongTermDebtNoncurrent",
+    "LongTermDebtAndCapitalLeaseObligations", "DebtCurrent", "LongTermDebtCurrent", "ShortTermBorrowings",
+    "CommercialPaper", "LongTermDebt", "EntityCommonStockSharesOutstanding",
+)
+
+
 def _tag_index() -> list[str]:
-    tags = []
-    for d in (FIELD_TAGS, DEI_TAGS):
+    """LEGACY_TAGS（凍結順序）＋之後新增的科目依 FIELD_TAGS → DEBT_FALLBACK_TAGS → DEI_TAGS 的出現順序接在後面。"""
+    tags = list(LEGACY_TAGS)
+    for d in (FIELD_TAGS, DEBT_FALLBACK_TAGS, DEI_TAGS):
         for lst in d.values():
             for t in lst:
                 if t not in tags:
@@ -149,6 +201,8 @@ def _tag_index() -> list[str]:
 
 
 TAGS = _tag_index()
+SHARE_TAGS = ("WeightedAverageNumberOfDilutedSharesOutstanding", "CommonStockSharesOutstanding",
+              "EntityCommonStockSharesOutstanding")
 
 
 # ── 1. 抽取（Colab 端；純函數，離線可測）───────────────────────────────────────
@@ -168,8 +222,7 @@ def extract_company(cf: dict, since: str = SINCE) -> list[list]:
             if tag not in tag_pos:
                 continue
             units = body.get("units") or {}
-            want = "shares" if tag in ("WeightedAverageNumberOfDilutedSharesOutstanding", "CommonStockSharesOutstanding",
-                                       "EntityCommonStockSharesOutstanding") else "USD"
+            want = "shares" if tag in SHARE_TAGS else "USD"
             seen: dict[tuple, list] = {}
             for f in units.get(want) or []:
                 form = str(f.get("form") or "")
@@ -215,6 +268,53 @@ def _near(a: str, b: str, tol: int = 10) -> bool:
     return abs(_days(a, b)) <= tol
 
 
+def _pick(by_tag: dict, tag_pos: dict, field: str, tags: list[str], pe: str) -> tuple:
+    """某欄位在期末 pe 的值：先取「涵蓋這一期的最新一份申報」，再在那份申報裡依科目優先序挑 → (值, 申報日)；沒有 → (None, None)。
+    逐期合併：避免舊的高優先科目蓋過新申報以低優先科目重編的數字（驗證 Low：ASC 606／重編混基準）。"""
+    cands = []
+    for rank, t in enumerate(tags):
+        for k, (v, filed) in by_tag.get(tag_pos[t], ()):
+            if ((field in FLOW_FIELDS and k[2] is not None and _near(k[1], pe)) or
+                    (field not in FLOW_FIELDS and k[2] is None and (_near(k[1], pe) or
+                     (field == "cover_shares" and 0 <= _days(pe, k[1]) <= 120)))):
+                cands.append((filed, -rank, v))
+    if not cands:
+        return None, None
+    fl = max(c[0] for c in cands)
+    return max((c for c in cands if c[0] == fl), key=lambda c: c[1])[2], fl
+
+
+def _debt_fallback(row: dict, aux: dict) -> tuple | None:
+    """#91 退路（呼叫端保證 debt_nc 與 debt_lt_total 都沒有）：各候選都是「不重複計算的下限」，取最大者 → (值, 申報日)。
+    候選：①全部借款合計 ②長債某一族（含一年內到期）＋短借 ③非流動某一族＋流動負債（DebtCurrent／流動長債＋短借；
+    都沒有時用流動的某一族）④只有流動某一族。不比原本合成值大 → None（維持原值）。"""
+    def best(*fields):
+        got = [aux[f] for f in fields if aux.get(f) and aux[f][0] is not None]
+        return max(got) if got else (None, None)
+    cur_ = row.get("debt_cur_total")
+    if cur_ is None and (row.get("debt_lt_cur") is not None or row.get("debt_st") is not None):
+        cur_ = (row.get("debt_lt_cur") or 0.0) + (row.get("debt_st") or 0.0)
+    cur_lb = (cur_, "") if cur_ is not None else best("debt_cur_conv", "debt_cur_senior")
+    lt_lb, nc_lb = best("debt_lt_conv", "debt_lt_senior", "debt_lt_notes"), best("debt_nc_conv", "debt_nc_senior", "debt_nc_other")
+    cands = []
+    if aux.get("debt_all_total") and aux["debt_all_total"][0] is not None:
+        cands.append(aux["debt_all_total"])
+    if lt_lb[0] is not None:
+        cands.append((lt_lb[0] + (row.get("debt_st") or 0.0), lt_lb[1]))
+    if nc_lb[0] is not None:
+        cands.append((nc_lb[0] + (cur_lb[0] or 0.0), max(nc_lb[1], cur_lb[1] or "")))
+    if cur_ is None and cur_lb[0] is not None:
+        cands.append(cur_lb)
+    if not cands:
+        return None
+    top = max(cands, key=lambda c: c[0])
+    old = row.get("total_debt")
+    return None if old is not None and top[0] <= old else top
+
+
+_FIELD_ITEMS = list(FIELD_TAGS.items()) + list(DEI_TAGS.items())
+
+
 def pit_periods(company: dict, as_of: str, max_periods: int = 5) -> list[dict]:
     """某公司在 as_of 當天看得到的年度期別（新→舊），fin_data 格式（欄位名同 FIELD_TAGS 鍵；capex 為負值）。
     期末日由「已可見的年期間 flow 科目」決定；存量科目取期末 ±10 天的時點值。"""
@@ -238,20 +338,9 @@ def pit_periods(company: dict, as_of: str, max_periods: int = 5) -> list[dict]:
         row = {"period_end": pe, "freq": "A", "source": "edgar"}
         filed_of: dict[str, str] = {}                        # 每個科目取自哪一天的申報（股數換拆股基準用）
         filed_max = ""
-        for field, tags in list(FIELD_TAGS.items()) + list(DEI_TAGS.items()):
-            # 逐期合併：先取「涵蓋這一期的最新一份申報」，再在那份申報裡依科目優先序挑——
-            # 避免舊的高優先科目蓋過新申報以低優先科目重編的數字（驗證 Low：ASC 606／重編混基準）
-            cands = []
-            for rank, t in enumerate(tags):
-                for k, (v, filed) in by_tag.get(tag_pos[t], ()):
-                    if ((field in FLOW_FIELDS and k[2] is not None and _near(k[1], pe)) or
-                            (field not in FLOW_FIELDS and k[2] is None and (_near(k[1], pe) or
-                             (field == "cover_shares" and 0 <= _days(pe, k[1]) <= 120)))):
-                        cands.append((filed, -rank, v))
-            val = None
-            if cands:
-                fl = max(c[0] for c in cands)
-                val = max((c for c in cands if c[0] == fl), key=lambda c: c[1])[2]
+        for field, tags in _FIELD_ITEMS:                     # 逐期合併（見 _pick）
+            val, fl = _pick(by_tag, tag_pos, field, tags, pe)
+            if fl is not None:
                 filed_max = max(filed_max, fl)
                 filed_of[field] = fl
             row[field] = val
@@ -264,6 +353,10 @@ def pit_periods(company: dict, as_of: str, max_periods: int = 5) -> list[dict]:
             row["total_debt"] = row["debt_lt_total"] + (row.get("debt_st") or 0.0)
         else:
             row["total_debt"] = cur_
+            fb = _debt_fallback(row, {f: _pick(by_tag, tag_pos, f, tags, pe) for f, tags in DEBT_FALLBACK_TAGS.items()})
+            if fb is not None:                                        # #91：沒有長債總額科目 → 不重複計算的下限
+                row["total_debt"], row["_debt_src"] = fb[0], "fallback"
+                filed_max = max(filed_max, fb[1] or "")
         if row.get("cash_and_sti") is None and row.get("cash") is not None:
             row["cash_and_sti"] = row["cash"] + (row.get("short_term_investments") or 0.0)
         if row.get("capex") is not None and row["capex"] > 0:
@@ -297,17 +390,107 @@ def save(store: dict, path: Path | str = OUT_PATH) -> Path:
 
 
 def load(path: Path | str = OUT_PATH) -> dict | None:
+    """讀年報檔（含自動合併 *.partN.json.gz 分檔）。檔內科目表是現行 TAGS 的前綴（舊檔＝LEGACY_TAGS）→ 索引不變、不重建；
+    其他順序 → 用檔內順序重建索引（丟掉現行版本不認得的科目）。"""
+    st = load_parts(path)
+    if st is None:
+        return None
+    old = st.get("tags") or []
+    if old != TAGS[:len(old)]:                                # 科目表順序不同：用檔內順序重建索引
+        pos = {t: i for i, t in enumerate(TAGS)}
+        for c in (st.get("companies") or {}).values():
+            c["rows"] = [[pos[old[r[0]]]] + r[1:] for r in c.get("rows") or [] if r[0] < len(old) and old[r[0]] in pos]
+    st["tags"] = TAGS
+    return st
+
+
+# ── 3b. 自動分檔（GitHub 網頁上傳上限 25 MB → 每個檔 ≤ 24 MB；sec_bulk 的三個輸出檔共用）──────────
+MAX_PART_BYTES = 24 * 2**20
+
+
+def part_path(path: Path | str, i: int) -> Path:
+    """第 i 個分檔的檔名：第 1 個就是原檔名；之後 xxx.json.gz → xxx.part2.json.gz、xxx.part3.json.gz …"""
+    p = Path(path)
+    if i <= 1:
+        return p
+    stem = p.name[:-len(".json.gz")] if p.name.endswith(".json.gz") else p.stem
+    return p.with_name(f"{stem}.part{i}.json.gz")
+
+
+def _gz(doc: dict) -> bytes:
+    return gzip.compress(json.dumps(doc, separators=(",", ":"), ensure_ascii=False).encode("utf-8"), 9, mtime=0)
+
+
+def save_parts(store: dict, path: Path | str, max_bytes: int = MAX_PART_BYTES, key: str = "companies") -> list[Path]:
+    """把 store 寫成一個或多個 gzip JSON（每個 ≤ max_bytes）。只切 store[key]（依公司切，同一家公司不跨檔）；
+    其他頂層鍵（含 manifest）每個分檔都有一份，manifest 另記 part／parts／build_id／part_key 供 load_parts 核對。
+    多出來的舊分檔（上次切得比較多）會刪掉。"""
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    head = {k: v for k, v in store.items() if k != key}
+    items = list((store.get(key) or {}).items())             # 保留原順序（build_store 依 CIK 排序）
+    man0 = dict(head.get("manifest") or {})
+    build_id = man0.get("build_id") or hashlib.sha1(
+        (str(man0.get("built_at") or head.get("built_at")) + str(len(items)) + str(time.time())).encode()).hexdigest()[:12]
+    sizes = [len(json.dumps(v, separators=(",", ":"), ensure_ascii=False)) + len(str(k)) + 8 for k, v in items]
+    n = 1
+    while True:
+        target = sum(sizes) / n if n > 1 else float("inf")
+        groups, cur, acc = [], [], 0.0
+        for it, sz in zip(items, sizes):                      # 依序切成 n 段、每段未壓縮大小接近
+            if cur and acc + sz > target and len(groups) < n - 1:
+                groups.append(cur)
+                cur, acc = [], 0.0
+            cur.append(it)
+            acc += sz
+        groups.append(cur)
+        n = len(groups)
+        blobs = []
+        for i, g in enumerate(groups, 1):
+            doc = dict(head)
+            doc["manifest"] = dict(man0, build_id=build_id, part=i, parts=n, part_key=key, part_items=len(g))
+            doc[key] = dict(g)
+            blobs.append(_gz(doc))
+        big = max(len(b) for b in blobs)
+        if big <= max_bytes:
+            break
+        if n >= len(items):
+            raise ValueError(f"單一項目壓縮後就超過 {max_bytes / 2**20:.1f} MB，無法再切")
+        n = min(len(items), max(n + 1, math.ceil(n * big / max_bytes * 1.15)))
+    out = []
+    for i, b in enumerate(blobs, 1):
+        q = part_path(p, i)
+        q.write_bytes(b)
+        out.append(q)
+    i = n + 1
+    while part_path(p, i).exists():                           # 清掉上一次多出來的分檔
+        part_path(p, i).unlink()
+        i += 1
+    return out
+
+
+def load_parts(path: Path | str) -> dict | None:
+    """讀 save_parts 寫的檔：第 1 個檔的 manifest 說有幾個分檔 → 逐一讀入、核對同一次建置（build_id）、合併 store[part_key]。
+    沒有 manifest 的舊單檔照舊讀。缺分檔／混到別次建置 → 明確報錯（不默默少一段資料）。"""
     p = Path(path)
     if not p.exists():
         return None
     with gzip.open(p, "rt", encoding="utf-8") as f:
         st = json.load(f)
-    if st.get("tags") != TAGS:                                # 科目表變了：用檔內順序重建索引
-        old = st.get("tags") or []
-        pos = {t: i for i, t in enumerate(TAGS)}
-        for c in (st.get("companies") or {}).values():
-            c["rows"] = [[pos[old[r[0]]]] + r[1:] for r in c.get("rows") or [] if r[0] < len(old) and old[r[0]] in pos]
-        st["tags"] = TAGS
+    man = st.get("manifest") or {}
+    n, key = int(man.get("parts") or 1), man.get("part_key") or "companies"
+    for i in range(2, n + 1):
+        q = part_path(p, i)
+        if not q.exists():
+            raise FileNotFoundError(f"{p.name} 共 {n} 個分檔，缺 {q.name}——請把同一次產生的分檔全部上傳到同一個資料夾")
+        with gzip.open(q, "rt", encoding="utf-8") as f:
+            d = json.load(f)
+        m2 = d.get("manifest") or {}
+        if m2.get("build_id") != man.get("build_id") or int(m2.get("part") or 0) != i:
+            raise ValueError(f"{q.name} 跟 {p.name} 不是同一次產生的（build_id 不符）——請重新上傳同一批分檔")
+        st.setdefault(key, {}).update(d.get(key) or {})
+    if man:
+        st["manifest"] = dict(man, part=None, part_items=None, parts_loaded=n)
     return st
 
 
@@ -362,10 +545,21 @@ def sp500_tickers_since(periods: dict, since: str = SINCE) -> list[str]:
     return sorted(t for t, ps in periods.items() if any(b >= since for _a, b in ps))
 
 
-def build_store(zip_path: str | Path, tickers_json: dict, sp_tickers: list[str], built_at: str,
-                log=print) -> dict:
-    """companyfacts.zip ＋ company_tickers.json ＋ 歷年成分代碼 → store（純本地 I/O，可離線測）。"""
-    import zipfile
+def parse_sp500_periods(csv_text: str) -> dict[str, list[tuple[str, str]]]:
+    """fja05680 sp500_ticker_start_end.csv → {代碼: [(起, 迄)]}（迄空白＝仍在指數 → 9999-12-31）。"""
+    import csv
+    import io
+    periods: dict[str, list] = {}
+    for r in csv.DictReader(io.StringIO(csv_text)):
+        t = _norm(r.get("ticker") or "")
+        if t:
+            periods.setdefault(t, []).append(((r.get("start_date") or "")[:10], (r.get("end_date") or "")[:10] or "9999-12-31"))
+    return periods
+
+
+def match_ciks(tickers_json: dict, sp_tickers: list[str]) -> tuple[dict[int, list[str]], list[str]]:
+    """SEC company_tickers.json ＋ 歷年成分代碼 → ({CIK: [代碼…]}, 對不到 CIK 的代碼)。舊代碼經 RENAMES 接到改名後的同一家公司。
+    年報（build_store）與 sec_bulk 的季報／8-K／內部人都用這個對應 → 同一個 CIK 宇宙。"""
     by_tk: dict[str, int] = {}
     for v in (tickers_json or {}).values():
         try:
@@ -380,6 +574,14 @@ def build_store(zip_path: str | Path, tickers_json: dict, sp_tickers: list[str],
             miss.append(t)
         else:
             want.setdefault(cik, []).append(_norm(t))
+    return want, miss
+
+
+def build_store(zip_path: str | Path, tickers_json: dict, sp_tickers: list[str], built_at: str,
+                log=print) -> dict:
+    """companyfacts.zip ＋ company_tickers.json ＋ 歷年成分代碼 → store（純本地 I/O，可離線測）。"""
+    import zipfile
+    want, miss = match_ciks(tickers_json, sp_tickers)
     companies, n_rows, absent = {}, 0, 0
     with zipfile.ZipFile(zip_path) as z:
         names = set(z.namelist())
@@ -408,8 +610,6 @@ def build_store(zip_path: str | Path, tickers_json: dict, sp_tickers: list[str],
 def colab_build(base_dir: str | Path, contact: str, out_name: str = "annual_pit.json.gz") -> dict:
     """Colab 用：下載（或讀取手動上傳的）companyfacts.zip 與 company_tickers.json → 寫精簡檔到 base_dir。
     contact：SEC 要求 User-Agent 帶聯絡資訊（只用於這次請求，不寫進任何檔案）。"""
-    import csv
-    import io
     import requests
     base = Path(base_dir)
     ua = {"User-Agent": f"RBS-research {str(contact).strip()}", "Accept-Encoding": "gzip, deflate"}
@@ -418,12 +618,7 @@ def colab_build(base_dir: str | Path, contact: str, out_name: str = "annual_pit.
         raise ValueError("請輸入有效的 email（SEC 規定 User-Agent 要有聯絡方式；空白會被當成機器人擋掉）")
     rq = requests.get(SP500_PERIODS_URL, timeout=60)
     rq.raise_for_status()
-    txt = rq.text
-    periods: dict[str, list] = {}
-    for r in csv.DictReader(io.StringIO(txt)):
-        t = _norm(r.get("ticker") or "")
-        if t:
-            periods.setdefault(t, []).append(((r.get("start_date") or "")[:10], (r.get("end_date") or "")[:10] or "9999-12-31"))
+    periods = parse_sp500_periods(rq.text)
     sp = sp500_tickers_since(periods)
     print(f"   2009 年後曾為成分：{len(sp)} 檔")
     if len(sp) < 400:
@@ -592,4 +787,121 @@ if __name__ == "__main__":
         used = {e["ex_date"] for e in json.loads(sp_json.read_text(encoding="utf-8"))["events"] if e.get("used")}
         assert used == {d_ for ds in SPINOFFS.values() for d_ in ds}, used ^ {d_ for ds in SPINOFFS.values() for d_ in ds}
     print(f"✅ 4 分拆表 {len(SPINOFFS)} 檔（鍵正規化、平日、與 spinoffs.json 一致）")
+
+    # 5) #91 舊檔相容：科目索引只能往後加；舊檔（2026-10-17 建置）解碼與 pit_periods 輸出逐位不變
+    assert tuple(TAGS[:len(LEGACY_TAGS)]) == LEGACY_TAGS and len(set(TAGS)) == len(TAGS) and len(LEGACY_TAGS) == 63
+    _all_lists = [t for d in (FIELD_TAGS, DEBT_FALLBACK_TAGS, DEI_TAGS) for lst in d.values() for t in lst]
+    assert set(_all_lists) == set(TAGS), set(TAGS) ^ set(_all_lists)          # 舊科目都還在某個欄位裡（照樣抽取）
+    assert not set(DEBT_FALLBACK_TAGS) & (set(FIELD_TAGS) | set(DEI_TAGS))
+    real = HERE / "data" / "edgar" / "annual_pit.json.gz"
+    if real.exists():
+        with gzip.open(real, "rt", encoding="utf-8") as f:
+            raw = json.load(f)
+        rt = raw.get("tags") or []
+        assert rt == TAGS[:len(rt)], "檔內科目表不是現行 TAGS 的前綴"
+        assert [TAGS[i] for i in range(len(rt))] == rt                         # (a) 舊索引解碼成同樣的科目名
+        st_real = load(real)
+        some = sorted(st_real["companies"], key=int)[:20]
+        assert all(st_real["companies"][k]["rows"] == raw["companies"][k]["rows"] for k in some)   # 前綴 → 不重建索引
+
+        def _sample(store, n=50):
+            ciks = sorted(store["companies"], key=int)
+            step = max(1, len(ciks) // n)
+            for cik in ciks[::step][:n]:
+                c = store["companies"][cik]
+                yield cik, c, sorted({r[4] for r in c.get("rows") or []}) + [f"{y}-06-30" for y in range(2011, 2027, 2)]
+
+        if rt == list(LEGACY_TAGS) and raw.get("built_at") == "2026-10-17":
+            # (b) 黃金摘要：擴充前的程式（git 941305d）在同一批 50 家 × 1,174 個日期算出的 pit_periods 雜湊
+            GOLDEN = "5b18fc1dafd142f8023b1b94810ed4e15122ea2e589cad2d7ea7255e4656c200"
+            h, k = hashlib.sha256(), 0
+            for cik, c, ds in _sample(st_real):
+                for d_ in ds:
+                    h.update(json.dumps([cik, d_, pit_periods(c, d_)], sort_keys=True, separators=(",", ":")).encode())
+                    k += 1
+            assert k == 1174 and h.hexdigest() == GOLDEN, (k, h.hexdigest())
+            # (b') 有 git 歷史時再直接跟舊版程式逐筆比（CI 淺層 clone 沒有舊 commit → 略過，黃金摘要已涵蓋）
+            import importlib.util
+            import subprocess
+            LEGACY_REF = "941305d"                                            # 最後一個用舊科目表的 edgar_pit 版本
+            try:
+                src = subprocess.run(["git", "show", f"{LEGACY_REF}:edgar_pit.py"], cwd=HERE, capture_output=True,
+                                     text=True, timeout=20)
+                legacy_src = src.stdout if src.returncode == 0 else ""
+            except (OSError, subprocess.SubprocessError):
+                legacy_src = ""
+            if legacy_src:
+                lp = Path(tempfile.mkdtemp()) / "edgar_pit_legacy.py"
+                lp.write_text(legacy_src, encoding="utf-8")
+                spec = importlib.util.spec_from_file_location("edgar_pit_legacy", lp)
+                old_mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(old_mod)
+                st_old = old_mod.load(real)
+                n_cmp = 0
+                for cik, c, ds in _sample(st_real):
+                    for d_ in ds:
+                        assert old_mod.pit_periods(st_old["companies"][cik], d_) == pit_periods(c, d_), (cik, d_)
+                        n_cmp += 1
+                print(f"✅ 5 舊檔相容：索引前綴不變、50 家 × {k} 個日期與舊版程式逐筆相同（git {LEGACY_REF}）、黃金摘要相符")
+            else:
+                print(f"✅ 5 舊檔相容：索引前綴不變、50 家 × {k} 個日期黃金摘要相符（無 git 歷史 → 略過逐筆比對）")
+        else:
+            print(f"✅ 5 新版年報檔（{len(rt)} 個科目、前 {len(LEGACY_TAGS)} 個與舊表相同）解碼正常（舊檔黃金摘要不適用）")
+    else:
+        print("✅ 5 科目索引只往後加（repo 內沒有年報檔 → 略過真資料比對）")
+
+    # 6) #91 退路：沒有長債總額科目時取「不重複計算的下限」；有長債科目時完全照舊
+    def _td(**tags):
+        rr = [[TAGS.index(t), "2019-12-31", None, v, "2020-02-20", "10-K"] for t, v in tags.items()]
+        rr.append([TAGS.index("Revenues"), "2019-12-31", "2019-01-01", 1.0, "2020-02-20", "10-K"])
+        p_ = pit_periods({"rows": rr}, "2020-03-01")[0]
+        assert not set(DEBT_FALLBACK_TAGS) & set(p_), "退路欄位不可出現在輸出"
+        return p_["total_debt"], p_.get("_debt_src")
+    assert _td(DebtCurrent=7199, LongTermNotesPayable=124718) == (124718, "fallback")    # 語意不明 → 不加流動長債
+    assert _td(SeniorNotes=1788, SeniorLongTermNotes=1788, SeniorNotesCurrent=0) == (1788, "fallback")   # 不重複算
+    assert _td(DebtLongtermAndShorttermCombinedAmount=5000, ShortTermBorrowings=300) == (5000, "fallback")
+    assert _td(ConvertibleNotesPayableCurrent=400, ConvertibleDebtNoncurrent=2000) == (2400, "fallback")
+    assert _td(ConvertibleNotesPayableCurrent=400, ConvertibleDebtNoncurrent=2000, ConvertibleNotesPayable=2400) == (2400, "fallback")
+    assert _td(ShortTermBorrowings=35, SeniorLongTermNotes=9000, OtherLongTermDebtNoncurrent=200) == (9035, "fallback")
+    assert _td(LongTermDebtNoncurrent=9000, SeniorNotes=99999) == (9000, None)          # 有非流動長債 → 退路不啟用
+    assert _td(LongTermDebt=9500, ConvertibleNotesPayable=99999) == (9500, None)
+    assert _td(LongTermDebtAndCapitalLeaseObligations=9000, LongTermDebtAndCapitalLeaseObligationsCurrent=600) == (9600, None)
+    assert _td(LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities=9600, ShortTermBorrowings=100) == (9700, None)
+    assert _td(DebtCurrent=800, SeniorNotesCurrent=50) == (800, None)                     # 下限沒比較大 → 維持原值
+    assert _td(SeniorNotesCurrent=50) == (50, "fallback") and _td() == (None, None)
+    cf_sn = {"facts": {"us-gaap": {"SeniorLongTermNotes": {"units": {"USD": [_fact(9000, "2019-12-31", "2020-02-20")]}}}}}
+    assert [TAGS[r[0]] for r in extract_company(cf_sn)] == ["SeniorLongTermNotes"] and TAGS.index("SeniorLongTermNotes") >= 63
+    print("✅ 6 #91 退路：合計科目、各族取最大（不加總）、語意不明保守處理；有長債科目時完全照舊")
+
+    # 7) 自動分檔：切成多個 ≤ 上限的檔、透明合併、缺檔／混檔報錯、舊分檔清掉
+    import random
+    rnd = random.Random(7)
+    big = {"version": 1, "manifest": {"kind": "test", "built_at": "2026-10-25"}, "tags": TAGS,
+           "companies": {str(i): {"cik": i, "rows": [[rnd.randrange(60), f"20{rnd.randrange(10, 26)}-12-31", None,
+                                                       rnd.random() * 1e9, "2020-02-20", "10-K"] for _ in range(40)]}
+                         for i in range(1, 61)}}
+    paths = save_parts(big, tmp / "split.json.gz", max_bytes=9000)
+    assert len(paths) >= 3 and all(q.stat().st_size <= 9000 for q in paths), [q.stat().st_size for q in paths]
+    assert [q.name for q in paths[:2]] == ["split.json.gz", "split.part2.json.gz"]
+    back = load_parts(tmp / "split.json.gz")
+    assert back["companies"] == big["companies"] and back["manifest"]["parts_loaded"] == len(paths)
+    assert load(tmp / "split.json.gz")["companies"]["5"]["rows"] == big["companies"]["5"]["rows"]
+    paths[-1].rename(tmp / "gone.json.gz")
+    try:
+        load_parts(tmp / "split.json.gz")
+        raise AssertionError("缺分檔應報錯")
+    except FileNotFoundError:
+        pass
+    (tmp / "gone.json.gz").rename(paths[-1])
+    other = save_parts(dict(big, manifest={"kind": "test", "build_id": "zzz"}), tmp / "other.json.gz", max_bytes=9000)
+    paths[1].write_bytes(other[1].read_bytes())                                   # 混進別次建置的分檔
+    try:
+        load_parts(tmp / "split.json.gz")
+        raise AssertionError("混檔應報錯")
+    except ValueError:
+        pass
+    one = save_parts(big, tmp / "split.json.gz")                                   # 重寫成單檔 → 舊分檔刪掉
+    assert len(one) == 1 and not part_path(tmp / "split.json.gz", 2).exists()
+    assert load_parts(tmp / "split.json.gz")["companies"] == big["companies"]
+    print(f"✅ 7 自動分檔：{len(paths)} 個檔皆 ≤ 上限、合併還原、缺檔／混檔報錯、舊分檔清除")
     print("\nedgar_pit selftest OK ✅")
